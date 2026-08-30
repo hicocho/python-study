@@ -1,0 +1,28 @@
+- main [ref=e2]:
+  - paragraph [ref=e3]:
+    - link "← 課題一覧" [ref=e4] [cursor=pointer]:
+      - /url: ../
+  - heading "数当てゲーム" [level=1] [ref=e5]
+  - paragraph [ref=e6]: 1〜100 の数字を 7 回以内に当ててください。
+  - generic [ref=e7]:
+    - generic [ref=e8]:
+      - strong [ref=e9]: ヒント
+      - generic [ref=e10]: 準備中…
+    - paragraph [ref=e12]: Python を読み込んでいます… （初回は数秒かかります）
+    - generic [ref=e13]:
+      - spinbutton "1〜100 の数字" [disabled] [ref=e14]
+      - button "送信" [disabled] [ref=e15]
+  - paragraph [ref=e16]:
+    - text: このページは
+    - strong [ref=e17]: Python のコードがブラウザの中でそのまま動いています
+    - text: （PyScript）。 サーバーはなく、計算はすべて手元の端末で行われます。
+  - generic [ref=e18]:
+    - text: "ソース:"
+    - link "github.com/hicocho/python-study" [ref=e19] [cursor=pointer]:
+      - /url: https://github.com/hicocho/python-study
+    - text: ·
+    - link "このページの game.py" [ref=e20] [cursor=pointer]:
+      - /url: https://github.com/hicocho/python-study/blob/main/docs/g01/game.py
+    - text: ·
+    - link "CLI 版 main.py" [ref=e21] [cursor=pointer]:
+      - /url: https://github.com/hicocho/python-study/blob/main/g01-number-guess/main.py

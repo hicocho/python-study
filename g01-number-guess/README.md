@@ -4,9 +4,9 @@
 
 ## ブラウザ版
 
-インストールせずに遊べます → **https://hicocho.github.io/python-study/**
+インストールせずに遊べます → **https://hicocho.github.io/python-study/g01/**
 
-ソースは [`docs/game.py`](../docs/game.py)。ルールは同じですが、
+ソースは [`docs/g01/game.py`](../docs/g01/game.py)。ルールは同じですが、
 ブラウザには「入力を待つ」仕組みがないため `while` ループを使えません。
 状態を変数に持ち、ボタンが押されるたびに 1 手だけ進める形に書き換えてあります。
 

@@ -7,7 +7,7 @@ Python を一から学びながら、小さなプログラムを作っていく�
 
 インストール不要。リンクを開くだけで遊べます。
 
-**▶ https://hicocho.github.io/python-study/**
+**▶ https://hicocho.github.io/python-study/**（課題一覧）
 
 Python のコードがブラウザの中でそのまま動いています（[PyScript](https://pyscript.net/)）。
 サーバーは使っていません。
