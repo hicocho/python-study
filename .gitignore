@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# 仮想環境（各自の環境に依存するのでコミットしない）
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# エディタ
+.vscode/
+.idea/
