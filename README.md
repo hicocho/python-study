@@ -17,6 +17,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | # | 課題 | 内容 | 扱った文法 |
 |---|------|------|-----------|
 | g01 | [数当てゲーム](g01-number-guess/) | 1〜100 の数字を 7 回以内に当てる CLI ゲーム | `while` / `if`-`elif`-`else` / `try`-`except` / f-string / `while`-`else` |
+| g02 | [じゃんけん](g02-janken/) | `g`/`c`/`p` で何度でも勝負。やめると戦績が出る CLI ゲーム | `list` / `dict` / `def`-`return` / `break`-`continue` / `.lower()` |
 
 ## 動かし方
 
