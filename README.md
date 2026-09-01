@@ -18,6 +18,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 |---|------|------|-----------|
 | g01 | [数当てゲーム](g01-number-guess/) | 1〜100 の数字を 7 回以内に当てる CLI ゲーム | `while` / `if`-`elif`-`else` / `try`-`except` / f-string / `while`-`else` |
 | g02 | [じゃんけん](g02-janken/) | `g`/`c`/`p` で何度でも勝負。やめると戦績が出る CLI ゲーム | `list` / `dict` / `def`-`return` / `break`-`continue` / `.lower()` |
+| g03 | [タイピングゲーム](g03-typing/) | 表示された文章を5問打つ。正解数と「1秒あたり何文字」が出る CLI ゲーム | `for` / `random.shuffle` / `time` / 辞書のリスト / 書式指定 `:.1f` |
 
 ## 動かし方
 
