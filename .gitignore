@@ -12,3 +12,6 @@ venv/
 # エディタ
 .vscode/
 .idea/
+
+# ブラウザ版の動作確認ログ（Playwright）
+.playwright-mcp/
