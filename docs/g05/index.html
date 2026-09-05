@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>オセロ — python-study</title>
+<meta name="description" content="マスをクリックして遊ぶオセロ。挟んでひっくり返すルールは CLI 版と同じ Python がブラウザでそのまま動いています。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#9899;</text></svg>">
+<link rel="stylesheet" href="https://pyscript.net/releases/2025.8.1/core.css">
+<script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #656d76;
+    --line: #d8dbe0;
+    --accent: #2f6f4e;
+    --warn: #9a6700;
+    --felt: #3f8f68;
+    --felt-line: #2f6f4e;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c;
+      --panel: #1f2229;
+      --ink: #e6e6e3;
+      --muted: #9aa2ad;
+      --line: #333842;
+      --accent: #7fc9a1;
+      --warn: #e0b341;
+      --felt: #337656;
+      --felt-line: #245741;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2rem 1rem 3rem;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    line-height: 1.7;
+  }
+  main { max-width: 34rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; letter-spacing: .02em; }
+  .sub { color: var(--muted); font-size: .875rem; margin: 0 0 1.5rem; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: .75rem;
+    padding: 1.25rem;
+  }
+  .status { display: flex; justify-content: space-between; align-items: center; margin-bottom: .75rem; }
+  .status .count { display: flex; align-items: center; gap: .4rem; font-size: .9375rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .status .chip { width: .85rem; height: .85rem; border-radius: 50%; display: inline-block; }
+  .status .chip.b { background: #15181c; border: 1px solid var(--line); }
+  .status .chip.w { background: #f4f4f1; border: 1px solid var(--line); }
+  #turn { color: var(--muted); font-size: .875rem; font-weight: 600; }
+  #board {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 1px;
+    width: min(100%, 22rem);
+    margin: 0 auto;
+    padding: 1px;
+    border-radius: .5rem;
+    overflow: hidden;
+    background: var(--felt-line);
+    border: 1px solid var(--felt-line);
+    touch-action: manipulation;
+  }
+  .cell {
+    position: relative;
+    aspect-ratio: 1;
+    background: var(--felt);
+  }
+  .cell::after {
+    content: "";
+    position: absolute;
+    inset: 11%;
+    border-radius: 50%;
+  }
+  .cell.b::after { background: #15181c; box-shadow: inset 0 2px 4px rgba(255, 255, 255, .16); }
+  .cell.w::after { background: #f4f4f1; box-shadow: inset 0 -2px 4px rgba(0, 0, 0, .22); }
+  .cell.hint { cursor: pointer; }
+  .cell.hint::after { inset: 37%; background: rgba(255, 255, 255, .45); }
+  .cell.hint:hover::after { inset: 11%; background: rgba(255, 255, 255, .3); }
+  #message {
+    margin: .75rem 0 0;
+    text-align: center;
+    font-weight: 700;
+    color: var(--warn);
+    min-height: 1.7em;
+  }
+  .modes { display: flex; gap: .4rem; margin-top: .75rem; }
+  button {
+    font-family: inherit;
+    font-weight: 600;
+    border: 0;
+    border-radius: .5rem;
+    cursor: pointer;
+  }
+  .mode {
+    flex: 1;
+    padding: .55rem 0;
+    font-size: .875rem;
+    color: var(--muted);
+    background: var(--bg);
+    border: 1px solid var(--line);
+  }
+  .mode.is-on { color: var(--panel); background: var(--accent); border-color: var(--accent); }
+  #start-btn {
+    width: 100%;
+    margin-top: .5rem;
+    padding: .7rem;
+    font-size: 1rem;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--line);
+  }
+  #start-btn:disabled { opacity: .45; cursor: default; }
+  #loading { color: var(--muted); font-size: .875rem; text-align: center; padding: .5rem 0; margin: .5rem 0 0; }
+  .keys { font-size: .8125rem; color: var(--muted); text-align: center; margin: .75rem 0 0; }
+  .back { font-size: .875rem; margin: 0 0 1rem; }
+  .back a { color: var(--muted); text-decoration: none; }
+  .back a:hover { text-decoration: underline; }
+  .note { font-size: .875rem; color: var(--muted); margin-top: 1.5rem; }
+  .note a { color: inherit; }
+  footer { margin-top: 2rem; font-size: .8125rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <p class="back"><a href="../">← 課題一覧</a></p>
+  <h1>オセロ</h1>
+  <p class="sub">相手の石を挟める場所にだけ置けます。挟んだ石は全部ひっくり返ります。黒が先手です。</p>
+
+  <div class="card">
+    <div class="status">
+      <span class="count"><span class="chip b"></span><b id="black">2</b></span>
+      <span id="turn">● の番</span>
+      <span class="count"><b id="white">2</b><span class="chip w"></span></span>
+    </div>
+
+    <div id="board"></div>
+
+    <p id="message" hidden></p>
+
+    <div class="modes">
+      <button id="mode-two" class="mode" type="button">2人で交互</button>
+      <button id="mode-cpu" class="mode is-on" type="button">白は CPU</button>
+    </div>
+
+    <p class="keys">薄い丸が置ける場所です。クリックで着手。</p>
+    <p id="loading">Python を読み込んでいます… （初回は数秒かかります）</p>
+
+    <button id="start-btn" disabled>はじめから</button>
+  </div>
+
+  <p class="note">
+    このページは <strong>Python のコードがブラウザの中でそのまま動いています</strong>（PyScript）。
+    サーバーはなく、計算はすべて手元の端末で行われます。
+  </p>
+
+  <footer>
+    ソース: <a href="https://github.com/hicocho/python-study">github.com/hicocho/python-study</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/docs/g05/game.py">このページの game.py</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/g05-othello/main.py">CLI 版 main.py</a>
+  </footer>
+</main>
+
+<script type="py" src="./game.py"></script>
+</body>
+</html>
