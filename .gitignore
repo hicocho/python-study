@@ -15,3 +15,6 @@ venv/
 
 # ブラウザ版の動作確認ログ（Playwright）
 .playwright-mcp/
+
+# g09 のハイスコア（遊んだ結果なのでコミットしない）
+highscore.json
