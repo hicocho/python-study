@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>五目ならべ — python-study</title>
+<meta name="description" content="15×15 の碁盤で先に 5 個そろえたら勝ち。石の「形」を読む CPU と対戦できます。CLI 版と同じ Python がブラウザでそのまま動いています。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#9899;</text></svg>">
+<link rel="stylesheet" href="https://pyscript.net/releases/2025.8.1/core.css">
+<script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #656d76;
+    --line: #d8dbe0;
+    --accent: #2f6f4e;
+    --warn: #9a6700;
+    --wood: #d9b382;
+    --wood-line: #8a6a45;
+    --last: #d2402a;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c;
+      --panel: #1f2229;
+      --ink: #e6e6e3;
+      --muted: #9aa2ad;
+      --line: #333842;
+      --accent: #7fc9a1;
+      --warn: #e0b341;
+      --wood: #9c7748;
+      --wood-line: #67492a;
+      --last: #ff7a63;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2rem 1rem 3rem;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    line-height: 1.7;
+  }
+  main { max-width: 34rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; letter-spacing: .02em; }
+  .sub { color: var(--muted); font-size: .875rem; margin: 0 0 1.5rem; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: .75rem;
+    padding: 1.25rem;
+  }
+  .status { display: flex; justify-content: space-between; align-items: baseline;
+    gap: 1rem; margin-bottom: .75rem; }
+  #turn { font-size: .9375rem; font-weight: 700; }
+  #moves-line { color: var(--muted); font-size: .875rem; font-variant-numeric: tabular-nums; }
+  #moves-line b { color: var(--ink); font-weight: 700; }
+
+  /* 碁盤。線は #board::before に引き、石はマスの中央（＝線の交点）に置く */
+  #board {
+    display: grid;
+    grid-template-columns: repeat(15, 1fr);
+    position: relative;
+    width: min(100%, 27rem);
+    margin: 0 auto;
+    background: var(--wood);
+    border: 1px solid var(--wood-line);
+    border-radius: .35rem;
+    touch-action: manipulation;
+  }
+  #board::before {
+    content: "";
+    position: absolute;
+    inset: calc(100% / 30);          /* マスの半分ぶん内側＝いちばん外の交点まで */
+    pointer-events: none;
+    background:
+      repeating-linear-gradient(to right, var(--wood-line) 0 1px, transparent 1px calc(100% / 14)),
+      repeating-linear-gradient(to bottom, var(--wood-line) 0 1px, transparent 1px calc(100% / 14));
+    border-right: 1px solid var(--wood-line);
+    border-bottom: 1px solid var(--wood-line);
+  }
+  .cell { position: relative; aspect-ratio: 1; }
+  .cell::after { content: ""; position: absolute; inset: 10%; border-radius: 50%; }
+  .cell.star::after { inset: 38%; background: var(--wood-line); }
+  .cell.b::after { background: #15181c; box-shadow: inset 0 2px 4px rgba(255, 255, 255, .18); }
+  .cell.w::after { background: #f4f4f1; box-shadow: inset 0 -2px 4px rgba(0, 0, 0, .25); }
+  .cell.b.win::after { box-shadow: inset 0 2px 4px rgba(255, 255, 255, .18), 0 0 0 2px var(--accent); }
+  .cell.w.win::after { box-shadow: inset 0 -2px 4px rgba(0, 0, 0, .25), 0 0 0 2px var(--accent); }
+  /* 最後に打たれた石の目印 */
+  .cell.last::before {
+    content: "";
+    position: absolute;
+    inset: 38%;
+    border-radius: 50%;
+    background: var(--last);
+    z-index: 2;
+  }
+  /* 自分の番のあいだだけ、置ける場所に薄い石を出す */
+  #board.turn-b .cell:not(.b):not(.w), #board.turn-w .cell:not(.b):not(.w) { cursor: pointer; }
+  #board.turn-b .cell:not(.b):not(.w):hover::after { inset: 10%; background: rgba(21, 24, 28, .35); }
+  #board.turn-w .cell:not(.b):not(.w):hover::after { inset: 10%; background: rgba(244, 244, 241, .55); }
+
+  #message {
+    margin: .75rem 0 0;
+    text-align: center;
+    font-weight: 700;
+    color: var(--warn);
+    min-height: 1.7em;
+  }
+  .modes { display: flex; gap: .4rem; margin-top: .75rem; }
+  .row { display: flex; gap: .4rem; margin-top: .5rem; }
+  button {
+    font-family: inherit;
+    font-weight: 600;
+    border: 0;
+    border-radius: .5rem;
+    cursor: pointer;
+  }
+  .mode {
+    flex: 1;
+    padding: .55rem 0;
+    font-size: .875rem;
+    color: var(--muted);
+    background: var(--bg);
+    border: 1px solid var(--line);
+  }
+  .mode.is-on { color: var(--panel); background: var(--accent); border-color: var(--accent); }
+  .row button {
+    flex: 1;
+    padding: .7rem;
+    font-size: 1rem;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--line);
+  }
+  .row button:disabled { opacity: .45; cursor: default; }
+  #loading { color: var(--muted); font-size: .875rem; text-align: center; padding: .5rem 0; margin: .5rem 0 0; }
+  .keys { font-size: .8125rem; color: var(--muted); text-align: center; margin: .75rem 0 0; }
+  .back { font-size: .875rem; margin: 0 0 1rem; }
+  .back a { color: var(--muted); text-decoration: none; }
+  .back a:hover { text-decoration: underline; }
+  .note { font-size: .875rem; color: var(--muted); margin-top: 1.5rem; }
+  .note a { color: inherit; }
+  footer { margin-top: 2rem; font-size: .8125rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <p class="back"><a href="../">← 課題一覧</a></p>
+  <h1>五目ならべ</h1>
+  <p class="sub">たて・よこ・ななめのどれかに、先に 5 個そろえたら勝ちです。黒が先手。CPU は石の「形」を読んで、あなたの 3 を止めに来ます。</p>
+
+  <div class="card">
+    <div class="status">
+      <span id="turn">● の番</span>
+      <span id="moves-line"><b id="moves">0</b> 手目</span>
+    </div>
+
+    <div id="board"></div>
+
+    <p id="message"></p>
+
+    <div class="modes">
+      <button id="mode-two" class="mode" type="button">2人で交互</button>
+      <button id="mode-cpu" class="mode is-on" type="button">白は CPU</button>
+    </div>
+
+    <div class="row">
+      <button id="undo-btn" type="button" disabled>待った</button>
+      <button id="start-btn" type="button" disabled>はじめから</button>
+    </div>
+
+    <p class="keys">交点をクリックで着手。赤い点が最後の手です。</p>
+    <p id="loading">Python を読み込んでいます… （初回は数秒かかります）</p>
+  </div>
+
+  <p class="note">
+    このページは <strong>Python のコードがブラウザの中でそのまま動いています</strong>（PyScript）。
+    サーバーはなく、CPU の計算もすべて手元の端末で行われます。
+  </p>
+
+  <footer>
+    ソース: <a href="https://github.com/hicocho/python-study">github.com/hicocho/python-study</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/docs/g10/game.py">このページの game.py</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/g10-gomoku/main.py">CLI 版 main.py</a>
+  </footer>
+</main>
+
+<script type="py" src="./game.py"></script>
+</body>
+</html>
