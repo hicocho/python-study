@@ -32,6 +32,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g14 | [ブロック崩し](g14-breakout/) | パドルで打ち返して 40 個のブロックを壊す CLI ゲーム。端に当てるほど横に飛び、壊すほど速くなる | 演算子オーバーロード `__add__` `__mul__` `__rmul__` `__neg__` `__abs__` `__iter__` / `float` の物理と `round` / `math.floor` / `time.monotonic` と dt |
 | g15 | [ピンボール](g15-pinball/) | 重力で落ちるボールをフリッパーで打ち返し、バンパーで得点する CLI ピンボール。斜めの壁で反射する | `math.sin` `cos` `radians` / `__matmul__` で内積 / `__truediv__` / 法線での反射 `v − 2(v·n)n` / サブステップ / `@property` で線分を作る |
 | g16 | [宇宙船](g16-spaceship/) | 慣性で滑る宇宙船で、星の引力に引かれながら 5 つのリングをくぐる CLI タイムアタック | `complex` を 2D ベクトルに / `cmath.rect` `cmath.phase` / 複素数のかけ算で回転 / 小数の `%` でループ / `0.5 ** (dt / 半減期)` / `for`-`else` |
+| g17 | [小惑星](g17-asteroids/) | 宇宙船で小惑星を弾で砕く CLI シューティング。撃つと 2 つに割れ、全部砕くと次のウェーブ | `abc.ABC` と `@abstractmethod` / `super().update(dt)` / 円と円の当たり判定 / `random.gauss` `random.uniform` / `self` から破片を作る `split` |
 
 ## 動かし方
 
