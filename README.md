@@ -27,6 +27,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g09 | [スペースインベーダー](g09-invaders/) | 撃ち返してくる敵 21 体を、バリアに隠れながら落とす CLI シューティング。自機は 3 機、ハイスコアはファイルに残る | クラス変数 / 関数の一般化 / `random.random`・`random.choice` / `any()` / ファイル入出力 `with open` / `json` / 複数の例外をまとめて受ける `except` |
 | g10 | [五目ならべ](g10-gomoku/) | 15×15 の碁盤で先に 5 個そろえたら勝ち。白は石の「形」を読む CPU。待ったで何手でも戻せる | ジェネレータ `yield` / `lambda` と `key=` / `collections.defaultdict` / 辞書内包表記 / `itertools.product` / リストをスタックに使う `pop` |
 | g11 | [ブラックジャック](g11-blackjack/) | ディーラーと 21 を競う CLI ゲーム。チップを賭けて、ダブルダウンあり、ブラックジャックは 1.5 倍 | `dataclass` / `Enum` / `@property` / `match` 文（`|`・ガード・`_`） / 型ヒント / `collections.Counter` |
+| g12 | [迷路](g12-maze/) | 穴掘り法で作った迷路を矢印キーで歩く CLI ゲーム。`?` で最短路のヒント、`--size` `--seed` で迷路を選べる | 再帰のバックトラック / `sys.setrecursionlimit` / `collections.deque` と BFS / `@contextmanager` / `os.read` / `argparse` |
 
 ## 動かし方
 
