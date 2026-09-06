@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>迷路レース — python-study</title>
+<meta name="description" content="探索ロボットと迷路で競走。DFS・BFS・A* の探索を 1 歩ずつ見ることもできます。CLI 版と同じ Python がブラウザでそのまま動いています。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#129302;</text></svg>">
+<link rel="stylesheet" href="https://pyscript.net/releases/2025.8.1/core.css">
+<script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #656d76;
+    --line: #d8dbe0;
+    --accent: #2f6f4e;
+    --warn: #9a6700;
+    --wall: #3a3f4b;
+    --floor: #f2efe6;
+    --trail: #d9e8df;
+    --route: #b7dcc6;
+    --player: #d2402a;
+    --goal: #e0b341;
+    --hint: #2f6f4e;
+    --robot: #2b6cb0;
+    --seen: #dbe4f0;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c;
+      --panel: #1f2229;
+      --ink: #e6e6e3;
+      --muted: #9aa2ad;
+      --line: #333842;
+      --accent: #7fc9a1;
+      --warn: #e0b341;
+      --wall: #0f1115;
+      --floor: #2a2e37;
+      --trail: #2f4a3b;
+      --route: #3d6b50;
+      --player: #ff7a63;
+      --goal: #f0c95a;
+      --hint: #7fc9a1;
+      --robot: #63a4ff;
+      --seen: #2e3a4d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2rem 1rem 3rem;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    line-height: 1.7;
+  }
+  main { max-width: 34rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; letter-spacing: .02em; }
+  .sub { color: var(--muted); font-size: .875rem; margin: 0 0 1.5rem; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: .75rem;
+    padding: 1.25rem;
+  }
+  .status { display: flex; justify-content: space-between; align-items: baseline;
+    margin-bottom: .75rem; font-size: .875rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .status b { color: var(--ink); font-weight: 700; font-size: 1rem; }
+
+  /* 迷路。列数は game.py が盤の大きさに合わせて入れる */
+  #maze {
+    display: grid;
+    width: min(100%, 27rem);
+    margin: 0 auto;
+    border-radius: .35rem;
+    overflow: hidden;
+    touch-action: manipulation;
+  }
+  .cell { aspect-ratio: 1; position: relative; }
+  .wall { background: var(--wall); }
+  .floor { background: var(--floor); }
+  .trail { background: var(--trail); }
+  .route { background: var(--route); }
+  .seen { background: var(--seen); }
+  .player::after, .robot::after, .goal::after, .cursor::after { content: ""; position: absolute; inset: 18%; border-radius: 50%; }
+  .player::after { background: var(--player); }
+  .robot::after { background: var(--robot); }
+  .robot.player::after { background: linear-gradient(90deg, var(--player) 50%, var(--robot) 50%); }
+  .goal::after { background: var(--goal); border-radius: .15rem; inset: 22%; }
+  .cursor::after { border: 2px solid var(--hint); inset: 22%; }
+
+  #message {
+    margin: .75rem 0 0;
+    text-align: center;
+    font-weight: 700;
+    color: var(--warn);
+    min-height: 1.7em;
+  }
+  button {
+    font-family: inherit;
+    font-weight: 600;
+    border: 0;
+    border-radius: .5rem;
+    cursor: pointer;
+  }
+  .pad {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: .4rem;
+    width: 12rem;
+    margin: .5rem auto 0;
+  }
+  .pad button {
+    padding: .55rem 0;
+    font-size: 1.0625rem;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--line);
+  }
+  .pad button:active { background: var(--line); }
+  .pad .up { grid-column: 2; }
+  .pad .left { grid-column: 1; }
+  .pad .down { grid-column: 2; }
+  .pad .right { grid-column: 3; }
+  .modes { display: flex; gap: .4rem; margin-top: .75rem; align-items: center; }
+  .modes .label { font-size: .8125rem; color: var(--muted); flex: none; }
+  .mode {
+    flex: 1;
+    padding: .5rem 0;
+    font-size: .875rem;
+    color: var(--muted);
+    background: var(--bg);
+    border: 1px solid var(--line);
+  }
+  .mode.is-on { color: var(--panel); background: var(--accent); border-color: var(--accent); }
+  .actions { display: flex; gap: .4rem; margin-top: .5rem; }
+  .actions button {
+    flex: 1;
+    padding: .7rem;
+    font-size: 1rem;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--line);
+  }
+  .actions button:disabled { opacity: .45; cursor: default; }
+  .solver:disabled { opacity: .4; cursor: default; }
+  .solver { flex: 1; padding: .5rem 0; font-size: .875rem; color: var(--muted); background: var(--bg); border: 1px solid var(--line); }
+  #loading { color: var(--muted); font-size: .875rem; text-align: center; padding: .5rem 0; margin: .5rem 0 0; }
+  .keys { font-size: .8125rem; color: var(--muted); text-align: center; margin: .75rem 0 0; }
+  .back { font-size: .875rem; margin: 0 0 1rem; }
+  .back a { color: var(--muted); text-decoration: none; }
+  .back a:hover { text-decoration: underline; }
+  .note { font-size: .875rem; color: var(--muted); margin-top: 1.5rem; }
+  .note a { color: inherit; }
+  footer { margin-top: 2rem; font-size: .8125rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <p class="back"><a href="../">← 課題一覧</a></p>
+  <h1>迷路レース</h1>
+  <p class="sub">赤があなた、青が探索ロボット。同じ左上から出て、先に黄色いゴールに着いたほうの勝ちです。ロボットは深さ優先で「実際に歩いて」探すので、行き止まりでは戻ってきます。下のボタンで DFS・BFS・A* がどう探すかを 1 歩ずつ見られます。</p>
+
+  <div class="card">
+    <div class="status">
+      <span>あなた <b id="steps">0</b> 歩</span>
+      <span>ロボット <b id="robot-steps">0</b> 歩</span>
+    </div>
+
+    <div id="maze"></div>
+
+    <p id="message"></p>
+
+    <div class="pad">
+      <button class="up" type="button" data-dir="up" tabindex="-1" aria-label="上へ">↑</button>
+      <button class="left" type="button" data-dir="left" tabindex="-1" aria-label="左へ">←</button>
+      <button class="down" type="button" data-dir="down" tabindex="-1" aria-label="下へ">↓</button>
+      <button class="right" type="button" data-dir="right" tabindex="-1" aria-label="右へ">→</button>
+    </div>
+
+    <div class="modes">
+      <span class="label">大きさ</span>
+      <button class="mode" type="button" data-size="15">15</button>
+      <button class="mode is-on" type="button" data-size="21">21</button>
+      <button class="mode" type="button" data-size="31">31</button>
+    </div>
+
+    <div class="actions">
+      <button id="start-btn" type="button" disabled>スタート</button>
+    </div>
+
+    <div class="modes">
+      <span class="label">探索を見る</span>
+      <button class="solver" type="button" data-solver="DFS" disabled>DFS</button>
+      <button class="solver" type="button" data-solver="BFS" disabled>BFS</button>
+      <button class="solver" type="button" data-solver="A*" disabled>A*</button>
+    </div>
+    <p id="analysis" class="keys"></p>
+
+    <p class="keys">矢印キーで移動 / Enter でスタート</p>
+    <p id="loading">Python を読み込んでいます… （初回は数秒かかります）</p>
+  </div>
+
+  <p class="note">
+    このページは <strong>Python のコードがブラウザの中でそのまま動いています</strong>（PyScript）。
+    サーバーはなく、迷路の生成もロボットの探索もすべて手元の端末で行われます。
+  </p>
+
+  <footer>
+    ソース: <a href="https://github.com/hicocho/python-study">github.com/hicocho/python-study</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/docs/g13/game.py">このページの game.py</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/g13-maze-race/main.py">CLI 版 main.py</a>
+  </footer>
+</main>
+
+<script type="py" src="./game.py"></script>
+</body>
+</html>
