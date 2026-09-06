@@ -42,7 +42,9 @@ Notion のページ名も `YYYYMMDD-gNN-<slug>` とこのスラグで揃える�
 **まだ出ていない文法**を 3 つほど選んでから、それが自然に要る形にステップを並べる。
 5 ステップが収まりがいい。ステップ 1 は既習の復習＋新顔 1 つ、最後のステップで `class Game` に畳む。
 
-大きい題材は 1 課題に詰め込まず、連作にしてもよい（g07→g08→g09 がスペースインベーダーの 3 段階）。
+大きい題材は 1 課題に詰め込まず、連作にしてもよい（g07→g08→g09 がスペースインベーダーの 3 段階、g12→g13 が迷路の 2 段階）。
+**2 本を 1 回で頼まれたら、2 本ぶんの文法を先に割り振ってから始める**（前の課題の伏線を次で回収できる）。
+順番は 1 本目を Notion まで通してから 2 本目。並列にはしない（ルート README と `docs/index.html` を両方が触る）。
 
 ### 3. CLI 版を 5 ステップぶん書く
 
@@ -97,6 +99,7 @@ python3 .claude/skills/gnn/scripts/extract_shared.py gNN-<slug>/main.py \
 | 移植 | **同じ乱数の種**で CLI 版と `docs/gNN/game.py` を自動対局させ、棋譜が一致するか |
 | import 漏れ | `python3 .claude/skills/gnn/scripts/check_names.py docs/gNN/game.py` |
 | 結線 | `python3 -m http.server` + Playwright でクリック・キー・終局・再開・携帯幅 |
+| 端末のキー入力 | `termios` を使う CLI は `pty.fork()` で子プロセスを起動し、矢印のバイト列を書いて画面を読む（パイプでは動かない。`waitpid` は `WNOHANG` で回して終わらなければ `SIGKILL`。macOS に `timeout` は無い） |
 
 ロジックだけ動かしたいときは、`game.py` をブラウザ層の手前で切って `exec()` する
 （`pyscript` と `js` は `sys.modules` にダミーを入れれば import が通る。
@@ -108,6 +111,9 @@ Playwright は scratchpad に置いて既存の Chrome を使う:
 cd $SCRATCH && PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 npm install --no-save playwright
 node .claude/skills/gnn/scripts/shot.js http://localhost:8910/gNN/ $SCRATCH/web.png light 480
 ```
+
+リアルタイム系は決着まで長い（ロボットのレースは 45 秒）。`waitForFunction` の既定 30 秒で切れるので、
+経過を出しながら 120 秒まで待つループにする。
 
 確認できたらサーバーとブラウザは閉じる。
 
