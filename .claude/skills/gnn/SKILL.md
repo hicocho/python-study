@@ -76,6 +76,9 @@ python3 .claude/skills/gnn/scripts/extract_shared.py gNN-<slug>/main.py \
     --drop-methods render,draw > $SCRATCH/shared.py
 ```
 
+`--names` にはデコレータ付きの定義（`@dataclass` のクラスなど）も普通に書ける
+（デコレータ行から取る。g11 でここが抜けて `Card() takes no arguments` になった）。
+
 ヘッダ（docstring と import 群）とブラウザ層（DOM 描画・イベント）だけを手で書き、
 `cat header.py shared.py footer.py > docs/gNN/game.py` で組み立てる。
 **組み立て直したら必ず、同じコマンドの出力が `game.py` に部分文字列として含まれるか確かめる。**
@@ -96,7 +99,8 @@ python3 .claude/skills/gnn/scripts/extract_shared.py gNN-<slug>/main.py \
 | 結線 | `python3 -m http.server` + Playwright でクリック・キー・終局・再開・携帯幅 |
 
 ロジックだけ動かしたいときは、`game.py` をブラウザ層の手前で切って `exec()` する
-（`pyscript` は `sys.modules` にダミーを入れれば import が通る）。
+（`pyscript` と `js` は `sys.modules` にダミーを入れれば import が通る。
+`exec` の名前空間は `types.ModuleType("webgame").__dict__` にする——素の `{}` だと `dataclass` が壊れる）。
 
 Playwright は scratchpad に置いて既存の Chrome を使う:
 
@@ -140,9 +144,15 @@ push したら 45 秒ほど待って `https://hicocho.github.io/python-study/gNN
 スクショは `notion-create-file-upload` → `curl` で multipart POST → 返ってきた
 `markdown_source` をページ本文に埋める。
 
-1 回の `create-pages` で通らない大きさなら、ページを作ってから
-`notion-update-page` の `insert_content`（`position: end`）でステップごとに足す。
-**分割は API の都合。Hicoさんへの確認は挟まない。**
+書き込みは **ページを `create-pages` で作ってから、`notion-update-page` の `insert_content`
+（`position: end`）でステップごとに足す**（1 回 15KB 前後なら確実に通る。g10 で 6 回に分けて確認済み）。
+順番が大事なので並列にしない。**分割は API の都合。Hicoさんへの確認は挟まない。**
+
+本文の注意:
+
+- ファイル名（`game.py` など）は必ずバッククォートで囲む。裸で書くと `http://game.py` へのリンクにされる
+- 表は `<table>` で書く（`|` の表は使えない）。セルの中はリッチテキストのみ
+- 画像は `<image src="file-upload://…"></image>`（`suggested_markdown` そのまま）
 
 ## 最後の報告
 

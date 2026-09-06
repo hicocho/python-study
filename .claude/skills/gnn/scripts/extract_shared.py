@@ -30,7 +30,10 @@ def blocks(path, drop_methods):
     out = {}
 
     def text_of(node, drop=()):
-        keep = list(range(node.lineno - 1, node.end_lineno))
+        # デコレータ付きの def / class は node.lineno が def 行を指し、
+        # @dataclass などの行はその上にある。落とさないよう最初のデコレータから取る
+        start = min([node.lineno] + [d.lineno for d in getattr(node, "decorator_list", [])])
+        keep = list(range(start - 1, node.end_lineno))
         for method in drop:
             for i in range(method.lineno - 1, method.end_lineno):
                 keep.remove(i)
