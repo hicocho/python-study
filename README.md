@@ -28,6 +28,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g10 | [五目ならべ](g10-gomoku/) | 15×15 の碁盤で先に 5 個そろえたら勝ち。白は石の「形」を読む CPU。待ったで何手でも戻せる | ジェネレータ `yield` / `lambda` と `key=` / `collections.defaultdict` / 辞書内包表記 / `itertools.product` / リストをスタックに使う `pop` |
 | g11 | [ブラックジャック](g11-blackjack/) | ディーラーと 21 を競う CLI ゲーム。チップを賭けて、ダブルダウンあり、ブラックジャックは 1.5 倍 | `dataclass` / `Enum` / `@property` / `match` 文（`|`・ガード・`_`） / 型ヒント / `collections.Counter` |
 | g12 | [迷路](g12-maze/) | 穴掘り法で作った迷路を矢印キーで歩く CLI ゲーム。`?` で最短路のヒント、`--size` `--seed` で迷路を選べる | 再帰のバックトラック / `sys.setrecursionlimit` / `collections.deque` と BFS / `@contextmanager` / `os.read` / `argparse` |
+| g13 | [迷路レース](g13-maze-race/) | 深さ優先で「実際に歩く」ロボットと競走する CLI ゲーム。`--show` で DFS・BFS・A* のアニメ、`--compare` で比較表 | 再帰 → 明示的なスタック / 探索をジェネレータに / `heapq` と A* / `itertools.count` / `time.perf_counter` / ジェネレータを持って `next()` で進める |
 
 ## 動かし方
 
