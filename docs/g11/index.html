@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ブラックジャック — python-study</title>
+<meta name="description" content="ディーラーと 21 を競うブラックジャック。ダブルダウンあり、ブラックジャックは 1.5 倍。チップはブラウザに残ります。CLI 版と同じ Python がブラウザでそのまま動いています。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#127183;</text></svg>">
+<link rel="stylesheet" href="https://pyscript.net/releases/2025.8.1/core.css">
+<script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #656d76;
+    --line: #d8dbe0;
+    --accent: #2f6f4e;
+    --warn: #9a6700;
+    --felt: #2e7d5b;
+    --card: #fffdf7;
+    --card-ink: #1f2328;
+    --red: #c62828;
+    --back: #2b4c7e;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c;
+      --panel: #1f2229;
+      --ink: #e6e6e3;
+      --muted: #9aa2ad;
+      --line: #333842;
+      --accent: #7fc9a1;
+      --warn: #e0b341;
+      --felt: #245741;
+      --card: #f4f1e8;
+      --red: #d9534f;
+      --back: #3b5f95;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2rem 1rem 3rem;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    line-height: 1.7;
+  }
+  main { max-width: 34rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; letter-spacing: .02em; }
+  .sub { color: var(--muted); font-size: .875rem; margin: 0 0 1.5rem; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: .75rem;
+    padding: 1.25rem;
+  }
+  .status { display: flex; justify-content: space-between; align-items: baseline;
+    flex-wrap: wrap; gap: 0 1rem; margin-bottom: .75rem; font-size: .875rem; color: var(--muted);
+    font-variant-numeric: tabular-nums; }
+  .status b { color: var(--ink); font-weight: 700; font-size: 1rem; }
+
+  /* 卓。緑のフェルトに 2 段 */
+  #table { background: var(--felt); border-radius: .75rem; padding: 1rem; color: #fff; }
+  .row { display: flex; align-items: center; gap: .5rem; min-height: 5rem; }
+  .row + .row { margin-top: .5rem; }
+  .who { width: 5.5rem; flex: none; font-size: .8125rem; font-weight: 700; }
+  .hand { display: flex; gap: .4rem; flex-wrap: wrap; }
+  .total { margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 700; white-space: nowrap; }
+
+  /* カード。角にランク、右下にマーク */
+  .c {
+    width: 3.6rem; height: 5rem; border-radius: .4rem;
+    background: var(--card); color: var(--card-ink);
+    position: relative; font-weight: 700;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, .25); border: 1px solid rgba(0, 0, 0, .08);
+    flex: none;
+  }
+  .c.red { color: var(--red); }
+  .c .r { position: absolute; top: .25rem; left: .4rem; font-size: 1.125rem; line-height: 1; }
+  .c .s { position: absolute; bottom: .25rem; right: .4rem; font-size: 1.9rem; line-height: 1; }
+  .c.back { background: repeating-linear-gradient(45deg, var(--back) 0 4px, rgba(255, 255, 255, .2) 4px 6px);
+    border-color: rgba(0, 0, 0, .2); }
+  .c.back::after { content: ""; position: absolute; inset: .3rem; border: 2px solid rgba(255, 255, 255, .55); border-radius: .25rem; }
+
+  #message {
+    margin: .75rem 0 0;
+    text-align: center;
+    font-weight: 700;
+    color: var(--warn);
+    min-height: 1.7em;
+  }
+  button {
+    font-family: inherit;
+    font-weight: 600;
+    border: 0;
+    border-radius: .5rem;
+    cursor: pointer;
+  }
+  .bets { display: flex; gap: .4rem; margin-top: .75rem; align-items: center; }
+  .bets .label { font-size: .8125rem; color: var(--muted); flex: none; }
+  .bet {
+    flex: 1;
+    padding: .5rem 0;
+    font-size: .875rem;
+    color: var(--muted);
+    background: var(--bg);
+    border: 1px solid var(--line);
+  }
+  .bet.is-on { color: var(--panel); background: var(--accent); border-color: var(--accent); }
+  .bet:disabled { opacity: .4; cursor: default; }
+  .actions { display: flex; gap: .4rem; margin-top: .5rem; }
+  .actions button {
+    flex: 1;
+    padding: .7rem;
+    font-size: 1rem;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--line);
+  }
+  .actions button.primary { color: var(--panel); background: var(--accent); border-color: var(--accent); }
+  .actions button:disabled { opacity: .45; cursor: default; }
+  #record { font-size: .8125rem; color: var(--muted); text-align: center; margin: .75rem 0 0; min-height: 1.5em; }
+  .reset { text-align: center; margin: .5rem 0 0; }
+  #reset-btn { font-size: .75rem; color: var(--muted); background: none; text-decoration: underline; padding: .25rem .5rem; }
+  #loading { color: var(--muted); font-size: .875rem; text-align: center; padding: .5rem 0; margin: .5rem 0 0; }
+  .keys { font-size: .8125rem; color: var(--muted); text-align: center; margin: .75rem 0 0; }
+  .back-link { font-size: .875rem; margin: 0 0 1rem; }
+  .back-link a { color: var(--muted); text-decoration: none; }
+  .back-link a:hover { text-decoration: underline; }
+  .note { font-size: .875rem; color: var(--muted); margin-top: 1.5rem; }
+  .note a { color: inherit; }
+  footer { margin-top: 2rem; font-size: .8125rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <p class="back-link"><a href="../">← 課題一覧</a></p>
+  <h1>ブラックジャック</h1>
+  <p class="sub">21 に近いほうが勝ち。ディーラーは 17 になるまで引きます。最初の 2 枚で 21 なら <b>ブラックジャック</b>で 1.5 倍。最初の 2 枚のときだけ、賭け金を倍にして 1 枚だけ引く<b>ダブルダウン</b>ができます。</p>
+
+  <div class="card">
+    <div class="status">
+      <span>チップ <b id="chips">100</b> 枚</span>
+      <span>賭け金 <b id="bet">10</b> 枚 ・ 山 <b id="deck">0</b> 枚</span>
+    </div>
+
+    <div id="table">
+      <div class="row">
+        <span class="who">ディーラー</span>
+        <div class="hand" id="dealer"></div>
+        <span class="total" id="dealer-total"></span>
+      </div>
+      <div class="row">
+        <span class="who">あなた</span>
+        <div class="hand" id="player"></div>
+        <span class="total" id="player-total"></span>
+      </div>
+    </div>
+
+    <p id="message"></p>
+
+    <div class="bets">
+      <span class="label">賭ける</span>
+      <button class="bet" type="button" data-bet="5">5</button>
+      <button class="bet is-on" type="button" data-bet="10">10</button>
+      <button class="bet" type="button" data-bet="25">25</button>
+      <button class="bet" type="button" data-bet="50">50</button>
+    </div>
+
+    <div class="actions">
+      <button id="deal-btn" class="primary" type="button" disabled>配る</button>
+      <button id="hit-btn" type="button" hidden>ヒット</button>
+      <button id="stand-btn" type="button" hidden>スタンド</button>
+      <button id="double-btn" type="button" hidden>ダブル</button>
+      <button id="next-btn" class="primary" type="button" hidden>次のラウンド</button>
+    </div>
+
+    <p id="record"></p>
+    <p class="keys">H ヒット / S スタンド / D ダブル / Enter 配る・次へ</p>
+    <p id="loading">Python を読み込んでいます… （初回は数秒かかります）</p>
+    <p class="reset"><button id="reset-btn" type="button">チップを 100 枚に戻す</button></p>
+  </div>
+
+  <p class="note">
+    このページは <strong>Python のコードがブラウザの中でそのまま動いています</strong>（PyScript）。
+    サーバーはなく、山の切り方も勝敗の判定もすべて手元の端末で行われます。
+    チップはこのブラウザの中だけに保存されます（localStorage）。
+  </p>
+
+  <footer>
+    ソース: <a href="https://github.com/hicocho/python-study">github.com/hicocho/python-study</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/docs/g11/game.py">このページの game.py</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/g11-blackjack/main.py">CLI 版 main.py</a>
+  </footer>
+</main>
+
+<script type="py" src="./game.py"></script>
+</body>
+</html>
