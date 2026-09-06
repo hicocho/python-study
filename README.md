@@ -33,6 +33,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g15 | [ピンボール](g15-pinball/) | 重力で落ちるボールをフリッパーで打ち返し、バンパーで得点する CLI ピンボール。斜めの壁で反射する | `math.sin` `cos` `radians` / `__matmul__` で内積 / `__truediv__` / 法線での反射 `v − 2(v·n)n` / サブステップ / `@property` で線分を作る |
 | g16 | [宇宙船](g16-spaceship/) | 慣性で滑る宇宙船で、星の引力に引かれながら 5 つのリングをくぐる CLI タイムアタック | `complex` を 2D ベクトルに / `cmath.rect` `cmath.phase` / 複素数のかけ算で回転 / 小数の `%` でループ / `0.5 ** (dt / 半減期)` / `for`-`else` |
 | g17 | [小惑星](g17-asteroids/) | 宇宙船で小惑星を弾で砕く CLI シューティング。撃つと 2 つに割れ、全部砕くと次のウェーブ | `abc.ABC` と `@abstractmethod` / `super().update(dt)` / 円と円の当たり判定 / `random.gauss` `random.uniform` / `self` から破片を作る `split` |
+| g18 | [ランキング](g18-ranking/) | g17 の小惑星に名前つきの得点表を付ける。sqlite3 に記録し、上位 10 件と自分の順位を出す | `sqlite3`（`CREATE TABLE` `INSERT` `SELECT … ORDER BY … LIMIT`、`?` で値を渡す） / `contextlib.closing` / `pathlib.Path` / `datetime.isoformat` / `unicodedata.east_asian_width` / `argparse` の `store_true` |
 
 ## 動かし方
 
