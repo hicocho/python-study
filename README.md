@@ -30,6 +30,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g12 | [迷路](g12-maze/) | 穴掘り法で作った迷路を矢印キーで歩く CLI ゲーム。`?` で最短路のヒント、`--size` `--seed` で迷路を選べる | 再帰のバックトラック / `sys.setrecursionlimit` / `collections.deque` と BFS / `@contextmanager` / `os.read` / `argparse` |
 | g13 | [迷路レース](g13-maze-race/) | 深さ優先で「実際に歩く」ロボットと競走する CLI ゲーム。`--show` で DFS・BFS・A* のアニメ、`--compare` で比較表 | 再帰 → 明示的なスタック / 探索をジェネレータに / `heapq` と A* / `itertools.count` / `time.perf_counter` / ジェネレータを持って `next()` で進める |
 | g14 | [ブロック崩し](g14-breakout/) | パドルで打ち返して 40 個のブロックを壊す CLI ゲーム。端に当てるほど横に飛び、壊すほど速くなる | 演算子オーバーロード `__add__` `__mul__` `__rmul__` `__neg__` `__abs__` `__iter__` / `float` の物理と `round` / `math.floor` / `time.monotonic` と dt |
+| g15 | [ピンボール](g15-pinball/) | 重力で落ちるボールをフリッパーで打ち返し、バンパーで得点する CLI ピンボール。斜めの壁で反射する | `math.sin` `cos` `radians` / `__matmul__` で内積 / `__truediv__` / 法線での反射 `v − 2(v·n)n` / サブステップ / `@property` で線分を作る |
 
 ## 動かし方
 
