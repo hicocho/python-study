@@ -26,6 +26,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g08 | [敵の編隊](g08-formation/) | 左右に動きながら 1 段ずつ降りてくる敵 21 体を落とす CLI シューティング。上の行は 2 発当てないと落ちない | 継承 / `super()` / メソッドの上書き / デフォルト引数 / `min`・`max` とジェネレータ式 / 状態をまとめる `class Game` |
 | g09 | [スペースインベーダー](g09-invaders/) | 撃ち返してくる敵 21 体を、バリアに隠れながら落とす CLI シューティング。自機は 3 機、ハイスコアはファイルに残る | クラス変数 / 関数の一般化 / `random.random`・`random.choice` / `any()` / ファイル入出力 `with open` / `json` / 複数の例外をまとめて受ける `except` |
 | g10 | [五目ならべ](g10-gomoku/) | 15×15 の碁盤で先に 5 個そろえたら勝ち。白は石の「形」を読む CPU。待ったで何手でも戻せる | ジェネレータ `yield` / `lambda` と `key=` / `collections.defaultdict` / 辞書内包表記 / `itertools.product` / リストをスタックに使う `pop` |
+| g11 | [ブラックジャック](g11-blackjack/) | ディーラーと 21 を競う CLI ゲーム。チップを賭けて、ダブルダウンあり、ブラックジャックは 1.5 倍 | `dataclass` / `Enum` / `@property` / `match` 文（`|`・ガード・`_`） / 型ヒント / `collections.Counter` |
 
 ## 動かし方
 
