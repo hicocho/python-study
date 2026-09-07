@@ -59,6 +59,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g41 | [将棋（CPU）](g41-shogi-cpu/) | 駒割りの評価と αβ 探索で先読みする CPU。取る手とキラームーブを先に読み、反復深化と時間制限。深さ 2 でランダムに 3 戦 3 勝 | `array` / ネガマックス αβ / MVV-LVA とキラームーブ / 反復深化と `TimeUp` 例外 / `cProfile` `pstats` / 局面数で並べ替えの効果を測る |
 | g42 | [将棋（棋譜）](g42-kifu/) | 日本語の表記で指し、KIF を書いて読み戻し、JSON で再開、zip の棋譜集。将棋 6 段階の完成形 | `re.VERBOSE` と名前付きグループ（日本語） / `unicodedata.normalize("NFKC")` / KIF の読み書き / `json` で「手順だけ」保存 / `zipfile` の追記と `infolist` / `datetime` の書式 |
 | g43 | [グラディウス風（自機と横スクロール）](g43-gradius-scroll/) | 上下の地形が流れる洞窟を飛ぶ。触れると撃墜、先へ行くほど狭い（連作 6 段階の 1 つ目） | `itertools.pairwise` で折れ線 / `bisect_right` で線分を引く / `typing.Protocol` と `@runtime_checkable` / 横スクロールと視差 / 自動操縦で難しさを決める |
+| g44 | [グラディウス風（敵の出現）](g44-gradius-enemies/) | 出現表に沿ってファン・ガルン・ダッカー・砲台が出る。正面の敵は撃ち落とし、弾はよける | `enum.auto` / `dataclass(kw_only=True)` / `functools.partial` でクラスの工場 / `itertools.groupby`（並べてから） / 動きを関数に任せる / `math.atan2` で狙う |
 
 ## 動かし方
 
