@@ -53,6 +53,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g35 | [ギャラガ風（ボスと牽引ビーム）](g35-galaga-tractor/) | ボスが降りてきてビームで自機を捕まえる。救出するとデュアルファイター | `send()` でジェネレータに値を渡す（コルーチン） / `heapq` のタイムライン / `__post_init__` / 描く先を差し替える（`CanvasScreen`） / `(enemy,) =` の 1 要素アンパック |
 | g36 | [ギャラガ風（ステージと演出）](g36-galaga-stages/) | 全滅させると次のステージ、3 の倍数は虹色のチャレンジングステージ。スコア表は CSV | `colorsys`（色相を回す） / `csv.DictWriter` `DictReader` と `dataclasses.asdict` `fields` / `io.StringIO` で文字列と行き来 / `@property` で難度 / `@cache` と `Sprite` の同一性 |
 | g37 | [将棋](g37-shogi/) | 盤と駒の動き。成り・持ち駒・打つ。2 人で交互か、ランダム CPU。相手の玉を取ったら勝ち（連作 6 段階の 1 つ目） | `IntFlag`（種類・成り・後手をビットで） / `__slots__` / `itertools.product` / `str.maketrans` `translate` で全角と漢数字 / SFEN と USI の読み書き / perft で既知の数と照合 |
+| g38 | [将棋（反則と終局）](g38-shogi-rules/) | 王手放置・二歩・打ち歩詰め・行き所のない駒を外し、詰み・千日手・連続王手で終わる。perft 4 手 = 719731 | `contextlib.contextmanager` で「指して戻す」 / Zobrist ハッシュ（`random.getrandbits` と XOR） / `collections.deque(maxlen=)` / `assert` / 辞書の順に依らない手の生成 |
 
 ## 動かし方
 
