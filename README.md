@@ -50,6 +50,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g32 | [ギャラガ風（自機とスプライト）](g32-galaga-sprites/) | 多色ドット絵の自機と敵、流れる星。撃って落とすと爆発（連作 5 段階の 1 つ目） | ドット絵をパレット＋文字列で / `str.maketrans` `translate` / トゥルーカラー ANSI と `▀` / `struct` + `zlib` で PNG を手書き / `functools.cache` / `itertools.cycle` / `shutil.get_terminal_size` |
 | g33 | [ギャラガ風（入場曲線と編隊）](g33-galaga-formation/) | 敵が 5 つの波でベジェ曲線を描いて飛来し、席に着くと編隊が呼吸する | ベジェ曲線（`math.comb` のバーンスタイン基底） / ジェネレータで 1 コマごとの位置（速さ一定） / `itertools.chain` / `math.hypot` / `math.sin` の呼吸 / `StopIteration` を受けて席へ |
 | g34 | [ギャラガ風（急降下と敵の弾）](g34-galaga-dive/) | 席の敵が状態機械で自機めがけて急降下し、弾を撃ってくる。残機 3 | `IntEnum` の状態機械 / `match` 文（`case A \| B`） / `random.choices` の重み / `@property` で残機と復活をそろえる / 自動プレイで難しさを測る |
+| g35 | [ギャラガ風（ボスと牽引ビーム）](g35-galaga-tractor/) | ボスが降りてきてビームで自機を捕まえる。救出するとデュアルファイター | `send()` でジェネレータに値を渡す（コルーチン） / `heapq` のタイムライン / `__post_init__` / 描く先を差し替える（`CanvasScreen`） / `(enemy,) =` の 1 要素アンパック |
 
 ## 動かし方
 
