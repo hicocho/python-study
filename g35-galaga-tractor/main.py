@@ -46,7 +46,7 @@ RESPAWN_DELAY = 1.5                         # 撃墜されてから戻るまで�
 BOSS_HP = 2                                 # ボスは 2 発。1 発目で紫になる
 TRACTOR_INTERVAL = 7.0                      # ボスが牽引ビームを出しに来る間隔（秒）
 TRACTOR_FIRST = 2.5                         # ボスが席に着いてから最初のビームまで
-TRACTOR_HEIGHT = 40.0                       # ビームを出すときのボスの高さ
+TRACTOR_HEIGHT = 44.0                       # ビームを出すときのボスの高さ（編隊の前に出てくる）
 BEAM_TIME = 3.0                             # ビームを出している秒数（伸びる時間を含む）
 CAPTURE_TIME = 1.2                          # 自機が吸い上げられる秒数
 RESCUE_TIME = 1.0                           # 救出した自機が横に並ぶまでの秒数
@@ -794,7 +794,7 @@ class Game:
         screen.clear()
         for x, y, speed in self.stars:
             screen.plot(int(x), int(y), (90, 90, 130) if speed < 20 else (170, 170, 220))
-        for enemy in self.enemies:
+        for enemy in sorted(self.enemies, key=lambda e: not e.in_formation):   # 席を離れた敵は手前に描く
             if enemy.alive and enemy.launched:
                 beam = self.beam_body(enemy)
                 if beam is not None:
