@@ -41,6 +41,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g23 | [チェスのルール](g23-chess-rules/) | チェック・キャスリング・アンパッサン・成り。合法手だけ指せて、チェックメイトかステイルメイトで終わる。perft 5 局面が既知の値と一致 | `@dataclass` の `__eq__` と自作 `__hash__`（`frozenset`） / `dataclasses.replace` / `functools.cached_property` / 「指してみて確かめる」合法手 / FEN 4 項目 |
 | g24 | [チェスの終局](g24-chess-endings/) | 千日手・50 手ルール・駒不足の引き分け。これでルールは全部。perft を `lru_cache` で、検証は `unittest` 11 本 | `unittest`（`TestCase` `setUp` `subTest` `assertEqual`） / `functools.lru_cache`（`cache_info` `cache_clear`） / `collections.Counter` で局面を数える / `dataclasses.field(compare=False)` / `--perft` の表 |
 | g25 | [チェスの CPU](g25-chess-cpu/) | 先読みする CPU。評価関数、ミニマックス（negamax）、αβ 枝刈り、反復深化と時間制限。18,000 局面/秒 | negamax と αβ / `math.inf` / 利きの逆引き（`:=` 代入式） / 例外で探索から抜ける（`class TimeUp(Exception)`） / `time.monotonic` の締め切り / 局面/秒を測って直す |
+| g26 | [チェスの棋譜](g26-chess-pgn/) | SAN で指して棋譜になり、PGN に保存・読み戻し・再生。他所の PGN も読める。チェス 5 段階の完成形 | `re.compile` と名前付きグループ `(?P<name>…)` / `re.VERBOSE` / `re.sub` `findall` / SAN の曖昧さ / `textwrap.fill` `shorten` / `@classmethod from_pgn`（読む＝指し直す） / `date.today().strftime` |
 
 ## 動かし方
 

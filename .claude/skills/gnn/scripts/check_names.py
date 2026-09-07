@@ -29,6 +29,8 @@ def undefined(path):
             defined.add(node.id)
         elif isinstance(node, ast.arg):
             defined.add(node.arg)
+        elif isinstance(node, ast.ExceptHandler) and node.name:   # except ValueError as error:
+            defined.add(node.name)
 
     used = {n.id for n in ast.walk(tree)
             if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
