@@ -49,6 +49,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g31 | [セーブと自動テスト](g31-save/) | コマンドの記録をセーブして続きから。指紋で改ざん検知。攻略ファイルと doctest で自動テスト（連作 5 段階の完成形） | `hashlib.sha256` / `zipfile`（`writestr` `read` `BadZipFile`） / `doctest.testmod` / `io.StringIO` と `contextlib.redirect_stdout` / 「読む＝指し直す」セーブ / `SystemExit` の終了コード |
 | g32 | [ギャラガ風（自機とスプライト）](g32-galaga-sprites/) | 多色ドット絵の自機と敵、流れる星。撃って落とすと爆発（連作 5 段階の 1 つ目） | ドット絵をパレット＋文字列で / `str.maketrans` `translate` / トゥルーカラー ANSI と `▀` / `struct` + `zlib` で PNG を手書き / `functools.cache` / `itertools.cycle` / `shutil.get_terminal_size` |
 | g33 | [ギャラガ風（入場曲線と編隊）](g33-galaga-formation/) | 敵が 5 つの波でベジェ曲線を描いて飛来し、席に着くと編隊が呼吸する | ベジェ曲線（`math.comb` のバーンスタイン基底） / ジェネレータで 1 コマごとの位置（速さ一定） / `itertools.chain` / `math.hypot` / `math.sin` の呼吸 / `StopIteration` を受けて席へ |
+| g34 | [ギャラガ風（急降下と敵の弾）](g34-galaga-dive/) | 席の敵が状態機械で自機めがけて急降下し、弾を撃ってくる。残機 3 | `IntEnum` の状態機械 / `match` 文（`case A \| B`） / `random.choices` の重み / `@property` で残機と復活をそろえる / 自動プレイで難しさを測る |
 
 ## 動かし方
 
