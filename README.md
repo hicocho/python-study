@@ -71,6 +71,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g53 | [イー・アル・カンフー風（対戦の流れ）](g53-kungfu-tournament/) | 60 秒のラウンドを 2 本先取、5 人連戦、コンティニュー、結果の表 | `__format__` で書式を持つ / `functools.total_ordering` / `datetime.timedelta` / `__enter__` `__exit__` のクラス |
 | g54 | [イー・アル・カンフー風（リプレイと記録）](g54-kungfu-replay/) | 毎コマの入力を記録して同じ試合を再生。巻き戻しの練習モード、記録の保存 | `__set_name__` の記述子 / `copy.deepcopy` と `__deepcopy__` / `itertools.zip_longest` / `shelve` |
 | g55 | [パックマン風（迷路とパックマン）](g55-pacman-maze/) | 21×13 の迷路を走り、124 個のエサを全部食べたらクリア。曲がれない向きは覚えておく先行入力、左右のトンネル（連作 6 段階の 1 つ目） | `collections.abc.Mapping` の継承 / `typing.Self` / `zip(*rows, strict=True)` / `itertools.takewhile`・`batched` / 位置を「マス + 進み具合」で持つ |
+| g56 | [パックマン風（4 体のおばけ）](g56-pacman-ghosts/) | 赤・桃・水・橙が 1 体ずつ違う狙い方で追ってくる。散らばりと追いかけを時間割で切り替え、そのたびに反転（連作 6 段階の 2 つ目） | `__init_subclass__` の自動登録 / `typing.ClassVar` / `typing.assert_never` / `itertools.accumulate` と `bisect_right` / 走るものを `Walker` にまとめる |
 
 ## 動かし方
 
