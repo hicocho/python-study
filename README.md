@@ -39,6 +39,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g21 | [アイテムとセーブ](g21-items/) | ダンジョンに落ちている薬草・剣・鎧を拾って使う。`s` でセーブして次回は続きから。記録は `dungeon.log` に | `typing.Protocol` と `@runtime_checkable` / `pickle` で `Game` をまるごと保存 / `random.getstate` `setstate` / `logging`（`getLogger` `basicConfig` `debug`） / `@classmethod` / `argparse` の `type=Path` |
 | g22 | [チェス](g22-chess/) | 盤と駒の動き。2 人で交互か、ランダムに指す CPU 相手。相手のキングを取ったら勝ち（連作 5 段階の 1 つ目） | `typing.NamedTuple`（`@property`・メソッド付き） / `__getitem__` `__setitem__` `__iter__` / FEN の読み書き / `yield` で「ぶつかるまで」 / perft で既知の数と照合 |
 | g23 | [チェスのルール](g23-chess-rules/) | チェック・キャスリング・アンパッサン・成り。合法手だけ指せて、チェックメイトかステイルメイトで終わる。perft 5 局面が既知の値と一致 | `@dataclass` の `__eq__` と自作 `__hash__`（`frozenset`） / `dataclasses.replace` / `functools.cached_property` / 「指してみて確かめる」合法手 / FEN 4 項目 |
+| g24 | [チェスの終局](g24-chess-endings/) | 千日手・50 手ルール・駒不足の引き分け。これでルールは全部。perft を `lru_cache` で、検証は `unittest` 11 本 | `unittest`（`TestCase` `setUp` `subTest` `assertEqual`） / `functools.lru_cache`（`cache_info` `cache_clear`） / `collections.Counter` で局面を数える / `dataclasses.field(compare=False)` / `--perft` の表 |
 
 ## 動かし方
 
