@@ -64,6 +64,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g46 | [グラディウス風（オプション）](g46-gradius-options/) | 自機の軌跡を遅れてたどる分身。最大 4 つ、同じ武器を撃つ。赤い敵は必ずカプセル | `array` のリングバッファ（剰余で回す） / `__len__` `__iter__` で入れ物らしく / `math.dist` / `functools.cache` と frozen dataclass / `Sprite.recolor` |
 | g47 | [グラディウス風（ビッグコア）](g47-gradius-bigcore/) | ステージの終わりのボス。4 枚のバリアの奥のコアを撃つ。揺れる狙い、撃破の演出 | `enum.Flag` でバリアの組み合わせ / `random.gauss` で揺れ / `contextlib.suppress` / `Enum` で段階 / ボスも `Enemy` の子 |
 | g48 | [グラディウス風（ステージと難度）](g48-gradius-stages/) | 砂漠・火山・要塞の 3 面を TOML の表で。ボスを倒すと次の面、周回で速く、ハイスコア | `tomllib` と `from_dict` / `functools.reduce` で難度 / `logging` は既定で黙る / `argparse` サブコマンド `set_defaults(func=)` |
+| g49 | [イー・アル・カンフー風（舞台と格闘家）](g49-kungfu-stage/) | 2 人の格闘家。歩く・跳ぶ・しゃがむ、向きは相手の方へ、押し合い、体力バー | `match` 文（状態と入力の組で分岐） / `typing.Literal` / `dataclasses.replace` で反転した絵 / `property` の setter で 0〜100 |
 
 ## 動かし方
 
