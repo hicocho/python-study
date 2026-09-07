@@ -1,0 +1,94 @@
+# 2 つ目のシナリオ。同じプログラムで別の世界が遊べることの確認
+title = "海辺の洞窟"
+start = "beach"
+goal = "boat"
+intro = "満ち潮が迫っている。洞窟を抜けて舟へ。"
+ending = "舟に乗り込んだ。潮が満ちる前に岬を回れそうだ。"
+
+[[rooms]]
+id = "beach"
+name = "浜"
+x = 0
+y = 0
+description = "濡れた砂。崖の下に、黒い洞窟の口が開いている。"
+items = ["松明"]
+[rooms.things]
+"崖" = "登れそうにない。"
+
+[[rooms]]
+id = "cave"
+name = "洞窟"
+x = 1
+y = 0
+description = "暗い。水音が奥から聞こえる。"
+[rooms.things]
+"壁" = "湿っている。何か削った跡がある。"
+
+[[rooms]]
+id = "pool"
+name = "水たまりの間"
+x = 2
+y = 0
+description = "天井から水が滴る。岩の裂け目の向こうに光が見える。"
+[rooms.things]
+"裂け目" = "人ひとりがやっと通れる幅。岩が挟まっている。"
+"岩" = "楔のように挟まっている。何かで叩けば外れるかもしれない。"
+
+[[rooms]]
+id = "ledge"
+name = "岩棚"
+x = 2
+y = 1
+description = "洞窟の奥、少し高くなった岩棚。古い木箱が置いてある。"
+[rooms.things]
+"木箱" = "蓋は釘で打ち付けてある。"
+
+[[rooms]]
+id = "boat"
+name = "舟"
+x = 3
+y = 0
+description = "岩の裂け目を抜けると、入り江に小さな舟が舫ってあった。"
+
+[[exits]]
+from = "beach"
+direction = "east"
+to = "cave"
+[[exits]]
+from = "cave"
+direction = "east"
+to = "pool"
+[[exits]]
+from = "pool"
+direction = "north"
+to = "ledge"
+[[exits]]
+from = "pool"
+direction = "east"
+to = "boat"
+
+[[puzzles]]
+type = "reveal"
+room = "ledge"
+thing = "木箱"
+item = "槌"
+text = "釘を蹴り抜いて蓋を開けると、錆びた槌が入っていた。"
+again = "木箱は空だ。"
+
+[[puzzles]]
+type = "push"
+room = "pool"
+direction = "east"
+reason = "裂け目に岩が挟まって通れない。"
+times = 5
+tool = "槌"
+partial = "押した。びくともしない（{n} 回目）。"
+with_tool = "槌で叩くと、岩が砕けて裂け目が開いた。"
+done = "5 度目でようやく岩が転がった。"
+after = "東へ、光の方へ進める。"
+already = "裂け目はもう開いている。"
+verbs = [["push", "岩"], ["use", "槌"]]
+
+[items]
+"松明" = "火は消えている。"
+"槌" = "錆びているが、まだ振れる。"

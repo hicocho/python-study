@@ -46,6 +46,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g28 | [コマンド解析](g28-parser/) | 「look at the 燭台」のような文を分解して受ける。言い換えは同じ動詞に、打ち間違いは「もしかして」 | `shlex.split` / `difflib.get_close_matches` / 逆引き辞書を内包表記で / `NamedTuple` を `match` で形分け（`(word, *_)`） / 禁則処理 |
 | g29 | [アイテムと仕掛け](g29-puzzles/) | 鍵を見つけ、扉を開け、窓をこじ開けて脱出。拾う・置く・使う・開ける・押す | 自作デコレータで動詞を登録（引数付き） / クロージャと `nonlocal` / `functools.partial` / `__call__` / `getattr` でメソッドを名前から / `Callable` の型ヒント |
 | g30 | [シナリオ](g30-scenario/) | 世界を TOML で。洋館と洞窟の 2 つを同じプログラムで。読めないファイルはどこが悪いかを文で | `tomllib` / 自作例外と `raise … from`（`__cause__`） / `__getattr__` と `from None` / `pathlib.glob` `stem` / `SystemExit` で 1 行のエラー / type ごとの作り方を辞書で |
+| g31 | [セーブと自動テスト](g31-save/) | コマンドの記録をセーブして続きから。指紋で改ざん検知。攻略ファイルと doctest で自動テスト（連作 5 段階の完成形） | `hashlib.sha256` / `zipfile`（`writestr` `read` `BadZipFile`） / `doctest.testmod` / `io.StringIO` と `contextlib.redirect_stdout` / 「読む＝指し直す」セーブ / `SystemExit` の終了コード |
 
 ## 動かし方
 
