@@ -62,6 +62,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g44 | [グラディウス風（敵の出現）](g44-gradius-enemies/) | 出現表に沿ってファン・ガルン・ダッカー・砲台が出る。正面の敵は撃ち落とし、弾はよける | `enum.auto` / `dataclass(kw_only=True)` / `functools.partial` でクラスの工場 / `itertools.groupby`（並べてから） / 動きを関数に任せる / `math.atan2` で狙う |
 | g45 | [グラディウス風（パワーアップ）](g45-gradius-powerup/) | カプセルでゲージが進み、選んで発動。スピード・ミサイル・ダブル・レーザー・シールド | `abc.ABC` `@abstractmethod` で武器の型 / `functools.singledispatch` で弾の型ごとの当たり方 / `Enum` の順送り / `register(型)` と前方参照の注意 / `id()` で dataclass を覚える |
 | g46 | [グラディウス風（オプション）](g46-gradius-options/) | 自機の軌跡を遅れてたどる分身。最大 4 つ、同じ武器を撃つ。赤い敵は必ずカプセル | `array` のリングバッファ（剰余で回す） / `__len__` `__iter__` で入れ物らしく / `math.dist` / `functools.cache` と frozen dataclass / `Sprite.recolor` |
+| g47 | [グラディウス風（ビッグコア）](g47-gradius-bigcore/) | ステージの終わりのボス。4 枚のバリアの奥のコアを撃つ。揺れる狙い、撃破の演出 | `enum.Flag` でバリアの組み合わせ / `random.gauss` で揺れ / `contextlib.suppress` / `Enum` で段階 / ボスも `Enemy` の子 |
 
 ## 動かし方
 
