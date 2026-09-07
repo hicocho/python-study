@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>イー・アル・カンフー風（技と当たり判定） — python-study</title>
+<meta name="description" content="イー・アル・カンフー風格闘ゲームの 2 段階目。パンチ・キック・しゃがみパンチ・跳び蹴り。攻撃ボックスが相手の体に重なればダメージと硬直。CLI 版と同じ Python がブラウザでそのまま動いています。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128640;</text></svg>">
+<link rel="stylesheet" href="https://pyscript.net/releases/2025.8.1/core.css">
+<script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #656d76;
+    --line: #d8dbe0;
+    --accent: #2f6f4e;
+    --warn: #9a6700;
+    --wood: #b58863;
+    --wood-light: #f0d9b5;
+    --wood-line: #8a6a45;
+    --last: #d2402a;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c;
+      --panel: #1f2229;
+      --ink: #e6e6e3;
+      --muted: #9aa2ad;
+      --line: #333842;
+      --accent: #7fc9a1;
+      --warn: #e0b341;
+      --wood: #7d5a3c;
+      --wood-light: #c9a97e;
+      --wood-line: #4f3620;
+      --last: #ff7a63;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2rem 1rem 3rem;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    line-height: 1.7;
+  }
+  main { max-width: 34rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; letter-spacing: .02em; }
+  .sub { color: var(--muted); font-size: .875rem; margin: 0 0 1.5rem; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: .75rem;
+    padding: 1.25rem;
+  }
+  .status { display: flex; justify-content: space-between; align-items: baseline;
+    gap: 1rem; margin-bottom: .75rem; }
+  #turn { font-size: .9375rem; font-weight: 700; }
+  #moves-line { color: var(--muted); font-size: .875rem; font-variant-numeric: tabular-nums; }
+  #moves-line b { color: var(--ink); font-weight: 700; }
+
+  /* ドット絵の画面。96×96 の canvas を CSS で 4 倍に */
+  .stage { display: flex; justify-content: center; }
+  #screen {
+    width: min(100%, 384px);
+    aspect-ratio: 128 / 80;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    background: #000;
+    border: 2px solid var(--line);
+    border-radius: .35rem;
+    touch-action: none;
+  }
+  .pad { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: .4rem; margin-top: .75rem; }
+  .pad-5 { grid-template-areas: "left up right" "left down right" "punch punch kick"; grid-template-columns: 1fr 1fr 1fr; }
+  .pad-5 button[data-key="up"] { grid-area: up; } .pad-5 button[data-key="down"] { grid-area: down; } .pad-5 button[data-key="left"] { grid-area: left; } .pad-5 button[data-key="right"] { grid-area: right; }
+  .pad-5 button[data-key="punch"] { grid-area: punch; } .pad-5 button[data-key="kick"] { grid-area: kick; } .pad-5 button.attack { background: var(--accent); color: var(--panel); }
+  .pad button { padding: .8rem 0; font-size: 1.1rem; color: var(--ink); background: var(--bg); border: 1px solid var(--line); user-select: none; -webkit-user-select: none; }
+  .pad button:active { background: var(--accent); color: var(--panel); }
+  #hud { font-family: ui-monospace, Menlo, monospace; font-size: .8125rem; color: var(--muted); text-align: center; margin: .5rem 0 0; white-space: pre-wrap; }
+  #message {
+    margin: .75rem 0 0;
+    text-align: center;
+    font-weight: 700;
+    color: var(--warn);
+    min-height: 1.7em;
+  }
+  .modes { display: flex; gap: .4rem; margin-top: .75rem; }
+  .row { display: flex; gap: .4rem; margin-top: .5rem; }
+  button {
+    font-family: inherit;
+    font-weight: 600;
+    border: 0;
+    border-radius: .5rem;
+    cursor: pointer;
+  }
+  .mode {
+    flex: 1;
+    padding: .55rem 0;
+    font-size: .875rem;
+    color: var(--muted);
+    background: var(--bg);
+    border: 1px solid var(--line);
+  }
+  .mode.is-on { color: var(--panel); background: var(--accent); border-color: var(--accent); }
+  .row button {
+    flex: 1;
+    padding: .7rem;
+    font-size: 1rem;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--line);
+  }
+  .row button:disabled { opacity: .45; cursor: default; }
+  #name { flex: 1; padding: .6rem .7rem; font-family: inherit; font-size: .9375rem; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: .5rem; min-width: 0; }
+  #scores { font-family: ui-monospace, Menlo, monospace; font-size: .75rem; color: var(--muted); margin: .75rem 0 0; overflow-x: auto; white-space: pre; }
+  #loading { color: var(--muted); font-size: .875rem; text-align: center; padding: .5rem 0; margin: .5rem 0 0; }
+  .keys { font-size: .8125rem; color: var(--muted); text-align: center; margin: .75rem 0 0; }
+  .back { font-size: .875rem; margin: 0 0 1rem; }
+  .back a { color: var(--muted); text-decoration: none; }
+  .back a:hover { text-decoration: underline; }
+  .note { font-size: .875rem; color: var(--muted); margin-top: 1.5rem; }
+  .note a { color: inherit; }
+  footer { margin-top: 2rem; font-size: .8125rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <p class="back"><a href="../">← 課題一覧</a></p>
+  <h1>イー・アル・カンフー風（技と当たり判定）</h1>
+  <p class="sub">イー・アル・カンフー風 6 段階の 2 つ目。<strong>Z</strong>（か J）でパンチ、<strong>X</strong>（か K）でキック。立ちパンチは上段（しゃがんだ相手には当たらない）、キックは下段の足払い、しゃがみながらパンチで下段、跳びながらキックで跳び蹴り。当たると相手は少し硬直して下がります。相手のワンはまだ練習相手で、間合いに入るとたまに技を出します。体力を 0 にすれば勝ち。</p>
+
+  <div class="card">
+    <div class="status">
+      <span id="turn">OOLONG 100</span>
+      <span id="moves-line">相手 <b id="lives">100</b> ・ 時間 <b id="progress">0.0 秒</b></span>
+    </div>
+
+    <div class="stage"><canvas id="screen" width="128" height="80"></canvas></div>
+    <p id="hud"></p>
+
+    <div class="pad pad-5">
+      <button type="button" data-key="left" disabled>◀</button>
+      <button type="button" data-key="up" disabled>▲ 跳ぶ</button>
+      <button type="button" data-key="right" disabled>▶</button>
+      <button type="button" data-key="down" disabled>▼ しゃがむ</button>
+      <button type="button" data-key="punch" class="attack" disabled>パンチ</button>
+      <button type="button" data-key="kick" class="attack" disabled>キック</button>
+    </div>
+
+    <p id="message"></p>
+
+    <div class="row">
+      <button id="auto-btn" type="button" disabled>デモを見る</button>
+      <button id="start-btn" type="button" disabled>はじめから</button>
+    </div>
+
+    <p class="keys">矢印か W A S D。← → 歩く、↑ 跳ぶ、↓ しゃがむ、Z パンチ、X キック。携帯はボタン。</p>
+    <p id="loading">Python を読み込んでいます… （初回は数秒かかります）</p>
+  </div>
+
+  <p class="note">
+    このページは <strong>Python のコードがブラウザの中でそのまま動いています</strong>（PyScript）。
+    ドット絵は Python が PNG に組み立てて（<code>struct</code> と <code>zlib</code>）、canvas に貼っています。
+  </p>
+
+  <footer>
+    ソース: <a href="https://github.com/hicocho/python-study">github.com/hicocho/python-study</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/docs/g50/game.py">このページの game.py</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/g50-kungfu-moves/main.py">CLI 版 main.py</a>
+  </footer>
+</main>
+
+<script type="py" src="./game.py"></script>
+</body>
+</html>
