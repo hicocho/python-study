@@ -57,6 +57,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g39 | [将棋（詰将棋）](g39-tsume/) | 王手を続けて玉を詰ませる。受け方は最も粘る手、次の一手のヒント。1〜5 手詰 8 題を全探索のソルバーで | 再帰ジェネレータ（`yield` と `next(gen, None)`） / `itertools.islice` で余詰 / `dataclass(slots=True)` / `time.perf_counter` / 自作例外 `SearchLimit` で上限 / `sys.setrecursionlimit` |
 | g40 | [将棋（詰将棋 df-pn）](g40-dfpn/) | 証明数・反証数で「解けそうな所」から掘り、置換表で同じ局面を省く。7 手詰まで 11 題 | df-pn（証明数・反証数・しきい値） / 置換表 `dict[int, tuple]` / `math.inf` の扱い / `itertools.count` / `operator.itemgetter` / 5 手詰の延長で 7 手詰を作る |
 | g41 | [将棋（CPU）](g41-shogi-cpu/) | 駒割りの評価と αβ 探索で先読みする CPU。取る手とキラームーブを先に読み、反復深化と時間制限。深さ 2 でランダムに 3 戦 3 勝 | `array` / ネガマックス αβ / MVV-LVA とキラームーブ / 反復深化と `TimeUp` 例外 / `cProfile` `pstats` / 局面数で並べ替えの効果を測る |
+| g42 | [将棋（棋譜）](g42-kifu/) | 日本語の表記で指し、KIF を書いて読み戻し、JSON で再開、zip の棋譜集。将棋 6 段階の完成形 | `re.VERBOSE` と名前付きグループ（日本語） / `unicodedata.normalize("NFKC")` / KIF の読み書き / `json` で「手順だけ」保存 / `zipfile` の追記と `infolist` / `datetime` の書式 |
 
 ## 動かし方
 
