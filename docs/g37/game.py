@@ -562,9 +562,16 @@ def try_move(candidates: list[Move]) -> bool:
         move = next(m for m in candidates if m.promote == want)
     before = game.board
     if game.play(move):
+        clear_selection()                                   # 描く前に選択を外す（相手の持ち駒が選ばれたままにならないように）
         after_move(before, move)
         return True
     return False
+
+
+def clear_selection():
+    global selected, selected_drop
+    selected = None
+    selected_drop = Piece.NONE
 
 
 @when("click", "#board .cell")
@@ -577,11 +584,9 @@ def on_cell(event):
 
     if selected is not None:
         if try_move([m for m in game.legal_moves if m.src == selected and m.dst == square]):
-            selected = None
             return
     elif selected_drop:
         if try_move([m for m in game.legal_moves if m.drop == selected_drop and m.dst == square]):
-            selected_drop = Piece.NONE
             return
     # 自分の駒をクリック → 選び直し。それ以外 → 選択解除
     selected = square if piece is not None and color_of(piece) == game.board.turn else None
