@@ -66,6 +66,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g48 | [グラディウス風（ステージと難度）](g48-gradius-stages/) | 砂漠・火山・要塞の 3 面を TOML の表で。ボスを倒すと次の面、周回で速く、ハイスコア | `tomllib` と `from_dict` / `functools.reduce` で難度 / `logging` は既定で黙る / `argparse` サブコマンド `set_defaults(func=)` |
 | g49 | [イー・アル・カンフー風（舞台と格闘家）](g49-kungfu-stage/) | 2 人の格闘家。歩く・跳ぶ・しゃがむ、向きは相手の方へ、押し合い、体力バー | `match` 文（状態と入力の組で分岐） / `typing.Literal` / `dataclasses.replace` で反転した絵 / `property` の setter で 0〜100 |
 | g50 | [イー・アル・カンフー風（技と当たり判定）](g50-kungfu-moves/) | パンチ・キック・しゃがみパンチ・跳び蹴り。攻撃ボックスが体に重なればダメージと硬直 | `itertools.accumulate` で累積時間 / `__next__` の自作イテレータ / `functools.wraps` のデコレータ / frozen dataclass の技の表 |
+| g51 | [イー・アル・カンフー風（最初の敵ワンと AI）](g51-kungfu-ai/) | 間合いで行動に点を付けて選ぶ AI。遅れて気づいてよける。難度 3 段階を統計で調整 | `collections.ChainMap` で設定の層 / `dataclass(order=True)` と `compare=False` / `statistics` の mean・median・pstdev |
 
 ## 動かし方
 
