@@ -791,7 +791,7 @@ class Game:
         if any(e.alive and e.in_formation and e.points == 150 for e in self.enemies):
             self.tractor_timer -= dt                        # 席にボスがいれば、間隔ごとにビームを出しに来る
             if self.tractor_timer <= 0 and self.alive:
-                self.tractor_timer = TRACTOR_FIRST
+                self.tractor_timer = TRACTOR_INTERVAL
                 self.start_tractor()
         if any(e.alive and e.in_formation for e in self.enemies):
             self.dive_timer -= dt                           # 席に着いた敵がいれば、間隔ごとに 1 体が急降下
