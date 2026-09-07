@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>チェスの CPU — python-study</title>
+<meta name="description" content="先読みする CPU と対戦するチェス。評価関数とミニマックス、αβ 枝刈り、反復深化。CLI 版と同じ Python がブラウザでそのまま動いています。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#9819;</text></svg>">
+<link rel="stylesheet" href="https://pyscript.net/releases/2025.8.1/core.css">
+<script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #656d76;
+    --line: #d8dbe0;
+    --accent: #2f6f4e;
+    --warn: #9a6700;
+    --wood: #b58863;
+    --wood-light: #f0d9b5;
+    --wood-line: #8a6a45;
+    --last: #d2402a;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c;
+      --panel: #1f2229;
+      --ink: #e6e6e3;
+      --muted: #9aa2ad;
+      --line: #333842;
+      --accent: #7fc9a1;
+      --warn: #e0b341;
+      --wood: #7d5a3c;
+      --wood-light: #c9a97e;
+      --wood-line: #4f3620;
+      --last: #ff7a63;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2rem 1rem 3rem;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    line-height: 1.7;
+  }
+  main { max-width: 34rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; letter-spacing: .02em; }
+  .sub { color: var(--muted); font-size: .875rem; margin: 0 0 1.5rem; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: .75rem;
+    padding: 1.25rem;
+  }
+  .status { display: flex; justify-content: space-between; align-items: baseline;
+    gap: 1rem; margin-bottom: .75rem; }
+  #turn { font-size: .9375rem; font-weight: 700; }
+  #moves-line { color: var(--muted); font-size: .875rem; font-variant-numeric: tabular-nums; }
+  #moves-line b { color: var(--ink); font-weight: 700; }
+
+  /* チェス盤。64 個のマスを明暗で塗り分け、駒は Unicode の記号 */
+  #board {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    width: min(100%, 27rem);
+    margin: 0 auto;
+    border: 2px solid var(--wood-line);
+    border-radius: .35rem;
+    overflow: hidden;
+    touch-action: manipulation;
+    user-select: none;
+  }
+  .cell {
+    position: relative;
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: clamp(1.4rem, 8vw, 2.4rem);
+    line-height: 1;
+  }
+  .cell.light { background: var(--wood-light); }
+  .cell.dark { background: var(--wood); }
+  .cell.white { color: #fbfbf8; text-shadow: 0 0 2px #000, 0 0 1px #000; }
+  .cell.black { color: #15181c; }
+  .cell.last { box-shadow: inset 0 0 0 100vmax rgba(210, 64, 42, .22); }
+  .cell.selected { box-shadow: inset 0 0 0 3px var(--accent); }
+  .cell.check { box-shadow: inset 0 0 0 100vmax rgba(210, 64, 42, .45); }
+  .cell.target::after { content: ""; position: absolute; inset: 38%; border-radius: 50%; background: rgba(0, 0, 0, .28); }
+  .cell.capture::after { content: ""; position: absolute; inset: 6%; border-radius: 50%; border: 4px solid rgba(210, 64, 42, .6); }
+  #board.turn-w .cell.white, #board.turn-b .cell.black, #board[class] .cell.target, #board[class] .cell.capture { cursor: pointer; }
+  .clock { margin: .25rem 0 0; text-align: center; font-size: .8125rem; color: var(--muted); font-variant-numeric: tabular-nums; min-height: 1.5em; }
+  .promo { display: flex; justify-content: center; align-items: center; gap: .5rem; margin-top: .75rem; font-size: .875rem; color: var(--muted); }
+  .promo select { font-family: inherit; font-size: .875rem; padding: .25rem .5rem; border-radius: .4rem; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+
+  #message {
+    margin: .75rem 0 0;
+    text-align: center;
+    font-weight: 700;
+    color: var(--warn);
+    min-height: 1.7em;
+  }
+  .modes { display: flex; gap: .4rem; margin-top: .75rem; }
+  .row { display: flex; gap: .4rem; margin-top: .5rem; }
+  button {
+    font-family: inherit;
+    font-weight: 600;
+    border: 0;
+    border-radius: .5rem;
+    cursor: pointer;
+  }
+  .mode {
+    flex: 1;
+    padding: .55rem 0;
+    font-size: .875rem;
+    color: var(--muted);
+    background: var(--bg);
+    border: 1px solid var(--line);
+  }
+  .mode.is-on { color: var(--panel); background: var(--accent); border-color: var(--accent); }
+  .row button {
+    flex: 1;
+    padding: .7rem;
+    font-size: 1rem;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--line);
+  }
+  .row button:disabled { opacity: .45; cursor: default; }
+  #loading { color: var(--muted); font-size: .875rem; text-align: center; padding: .5rem 0; margin: .5rem 0 0; }
+  .keys { font-size: .8125rem; color: var(--muted); text-align: center; margin: .75rem 0 0; }
+  .back { font-size: .875rem; margin: 0 0 1rem; }
+  .back a { color: var(--muted); text-decoration: none; }
+  .back a:hover { text-decoration: underline; }
+  .note { font-size: .875rem; color: var(--muted); margin-top: 1.5rem; }
+  .note a { color: inherit; }
+  footer { margin-top: 2rem; font-size: .8125rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <p class="back"><a href="../">← 課題一覧</a></p>
+  <h1>チェスの CPU</h1>
+  <p class="sub">黒は<strong>先読みする CPU</strong>。駒の価値と位置で局面を採点し、相手も最善を指すとしてミニマックス（αβ 枝刈り）で読み、1 秒の持ち時間で深さを 1 ずつ増やします。指した後に「何手読んで何局面見たか」が出ます。</p>
+
+  <div class="card">
+    <div class="status">
+      <span id="turn">白の番</span>
+      <span id="moves-line"><b id="moves">1</b> 手目</span>
+    </div>
+
+    <div id="board"></div>
+
+    <p id="message"></p>
+    <p class="clock" id="clock"></p>
+    <p class="clock" id="thought"></p>
+
+    <div class="promo">
+      <label for="promotion">ポーンが最終段に着いたら</label>
+      <select id="promotion">
+        <option value="Q" selected>クイーン</option>
+        <option value="R">ルーク</option>
+        <option value="B">ビショップ</option>
+        <option value="N">ナイト</option>
+      </select>
+    </div>
+
+    <div class="modes">
+      <button id="mode-two" class="mode" type="button">2人で交互</button>
+      <button id="mode-cpu" class="mode is-on" type="button">黒は CPU（先読み）</button>
+    </div>
+
+    <div class="row">
+      <button id="undo-btn" type="button" disabled>待った</button>
+      <button id="start-btn" type="button" disabled>はじめから</button>
+    </div>
+
+    <p class="keys">駒をクリック → 行き先をクリック。点が行けるマス、輪が取れる駒、赤いマスが直前の手。チェックされたキングは赤く光ります。</p>
+    <p id="loading">Python を読み込んでいます… （初回は数秒かかります）</p>
+  </div>
+
+  <p class="note">
+    このページは <strong>Python のコードがブラウザの中でそのまま動いています</strong>（PyScript）。
+    サーバーはなく、駒の動きの計算もすべて手元の端末で行われます。
+  </p>
+
+  <footer>
+    ソース: <a href="https://github.com/hicocho/python-study">github.com/hicocho/python-study</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/docs/g25/game.py">このページの game.py</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/g25-chess-cpu/main.py">CLI 版 main.py</a>
+  </footer>
+</main>
+
+<script type="py" src="./game.py"></script>
+</body>
+</html>
