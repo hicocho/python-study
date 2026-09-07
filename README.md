@@ -35,6 +35,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g17 | [小惑星](g17-asteroids/) | 宇宙船で小惑星を弾で砕く CLI シューティング。撃つと 2 つに割れ、全部砕くと次のウェーブ | `abc.ABC` と `@abstractmethod` / `super().update(dt)` / 円と円の当たり判定 / `random.gauss` `random.uniform` / `self` から破片を作る `split` |
 | g18 | [ランキング](g18-ranking/) | g17 の小惑星に名前つきの得点表を付ける。sqlite3 に記録し、上位 10 件と自分の順位を出す | `sqlite3`（`CREATE TABLE` `INSERT` `SELECT … ORDER BY … LIMIT`、`?` で値を渡す） / `contextlib.closing` / `pathlib.Path` / `datetime.isoformat` / `unicodedata.east_asian_width` / `argparse` の `store_true` |
 | g19 | [ダンジョン](g19-dungeon/) | 部屋と廊下をランダムに作り、霧の中を歩いて階段を探す CLI ローグライク。地下 5 階でクリア | `__contains__`（`in` を自分の型に） / `itertools.combinations` / `dataclass` の `@property` / BFS で到達を確かめる / 集合の和 `|=` |
+| g20 | [モンスター](g20-monsters/) | ダンジョンに敵。見えている敵が追ってきて噛みつく。体当たりで攻撃、へびは毒、オークは硬い | `enum.Flag`（`\|` と `in`） / `random.choices(weights=)` / ブレゼンハムの線で視線 / BFS の次の 1 歩に「通れないマス」 / `@staticmethod` |
 
 ## 動かし方
 
