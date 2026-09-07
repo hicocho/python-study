@@ -43,6 +43,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g25 | [チェスの CPU](g25-chess-cpu/) | 先読みする CPU。評価関数、ミニマックス（negamax）、αβ 枝刈り、反復深化と時間制限。18,000 局面/秒 | negamax と αβ / `math.inf` / 利きの逆引き（`:=` 代入式） / 例外で探索から抜ける（`class TimeUp(Exception)`） / `time.monotonic` の締め切り / 局面/秒を測って直す |
 | g26 | [チェスの棋譜](g26-chess-pgn/) | SAN で指して棋譜になり、PGN に保存・読み戻し・再生。他所の PGN も読める。チェス 5 段階の完成形 | `re.compile` と名前付きグループ `(?P<name>…)` / `re.VERBOSE` / `re.sub` `findall` / SAN の曖昧さ / `textwrap.fill` `shorten` / `@classmethod from_pgn`（読む＝指し直す） / `date.today().strftime` |
 | g27 | [冒険](g27-adventure/) | 夜の洋館を歩いて出口を探すテキストアドベンチャー。部屋・方角・地図（連作 5 段階の 1 つ目） | `enum.StrEnum`（値が文字列、`parse` で別名） / `textwrap.dedent` `fill` / `__str__` と `__repr__` の使い分け / `dataclass` の `field(default_factory=)` / `while`-`else` の復習 |
+| g28 | [コマンド解析](g28-parser/) | 「look at the 燭台」のような文を分解して受ける。言い換えは同じ動詞に、打ち間違いは「もしかして」 | `shlex.split` / `difflib.get_close_matches` / 逆引き辞書を内包表記で / `NamedTuple` を `match` で形分け（`(word, *_)`） / 禁則処理 |
 
 ## 動かし方
 
