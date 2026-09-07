@@ -56,6 +56,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g38 | [将棋（反則と終局）](g38-shogi-rules/) | 王手放置・二歩・打ち歩詰め・行き所のない駒を外し、詰み・千日手・連続王手で終わる。perft 4 手 = 719731 | `contextlib.contextmanager` で「指して戻す」 / Zobrist ハッシュ（`random.getrandbits` と XOR） / `collections.deque(maxlen=)` / `assert` / 辞書の順に依らない手の生成 |
 | g39 | [将棋（詰将棋）](g39-tsume/) | 王手を続けて玉を詰ませる。受け方は最も粘る手、次の一手のヒント。1〜5 手詰 8 題を全探索のソルバーで | 再帰ジェネレータ（`yield` と `next(gen, None)`） / `itertools.islice` で余詰 / `dataclass(slots=True)` / `time.perf_counter` / 自作例外 `SearchLimit` で上限 / `sys.setrecursionlimit` |
 | g40 | [将棋（詰将棋 df-pn）](g40-dfpn/) | 証明数・反証数で「解けそうな所」から掘り、置換表で同じ局面を省く。7 手詰まで 11 題 | df-pn（証明数・反証数・しきい値） / 置換表 `dict[int, tuple]` / `math.inf` の扱い / `itertools.count` / `operator.itemgetter` / 5 手詰の延長で 7 手詰を作る |
+| g41 | [将棋（CPU）](g41-shogi-cpu/) | 駒割りの評価と αβ 探索で先読みする CPU。取る手とキラームーブを先に読み、反復深化と時間制限。深さ 2 でランダムに 3 戦 3 勝 | `array` / ネガマックス αβ / MVV-LVA とキラームーブ / 反復深化と `TimeUp` 例外 / `cProfile` `pstats` / 局面数で並べ替えの効果を測る |
 
 ## 動かし方
 
