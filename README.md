@@ -52,6 +52,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g34 | [ギャラガ風（急降下と敵の弾）](g34-galaga-dive/) | 席の敵が状態機械で自機めがけて急降下し、弾を撃ってくる。残機 3 | `IntEnum` の状態機械 / `match` 文（`case A \| B`） / `random.choices` の重み / `@property` で残機と復活をそろえる / 自動プレイで難しさを測る |
 | g35 | [ギャラガ風（ボスと牽引ビーム）](g35-galaga-tractor/) | ボスが降りてきてビームで自機を捕まえる。救出するとデュアルファイター | `send()` でジェネレータに値を渡す（コルーチン） / `heapq` のタイムライン / `__post_init__` / 描く先を差し替える（`CanvasScreen`） / `(enemy,) =` の 1 要素アンパック |
 | g36 | [ギャラガ風（ステージと演出）](g36-galaga-stages/) | 全滅させると次のステージ、3 の倍数は虹色のチャレンジングステージ。スコア表は CSV | `colorsys`（色相を回す） / `csv.DictWriter` `DictReader` と `dataclasses.asdict` `fields` / `io.StringIO` で文字列と行き来 / `@property` で難度 / `@cache` と `Sprite` の同一性 |
+| g37 | [将棋](g37-shogi/) | 盤と駒の動き。成り・持ち駒・打つ。2 人で交互か、ランダム CPU。相手の玉を取ったら勝ち（連作 6 段階の 1 つ目） | `IntFlag`（種類・成り・後手をビットで） / `__slots__` / `itertools.product` / `str.maketrans` `translate` で全角と漢数字 / SFEN と USI の読み書き / perft で既知の数と照合 |
 
 ## 動かし方
 
