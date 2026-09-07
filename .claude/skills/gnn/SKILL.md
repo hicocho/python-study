@@ -63,6 +63,11 @@ Notion のページ名も `YYYYMMDD-gNN-<slug>` とこのスラグで揃える�
 物理系（リアルタイム）の課題は、**自動プレイで「成立しているか」を数字で先に確かめる**。
 追従パドル・ランダム連打・「目標へ向かう速度に合わせて加速」など、5〜10 行の操縦で 20 局回し、
 終局率・平均秒数・得点を見て定数を直す（g15 は減衰なしで 25 局中 3 局しか終わらなかった）。
+ターン制でも同じ。g20 は「階段へ最短で向かい、隣の敵を殴る」操縦 30 回で、攻撃 3・回復なしが 4 回クリア →
+攻撃 4・5 歩ごとに 1 回復で 22 回。**難しさはこの数字で決めて、README と Notion に残す**。
+
+セーブ（`pickle`）を持つ課題は、テストで `spec_from_file_location` したモジュールを
+`sys.modules["m"] = m` に入れておく（入れないと `Can't pickle <class 'm.Game'>`）。
 
 コメントの文中に `# ←` を含めない（矢印キーの説明は「矢印」と書く）。印として消される。
 
@@ -86,6 +91,8 @@ python3 .claude/skills/gnn/scripts/extract_shared.py gNN-<slug>/main.py \
 
 `--names` にはデコレータ付きの定義（`@dataclass` のクラスなど）も普通に書ける
 （デコレータ行から取る。g11 でここが抜けて `Card() takes no arguments` になった）。
+型ヒント付きの代入（`ITEM_KINDS: list[Item] = [...]`）も拾う。`--drop-methods` で落とすメソッドは
+`@classmethod` などのデコレータ行ごと落ちる（g21 で直した。残ると `IndentationError`）。
 
 ヘッダ（docstring と import 群）とブラウザ層（DOM 描画・イベント）だけを手で書き、
 `cat header.py shared.py footer.py > docs/gNN/game.py` で組み立てる。
@@ -95,6 +102,9 @@ python3 .claude/skills/gnn/scripts/extract_shared.py gNN-<slug>/main.py \
 `Segment` の a/b や `radius` をそのまま属性に入れられる。船は `<polygon>` に `transform="translate() rotate()"`）。
 
 `docs/index.html` の課題一覧にカードを 1 枚足す（既存カードと同じ形。タグは覚えた文法 4 つ）。
+
+`pickle` は PyScript でも動く。セーブは `pickle.dumps` → base64 → `localStorage`（g21）。
+`logging` は stderr → `console.error` に出るので、Playwright のエラー判定は `pageerror` を見る（console の INFO 行は除く）。
 
 ### 6. 検証は 3 つに分ける
 
