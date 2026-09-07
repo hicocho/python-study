@@ -1,0 +1,215 @@
+# 夜の洋館。g27〜g29 と同じ世界を、コードではなくデータで
+title = "夜の洋館"
+start = "entrance"
+goal = "outside"
+intro = "重い扉は背後で閉まってしまった。出口を探そう。"
+ending = "外に出た。夜明けの空気が冷たい。"
+
+[[rooms]]
+id = "entrance"
+name = "玄関"
+x = 1
+y = 0
+description = """
+重い扉は背後で閉まってしまった。
+天井の高いホールに、埃っぽい絨毯が続いている。"""
+[rooms.things]
+"扉" = "押しても引いても動かない。外から閂がかかっているようだ。"
+"絨毯" = "赤かったのだろう。踏むと埃が舞う。"
+
+[[rooms]]
+id = "dining"
+name = "食堂"
+x = 0
+y = 0
+description = """
+長いテーブルに、燭台が一つ。
+蝋はとうに燃え尽きている。"""
+[rooms.things]
+"燭台" = "銀の燭台。蝋の跡に、指で書いたような「屋根裏」の文字。"
+"テーブル" = "椅子は 12 脚。どれも埃をかぶっている。"
+
+[[rooms]]
+id = "study"
+name = "書斎"
+x = 2
+y = 0
+description = "壁一面の本棚。机の上の地図には、この館の見取り図が描かれている。"
+[rooms.things]
+"地図" = "見取り図。屋根裏の東の壁に、小さく「窓」と書き込みがある。"
+"本棚" = "背表紙の文字はかすれて読めない。1 冊だけ、逆さに差してある。"
+
+[[rooms]]
+id = "kitchen"
+name = "台所"
+x = 0
+y = 1
+description = """
+冷えた竈と、鍋がいくつか。
+奥の扉の向こうから、かすかに風の音がする。"""
+[rooms.things]
+"竈" = "灰は冷え切っている。"
+"鍋" = "空だ。底に何か固まっている。"
+
+[[rooms]]
+id = "hall"
+name = "広間"
+x = 1
+y = 1
+description = """
+シャンデリアの下、大きな階段が二階へ伸びている。
+床の埃に、自分以外の足跡はない。"""
+[rooms.things]
+"シャンデリア" = "蝋燭は 1 本も残っていない。"
+"階段" = "手すりが一部欠けている。北へ上がれる。"
+
+[[rooms]]
+id = "greenhouse"
+name = "温室"
+x = 2
+y = 1
+description = """
+ガラス越しに月が見える。
+枯れた植物の間に、細い通路が続く。"""
+items = ["鉄の棒"]
+[rooms.things]
+"植物" = "どれも枯れている。鉢の土だけがなぜか湿っている。"
+
+[[rooms]]
+id = "pantry"
+name = "貯蔵庫"
+x = 0
+y = 2
+description = """
+棚に並んだ瓶。ラベルはどれも読めない。
+ここは行き止まりのようだ。"""
+[rooms.things]
+"瓶" = "中身は黒い液体。開ける気にはなれない。"
+
+[[rooms]]
+id = "stairs"
+name = "階段の踊り場"
+x = 1
+y = 2
+description = """
+二階への階段はここで折れ曲がる。
+上には小さな扉、横には手すりの向こうにバルコニー。"""
+[rooms.things]
+"扉" = "天井の扉。梯子がかかっているが、扉には鍵穴がある。"
+
+[[rooms]]
+id = "balcony"
+name = "バルコニー"
+x = 2
+y = 2
+description = "夜風が強い。庭の向こうに門が見えるが、飛び降りるには高すぎる。"
+[rooms.things]
+"門" = "鉄の門。閉まっているが、庭に降りられれば越えられそうだ。"
+
+[[rooms]]
+id = "attic"
+name = "屋根裏"
+x = 1
+y = 3
+description = """
+梁の間を、風が抜けていく。
+東の壁の窓が、外れかけている。"""
+[rooms.things]
+"窓" = "枠ごと外れかけている。押せば外へ出られそうだ。"
+
+[[rooms]]
+id = "outside"
+name = "外"
+x = 2
+y = 3
+description = "屋根伝いに降りて、庭に立った。"
+
+# 通路。片方だけ書けば、戻り道は自動で
+[[exits]]
+from = "entrance"
+direction = "north"
+to = "hall"
+[[exits]]
+from = "entrance"
+direction = "east"
+to = "study"
+[[exits]]
+from = "entrance"
+direction = "west"
+to = "dining"
+[[exits]]
+from = "dining"
+direction = "north"
+to = "kitchen"
+[[exits]]
+from = "study"
+direction = "north"
+to = "greenhouse"
+[[exits]]
+from = "kitchen"
+direction = "east"
+to = "hall"
+[[exits]]
+from = "kitchen"
+direction = "north"
+to = "pantry"
+[[exits]]
+from = "hall"
+direction = "east"
+to = "greenhouse"
+[[exits]]
+from = "hall"
+direction = "north"
+to = "stairs"
+[[exits]]
+from = "greenhouse"
+direction = "north"
+to = "balcony"
+[[exits]]
+from = "stairs"
+direction = "east"
+to = "balcony"
+[[exits]]
+from = "stairs"
+direction = "up"
+to = "attic"
+[[exits]]
+from = "attic"
+direction = "east"
+to = "outside"
+
+# 仕掛け。type ごとに作り方が違う
+[[puzzles]]
+type = "reveal"
+room = "kitchen"
+thing = "鍋"
+item = "鍵"
+text = "鍋の底の塊を剥がすと、小さな鍵が出てきた。"
+again = "鍋はもう空だ。"
+
+[[puzzles]]
+type = "lock"
+room = "stairs"
+direction = "up"
+reason = "天井の扉には鍵がかかっている。"
+key = "鍵"
+message = "鍵が回った。扉が開き、梯子を上がれる。"
+verbs = [["open", "扉"], ["use", "鍵"]]
+
+[[puzzles]]
+type = "push"
+room = "attic"
+direction = "east"
+reason = "窓は枠が歪んで開かない。押せば動くかもしれない。"
+times = 3
+tool = "鉄の棒"
+partial = "押した。少し動いた（{n} 回目）。"
+with_tool = "鉄の棒をこじ入れると、枠ごと外れた。"
+done = "3 度目でやっと枠が外れた。"
+after = "東に、屋根の上へ出られる。"
+already = "窓はもう外れている。"
+verbs = [["push", "窓"], ["open", "窓"], ["use", "鉄の棒"]]
+
+[items]
+"鉄の棒" = "温室の支柱だったもの。てこに使えそうだ。"
+"鍵" = "鍋の底から剥がした小さな鍵。歯が 3 つ。"
