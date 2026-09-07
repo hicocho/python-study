@@ -1,0 +1,546 @@
+"""チェスのルール（ブラウザ版）
+
+CLI 版（g23-chess-rules/main.py）とルールはまったく同じ。
+定数と Square / Move / Board、ray() 〜 count_moves()、そして class Game を、
+ステップの目印コメント（# ←）を外しただけで 1 文字も変えずに持ってきている。
+
+持ってこなかったのは Board.__str__ を使う Game.render() と main() だけ。
+出口は 64 個の <div>。チェックされたキングは class で赤くする。
+"""
+
+import asyncio
+import random
+from dataclasses import dataclass, replace
+from functools import cached_property
+from typing import NamedTuple
+
+from pyscript import document, when
+
+
+# --- ここから class Game まで、CLI 版（g23-chess-rules/main.py）からそのまま ---
+
+
+FILES = "abcdefgh"                          # 筋（左から）
+RANKS = "12345678"                          # 段（下から）
+START_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -"
+WHITE = "w"
+BLACK = "b"
+
+
+PIECE_NAMES = {"K": "キング", "Q": "クイーン", "R": "ルーク", "B": "ビショップ", "N": "ナイト", "P": "ポーン"}
+
+
+KNIGHT_JUMPS = [(1, 2), (2, 1), (2, -1), (1, -2), (-1, -2), (-2, -1), (-2, 1), (-1, 2)]
+KING_STEPS = [(1, 0), (1, 1), (0, 1), (-1, 1), (-1, 0), (-1, -1), (0, -1), (1, -1)]
+ROOK_DIRS = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+BISHOP_DIRS = [(1, 1), (1, -1), (-1, 1), (-1, -1)]
+
+
+RESULT_TEXT = {
+    WHITE: "白の勝ち（チェックメイト）",
+    BLACK: "黒の勝ち（チェックメイト）",
+    "stalemate": "ステイルメイト。引き分け",
+    "quit": "やめました。",
+}
+
+
+class Square(NamedTuple):
+    """マス。file は 0〜7（a〜h）、rank は 0〜7（1〜8）。"""
+
+    file: int
+    rank: int
+
+    @property
+    def name(self) -> str:
+        return FILES[self.file] + RANKS[self.rank]
+
+    @property
+    def on_board(self) -> bool:
+        return 0 <= self.file < 8 and 0 <= self.rank < 8
+
+    @classmethod
+    def parse(cls, text: str) -> "Square":
+        """"e4" → Square(4, 3)。"""
+        return cls(FILES.index(text[0]), RANKS.index(text[1]))
+
+    def shift(self, df: int, dr: int) -> "Square":
+        return Square(self.file + df, self.rank + dr)
+
+
+class Move(NamedTuple):
+    """1 手。どこからどこへ。ポーンが最終段に着くときは成る駒。"""
+
+    src: Square
+    dst: Square
+    promotion: str | None = None
+
+    def __str__(self) -> str:
+        return self.src.name + self.dst.name + (self.promotion.lower() if self.promotion else "")
+
+    @classmethod
+    def parse(cls, text: str) -> "Move":
+        """"e2e4" や "e7e8q" → Move。"""
+        promotion = text[4].upper() if len(text) > 4 else None
+        return cls(Square.parse(text[:2]), Square.parse(text[2:4]), promotion)
+
+
+CASTLING_RIGHTS = {
+    Square.parse("e1"): "KQ", Square.parse("a1"): "Q", Square.parse("h1"): "K",
+    Square.parse("e8"): "kq", Square.parse("a8"): "q", Square.parse("h8"): "k",
+}
+
+
+CASTLING = {
+    "K": (Square.parse("g1"), Square.parse("h1"), Square.parse("f1"), (Square.parse("f1"), Square.parse("g1"))),
+    "Q": (Square.parse("c1"), Square.parse("a1"), Square.parse("d1"), (Square.parse("d1"), Square.parse("c1"), Square.parse("b1"))),
+    "k": (Square.parse("g8"), Square.parse("h8"), Square.parse("f8"), (Square.parse("f8"), Square.parse("g8"))),
+    "q": (Square.parse("c8"), Square.parse("a8"), Square.parse("d8"), (Square.parse("d8"), Square.parse("c8"), Square.parse("b8"))),
+}
+
+
+def color_of(piece: str) -> str:
+    """大文字が白、小文字が黒。"""
+    return WHITE if piece.isupper() else BLACK
+
+
+def other(color: str) -> str:
+    return BLACK if color == WHITE else WHITE
+
+
+@dataclass
+class Board:
+    """局面。駒の配置に加えて、手番・キャスリングの権利・アンパッサンできるマスを持つ。
+
+    make_move で新しい Board を作り、作ったあとは変えない（cached_property で利きを覚えるため）。
+    """
+
+    pieces: dict[Square, str]
+    turn: str = WHITE
+    castling: frozenset[str] = frozenset("KQkq")
+    en_passant: Square | None = None                        # 直前にポーンが 2 歩進んだとき、通り過ぎたマス
+
+    def __hash__(self) -> int:
+        """辞書は hash できないので、frozenset に変えてから。同じ局面なら同じ値になる。"""
+        return hash((frozenset(self.pieces.items()), self.turn, self.castling, self.en_passant))
+
+    @classmethod
+    def from_fen(cls, fen: str) -> "Board":
+        """FEN（配置 手番 キャスリング アンパッサン）を読む。"""
+        rows, turn, castling, en_passant = (fen.split() + ["-", "-"])[:4]
+        pieces: dict[Square, str] = {}
+        for i, row in enumerate(rows.split("/")):
+            rank = 7 - i
+            file = 0
+            for ch in row:
+                if ch.isdigit():
+                    file += int(ch)
+                else:
+                    pieces[Square(file, rank)] = ch
+                    file += 1
+        return cls(pieces, turn, frozenset(castling.replace("-", "")),
+                   None if en_passant == "-" else Square.parse(en_passant))
+
+    @property
+    def fen(self) -> str:
+        """局面を FEN の文字列に戻す。"""
+        rows = []
+        for rank in range(7, -1, -1):
+            row = ""
+            empty = 0
+            for file in range(8):
+                piece = self.pieces.get(Square(file, rank))
+                if piece is None:
+                    empty += 1
+                else:
+                    row += (str(empty) if empty else "") + piece
+                    empty = 0
+            rows.append(row + (str(empty) if empty else ""))
+        castling = "".join(c for c in "KQkq" if c in self.castling) or "-"
+        en_passant = self.en_passant.name if self.en_passant else "-"
+        return f"{'/'.join(rows)} {self.turn} {castling} {en_passant}"
+
+    def __getitem__(self, key: "Square | str") -> str | None:
+        """board["e4"] でも board[Square(4, 3)] でも。空きマスは None。"""
+        if isinstance(key, str):
+            key = Square.parse(key)
+        return self.pieces.get(key)
+
+    def __iter__(self):
+        """for square, piece in board: の形で駒を順に。"""
+        yield from self.pieces.items()
+
+    def king_square(self, color: str) -> Square | None:
+        king = "K" if color == WHITE else "k"
+        return next((sq for sq, piece in self if piece == king), None)
+
+    @cached_property
+    def attacked(self) -> dict[str, set[Square]]:
+        """色ごとの「利き」（その色の駒が取れるマス）。一度計算したら覚えておく。"""
+        return {color: attacked_squares(self, color) for color in (WHITE, BLACK)}
+
+    @property
+    def in_check(self) -> bool:
+        """手番のキングが相手の利きに入っているか。"""
+        return self.king_square(self.turn) in self.attacked[other(self.turn)]
+
+    def __str__(self) -> str:
+        lines = []
+        for rank in range(7, -1, -1):
+            row = " ".join(self.pieces.get(Square(file, rank), ".") for file in range(8))
+            lines.append(f"{RANKS[rank]}  {row}")
+        lines.append("   " + " ".join(FILES))
+        return "\n".join(lines)
+
+
+def ray(board: Board, start: Square, df: int, dr: int):
+    """start から (df, dr) の向きへ、駒にぶつかるまでのマス。ぶつかった駒のマスも含む。"""
+    sq = start.shift(df, dr)
+    while sq.on_board:
+        yield sq
+        if board[sq] is not None:
+            return
+        sq = sq.shift(df, dr)
+
+
+def piece_targets(board: Board, src: Square) -> list[Square]:
+    """ポーン以外の駒が届くマス（味方の駒のマスも含む＝守っているマス）。"""
+    kind = board[src].upper()
+    if kind == "N":
+        targets = [src.shift(df, dr) for df, dr in KNIGHT_JUMPS]
+    elif kind == "K":
+        targets = [src.shift(df, dr) for df, dr in KING_STEPS]
+    else:
+        dirs = {"R": ROOK_DIRS, "B": BISHOP_DIRS, "Q": ROOK_DIRS + BISHOP_DIRS}[kind]
+        targets = [sq for df, dr in dirs for sq in ray(board, src, df, dr)]
+    return [sq for sq in targets if sq.on_board]
+
+
+def pawn_attacks(src: Square, color: str) -> list[Square]:
+    """ポーンが利かせている斜め前の 2 マス。"""
+    forward = 1 if color == WHITE else -1
+    return [sq for sq in (src.shift(-1, forward), src.shift(1, forward)) if sq.on_board]
+
+
+def pawn_moves(board: Board, src: Square) -> list[Move]:
+    """ポーン。前に 1 つ（初期位置なら 2 つ）、斜め前の敵を取る。アンパッサン。最終段では成る。"""
+    color = color_of(board[src])
+    forward = 1 if color == WHITE else -1
+    home = 1 if color == WHITE else 6
+    last = 7 if color == WHITE else 0
+
+    targets = []
+    one = src.shift(0, forward)
+    if one.on_board and board[one] is None:
+        targets.append(one)
+        two = src.shift(0, 2 * forward)
+        if src.rank == home and board[two] is None:
+            targets.append(two)
+    for diag in pawn_attacks(src, color):
+        enemy = board[diag] is not None and color_of(board[diag]) != color
+        if enemy or diag == board.en_passant:
+            targets.append(diag)
+
+    moves = []
+    for dst in targets:
+        if dst.rank == last:
+            moves.extend(Move(src, dst, piece) for piece in "QRBN")
+        else:
+            moves.append(Move(src, dst))
+    return moves
+
+
+def moves_from(board: Board, src: Square) -> list[Move]:
+    """src にある駒が動けるマス（自分の駒があるマスは除く）。キングを晒すかどうかはまだ見ない。"""
+    piece = board[src]
+    if piece.upper() == "P":
+        return pawn_moves(board, src)
+    color = color_of(piece)
+    return [Move(src, dst) for dst in piece_targets(board, src)
+            if board[dst] is None or color_of(board[dst]) != color]
+
+
+def attacked_squares(board: Board, color: str) -> set[Square]:
+    """color の駒が利かせているマス全部。"""
+    result: set[Square] = set()
+    for sq, piece in board:
+        if color_of(piece) != color:
+            continue
+        if piece.upper() == "P":
+            result.update(pawn_attacks(sq, color))
+        else:
+            result.update(piece_targets(board, sq))
+    return result
+
+
+def castling_moves(board: Board) -> list[Move]:
+    """手番側のキャスリング。権利があり、間が空いていて、通り道が利きに入っていないこと。"""
+    color = board.turn
+    king = board.king_square(color)
+    if king is None or board.in_check:
+        return []
+    enemy = board.attacked[other(color)]
+    moves = []
+    for right in ("KQ" if color == WHITE else "kq"):
+        if right not in board.castling:
+            continue
+        king_dst, rook_src, rook_dst, path = CASTLING[right]
+        if all(board[sq] is None for sq in path) and not any(sq in enemy for sq in path[:2]):
+            moves.append(Move(king, king_dst))
+    return moves
+
+
+def all_moves(board: Board, color: str | None = None) -> list[Move]:
+    """color（省略なら手番）の駒が動ける手を全部（キングを晒す手も含む）。"""
+    color = color or board.turn
+    return [move for sq, piece in list(board) if color_of(piece) == color for move in moves_from(board, sq)]
+
+
+def legal_moves(board: Board) -> list[Move]:
+    """手番が指せる手。指したあとに自分のキングが取られる形になる手は除く。"""
+    moves = []
+    for move in all_moves(board) + castling_moves(board):
+        after = make_move(board, move)
+        if after.king_square(board.turn) not in after.attacked[after.turn]:
+            moves.append(move)
+    return moves
+
+
+def make_move(board: Board, move: Move) -> Board:
+    """指した後の局面を新しく作って返す。キャスリングのルーク、アンパッサンで取られるポーン、権利の更新もここで。"""
+    pieces = dict(board.pieces)
+    piece = pieces.pop(move.src)
+    kind = piece.upper()
+
+    if kind == "P" and move.dst == board.en_passant:        # アンパッサン。通り過ぎたポーンを取る
+        pieces.pop(Square(move.dst.file, move.src.rank))
+    if kind == "K" and abs(move.dst.file - move.src.file) == 2:   # キャスリング。ルークも動く
+        for right, (king_dst, rook_src, rook_dst, _) in CASTLING.items():
+            if move.dst == king_dst:
+                pieces[rook_dst] = pieces.pop(rook_src)
+    if move.promotion:
+        piece = move.promotion if color_of(piece) == WHITE else move.promotion.lower()
+    pieces[move.dst] = piece
+
+    lost = CASTLING_RIGHTS.get(move.src, "") + CASTLING_RIGHTS.get(move.dst, "")   # 動かした駒／取られた駒のぶん
+    en_passant = None
+    if kind == "P" and abs(move.dst.rank - move.src.rank) == 2:
+        en_passant = Square(move.src.file, (move.src.rank + move.dst.rank) // 2)
+
+    return replace(board, pieces=pieces, turn=other(board.turn),
+                   castling=board.castling - set(lost), en_passant=en_passant)
+
+
+def result_of(board: Board) -> str | None:
+    """終局なら結果。合法手が無ければ、チェックされていれば負け、いなければステイルメイト。"""
+    if legal_moves(board):
+        return None
+    return other(board.turn) if board.in_check else "stalemate"
+
+
+def count_moves(board: Board, depth: int) -> int:
+    """depth 手先までの合法手の組み合わせの数（perft）。"""
+    if depth == 0:
+        return 1
+    if depth == 1:
+        return len(legal_moves(board))
+    return sum(count_moves(make_move(board, move), depth - 1) for move in legal_moves(board))
+
+
+class Game:
+    """対局 1 回ぶん。局面・履歴・結果。表示と入力は持たない。"""
+
+    def __init__(self, cpu: str | None = None, seed: int | None = None):
+        if seed is not None:
+            random.seed(seed)
+        self.board = Board.from_fen(START_FEN)
+        self.history: list[tuple[Board, Move]] = []                # (指す前の局面, 手)
+        self.cpu = cpu                                              # CPU が持つ色。None なら 2 人
+        self.result: str | None = None
+
+    @property
+    def legal_moves(self) -> list[Move]:
+        return legal_moves(self.board)
+
+    @property
+    def last_move(self) -> Move | None:
+        return self.history[-1][1] if self.history else None
+
+    def play(self, move: Move) -> bool:
+        """1 手指す。合法手でなければ False。指したあと終局なら result が入る。"""
+        if self.result is not None or move not in self.legal_moves:
+            return False
+        self.history.append((self.board, move))
+        self.board = make_move(self.board, move)
+        self.result = result_of(self.board)
+        return True
+
+    def undo(self) -> bool:
+        """1 手戻す。CPU 相手なら 2 手（自分の番まで）。"""
+        if not self.history:
+            return False
+        steps = 2 if self.cpu and len(self.history) >= 2 else 1
+        for _ in range(steps):
+            self.board, _ = self.history.pop()
+        self.result = None
+        return True
+
+    def cpu_move(self) -> Move | None:
+        """CPU の番なら、合法手からランダムに 1 つ指す。"""
+        if self.result is not None or self.board.turn != self.cpu:
+            return None
+        move = random.choice(self.legal_moves)
+        self.play(move)
+        return move
+
+
+# --- ここから下はブラウザ版だけ。CLI 版の input() と render() と main() にあたる ---
+
+CPU_WAIT = 0.35                                             # CPU が考えているように見せる間
+GLYPHS = {"K": "♔", "Q": "♕", "R": "♖", "B": "♗", "N": "♘", "P": "♙",
+          "k": "♚", "q": "♛", "r": "♜", "b": "♝", "n": "♞", "p": "♟"}
+
+board_grid = document.querySelector("#board")
+turn_label = document.querySelector("#turn")
+moves_label = document.querySelector("#moves")
+message = document.querySelector("#message")
+undo_button = document.querySelector("#undo-btn")
+start_button = document.querySelector("#start-btn")
+two_button = document.querySelector("#mode-two")
+cpu_button = document.querySelector("#mode-cpu")
+promotion_select = document.querySelector("#promotion")
+
+cells = {}                                                  # Square → <div>。作るのは一度だけ
+for rank in range(7, -1, -1):
+    for file in range(8):
+        cell = document.createElement("div")
+        cell.className = "cell"                             # @when("click", "#board .cell") は登録時に探すので先に付ける
+        cell.setAttribute("data-square", Square(file, rank).name)
+        board_grid.appendChild(cell)
+        cells[Square(file, rank)] = cell
+
+game = Game(cpu=BLACK)
+selected: Square | None = None                              # クリックで選んだ駒のマス
+
+
+def cpu_thinking() -> bool:
+    return game.cpu is not None and game.board.turn == game.cpu and game.result is None
+
+
+def draw():
+    """CLI 版の Board.__str__ + Game.render() にあたる。"""
+    global selected
+    if selected is not None and game.board[selected] is None:
+        selected = None
+    targets = {m.dst for m in game.legal_moves if m.src == selected} if selected else set()
+    last = game.last_move
+
+    for square, cell in cells.items():
+        piece = game.board[square]
+        names = ["cell", "dark" if (square.file + square.rank) % 2 == 0 else "light"]
+        if piece is not None:
+            names.append("white" if color_of(piece) == WHITE else "black")
+        if square == selected:
+            names.append("selected")
+        if square in targets:
+            names.append("capture" if piece is not None else "target")
+        if last is not None and square in (last.src, last.dst):
+            names.append("last")
+        if game.board.in_check and game.result is None and square == game.board.king_square(game.board.turn):
+            names.append("check")
+        cell.className = " ".join(names)
+        cell.textContent = GLYPHS.get(piece, "")
+
+    board_grid.className = "" if game.result is not None or cpu_thinking() else f"turn-{game.board.turn}"
+    moves_label.textContent = str(len(game.history) // 2 + 1)
+    undo_button.disabled = not game.history
+    if game.result is not None:
+        turn_label.textContent = "終局"
+    elif cpu_thinking():
+        turn_label.textContent = "黒（CPU）が考え中"
+    else:
+        check = "　チェック！" if game.board.in_check else ""
+        turn_label.textContent = ("白の番" if game.board.turn == WHITE else "黒の番") + check
+
+
+def after_move(move: Move):
+    who = "白" if game.board.turn == BLACK else "黒"         # 指した側（手番はもう替わっている）
+    piece = game.board[move.dst]
+    message.textContent = f"{who} {PIECE_NAMES[piece.upper()]} {move}"
+    draw()
+    if game.result is not None:
+        message.textContent = RESULT_TEXT[game.result] + f"　{len(game.history)} 手"
+    elif cpu_thinking():
+        asyncio.ensure_future(cpu_turn())
+
+
+async def cpu_turn():
+    """CPU の手番。CLI 版との違いは、間を置くことだけ。"""
+    await asyncio.sleep(CPU_WAIT)
+    if not cpu_thinking():                                  # 待っているあいだに「待った」が押されたかもしれない
+        return
+    after_move(game.cpu_move())
+
+
+def start():
+    global game, selected
+    cpu = BLACK if cpu_button.classList.contains("is-on") else None
+    game = Game(cpu=cpu)
+    selected = None
+    message.textContent = ""
+    draw()
+
+
+@when("click", "#board .cell")
+def on_cell(event):
+    global selected
+    if game.result is not None or cpu_thinking():
+        return
+    square = Square.parse(event.target.getAttribute("data-square"))
+    piece = game.board[square]
+
+    if selected is not None:
+        promotion = None
+        if game.board[selected].upper() == "P" and square.rank in (0, 7):
+            promotion = promotion_select.value
+        move = Move(selected, square, promotion)
+        if game.play(move):
+            selected = None
+            after_move(move)
+            return
+    # 自分の駒をクリック → 選び直し。それ以外 → 選択解除
+    selected = square if piece is not None and color_of(piece) == game.board.turn else None
+    draw()
+
+
+@when("click", "#undo-btn")
+def on_undo(event):
+    global selected
+    if game.undo():
+        selected = None
+        message.textContent = "待った"
+        draw()
+
+
+@when("click", "#start-btn")
+def on_start(event):
+    start()
+
+
+@when("click", "#mode-two")
+def on_two(event):
+    two_button.classList.add("is-on")
+    cpu_button.classList.remove("is-on")
+    start()
+
+
+@when("click", "#mode-cpu")
+def on_cpu(event):
+    cpu_button.classList.add("is-on")
+    two_button.classList.remove("is-on")
+    start()
+
+
+# Pyodide の読み込みが終わってから実行される＝ここが準備完了の合図
+document.querySelector("#loading").hidden = True
+start_button.disabled = False
+draw()
