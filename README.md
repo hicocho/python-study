@@ -70,6 +70,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g52 | [イー・アル・カンフー風（武器の敵）](g52-kungfu-weapons/) | タオの火の玉、チェンの鎖、ランの手裏剣、飛ぶムー。敵ごとの動きは台本 | `yield from` でジェネレータをつなぐ台本 / `typing.Generic` `TypeVar` の `Slot[T]` / `TypedDict` の敵の表 |
 | g53 | [イー・アル・カンフー風（対戦の流れ）](g53-kungfu-tournament/) | 60 秒のラウンドを 2 本先取、5 人連戦、コンティニュー、結果の表 | `__format__` で書式を持つ / `functools.total_ordering` / `datetime.timedelta` / `__enter__` `__exit__` のクラス |
 | g54 | [イー・アル・カンフー風（リプレイと記録）](g54-kungfu-replay/) | 毎コマの入力を記録して同じ試合を再生。巻き戻しの練習モード、記録の保存 | `__set_name__` の記述子 / `copy.deepcopy` と `__deepcopy__` / `itertools.zip_longest` / `shelve` |
+| g55 | [パックマン風（迷路とパックマン）](g55-pacman-maze/) | 21×13 の迷路を走り、124 個のエサを全部食べたらクリア。曲がれない向きは覚えておく先行入力、左右のトンネル（連作 6 段階の 1 つ目） | `collections.abc.Mapping` の継承 / `typing.Self` / `zip(*rows, strict=True)` / `itertools.takewhile`・`batched` / 位置を「マス + 進み具合」で持つ |
 
 ## 動かし方
 
