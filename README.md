@@ -36,6 +36,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g18 | [ランキング](g18-ranking/) | g17 の小惑星に名前つきの得点表を付ける。sqlite3 に記録し、上位 10 件と自分の順位を出す | `sqlite3`（`CREATE TABLE` `INSERT` `SELECT … ORDER BY … LIMIT`、`?` で値を渡す） / `contextlib.closing` / `pathlib.Path` / `datetime.isoformat` / `unicodedata.east_asian_width` / `argparse` の `store_true` |
 | g19 | [ダンジョン](g19-dungeon/) | 部屋と廊下をランダムに作り、霧の中を歩いて階段を探す CLI ローグライク。地下 5 階でクリア | `__contains__`（`in` を自分の型に） / `itertools.combinations` / `dataclass` の `@property` / BFS で到達を確かめる / 集合の和 `|=` |
 | g20 | [モンスター](g20-monsters/) | ダンジョンに敵。見えている敵が追ってきて噛みつく。体当たりで攻撃、へびは毒、オークは硬い | `enum.Flag`（`\|` と `in`） / `random.choices(weights=)` / ブレゼンハムの線で視線 / BFS の次の 1 歩に「通れないマス」 / `@staticmethod` |
+| g21 | [アイテムとセーブ](g21-items/) | ダンジョンに落ちている薬草・剣・鎧を拾って使う。`s` でセーブして次回は続きから。記録は `dungeon.log` に | `typing.Protocol` と `@runtime_checkable` / `pickle` で `Game` をまるごと保存 / `random.getstate` `setstate` / `logging`（`getLogger` `basicConfig` `debug`） / `@classmethod` / `argparse` の `type=Path` |
 
 ## 動かし方
 

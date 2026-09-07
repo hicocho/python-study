@@ -34,8 +34,9 @@ def blocks(path, drop_methods):
         # @dataclass などの行はその上にある。落とさないよう最初のデコレータから取る
         start = min([node.lineno] + [d.lineno for d in getattr(node, "decorator_list", [])])
         keep = list(range(start - 1, node.end_lineno))
-        for method in drop:
-            for i in range(method.lineno - 1, method.end_lineno):
+        for method in drop:                             # 落とすメソッドも、デコレータ行（@classmethod など）から
+            first = min([method.lineno] + [d.lineno for d in method.decorator_list])
+            for i in range(first - 1, method.end_lineno):
                 keep.remove(i)
         taken = [lines[i] for i in keep]
         while taken and not taken[-1].strip():          # 落とした跡の空行を詰める
@@ -45,6 +46,8 @@ def blocks(path, drop_methods):
     for node in tree.body:
         if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
             out[node.targets[0].id] = text_of(node)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):   # X: list[T] = ... も
+            out[node.target.id] = text_of(node)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             out[node.name] = text_of(node)
         elif isinstance(node, ast.ClassDef):
