@@ -68,6 +68,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g50 | [イー・アル・カンフー風（技と当たり判定）](g50-kungfu-moves/) | パンチ・キック・しゃがみパンチ・跳び蹴り。攻撃ボックスが体に重なればダメージと硬直 | `itertools.accumulate` で累積時間 / `__next__` の自作イテレータ / `functools.wraps` のデコレータ / frozen dataclass の技の表 |
 | g51 | [イー・アル・カンフー風（最初の敵ワンと AI）](g51-kungfu-ai/) | 間合いで行動に点を付けて選ぶ AI。遅れて気づいてよける。難度 3 段階を統計で調整 | `collections.ChainMap` で設定の層 / `dataclass(order=True)` と `compare=False` / `statistics` の mean・median・pstdev |
 | g52 | [イー・アル・カンフー風（武器の敵）](g52-kungfu-weapons/) | タオの火の玉、チェンの鎖、ランの手裏剣、飛ぶムー。敵ごとの動きは台本 | `yield from` でジェネレータをつなぐ台本 / `typing.Generic` `TypeVar` の `Slot[T]` / `TypedDict` の敵の表 |
+| g53 | [イー・アル・カンフー風（対戦の流れ）](g53-kungfu-tournament/) | 60 秒のラウンドを 2 本先取、5 人連戦、コンティニュー、結果の表 | `__format__` で書式を持つ / `functools.total_ordering` / `datetime.timedelta` / `__enter__` `__exit__` のクラス |
 
 ## 動かし方
 
