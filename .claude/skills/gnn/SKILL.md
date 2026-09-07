@@ -71,6 +71,10 @@ Notion のページ名も `YYYYMMDD-gNN-<slug>` とこのスラグで揃える�
 
 コメントの文中に `# ←` を含めない（矢印キーの説明は「矢印」と書く）。印として消される。
 
+連作の後半は「前作の完成版から差分で作る」。scratchpad に `make_step5.py`（`rep(a, b)` の列）を置いて再実行できるようにし、
+ステップ 1〜4 は `gen_steps.py` で完成版から削る。`mark()` の prefix は 1 行だけ。
+テストが落ちたら先に期待値を疑う（10 本で落ちた原因の 9 割はテスト側の思い違いだった）。
+
 ### 4. 盤面プレビューで見た目を決める
 
 実装前に静的な HTML を書き、案を 3〜4 個並べて `scripts/shot.js` で撮り、自分で選ぶ。
@@ -104,6 +108,9 @@ python3 .claude/skills/gnn/scripts/extract_shared.py gNN-<slug>/main.py \
 `docs/index.html` の課題一覧にカードを 1 枚足す（既存カードと同じ形。タグは覚えた文法 4 つ）。
 
 `pickle` は PyScript でも動く。セーブは `pickle.dumps` → base64 → `localStorage`（g21）。
+データファイル（TOML など）は `<script type="py" src="./game.py" config='{"files": {"./scenarios/x.toml": "./scenarios/x.toml"}}'>`
+で仮想 FS に置く。`Path("scenarios").glob` も `tomllib` もそのまま動く（g30）。`__file__` を使う定数は共有部分に入れず header で定義する。
+クリックを受けるマスは、`@when("click", "#board .cell")` の登録前に `className = "cell"` を付けておく（後から付けるとクリックが効かない。g22）。
 `logging` は stderr → `console.error` に出るので、Playwright のエラー判定は `pageerror` を見る（console の INFO 行は除く）。
 
 ### 6. 検証は 3 つに分ける
