@@ -51,6 +51,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g33 | [ギャラガ風（入場曲線と編隊）](g33-galaga-formation/) | 敵が 5 つの波でベジェ曲線を描いて飛来し、席に着くと編隊が呼吸する | ベジェ曲線（`math.comb` のバーンスタイン基底） / ジェネレータで 1 コマごとの位置（速さ一定） / `itertools.chain` / `math.hypot` / `math.sin` の呼吸 / `StopIteration` を受けて席へ |
 | g34 | [ギャラガ風（急降下と敵の弾）](g34-galaga-dive/) | 席の敵が状態機械で自機めがけて急降下し、弾を撃ってくる。残機 3 | `IntEnum` の状態機械 / `match` 文（`case A \| B`） / `random.choices` の重み / `@property` で残機と復活をそろえる / 自動プレイで難しさを測る |
 | g35 | [ギャラガ風（ボスと牽引ビーム）](g35-galaga-tractor/) | ボスが降りてきてビームで自機を捕まえる。救出するとデュアルファイター | `send()` でジェネレータに値を渡す（コルーチン） / `heapq` のタイムライン / `__post_init__` / 描く先を差し替える（`CanvasScreen`） / `(enemy,) =` の 1 要素アンパック |
+| g36 | [ギャラガ風（ステージと演出）](g36-galaga-stages/) | 全滅させると次のステージ、3 の倍数は虹色のチャレンジングステージ。スコア表は CSV | `colorsys`（色相を回す） / `csv.DictWriter` `DictReader` と `dataclasses.asdict` `fields` / `io.StringIO` で文字列と行き来 / `@property` で難度 / `@cache` と `Sprite` の同一性 |
 
 ## 動かし方
 
