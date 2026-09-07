@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ギャラガ風（ボスと牽引ビーム） — python-study</title>
+<meta name="description" content="ギャラガ風シューティングの 4 段階目。ボスが降りてきて牽引ビームで自機を捕まえる。捕まった自機を救出するとデュアルファイター。CLI 版と同じ Python がブラウザでそのまま動いています。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128640;</text></svg>">
+<link rel="stylesheet" href="https://pyscript.net/releases/2025.8.1/core.css">
+<script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #656d76;
+    --line: #d8dbe0;
+    --accent: #2f6f4e;
+    --warn: #9a6700;
+    --wood: #b58863;
+    --wood-light: #f0d9b5;
+    --wood-line: #8a6a45;
+    --last: #d2402a;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c;
+      --panel: #1f2229;
+      --ink: #e6e6e3;
+      --muted: #9aa2ad;
+      --line: #333842;
+      --accent: #7fc9a1;
+      --warn: #e0b341;
+      --wood: #7d5a3c;
+      --wood-light: #c9a97e;
+      --wood-line: #4f3620;
+      --last: #ff7a63;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2rem 1rem 3rem;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    line-height: 1.7;
+  }
+  main { max-width: 34rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; letter-spacing: .02em; }
+  .sub { color: var(--muted); font-size: .875rem; margin: 0 0 1.5rem; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: .75rem;
+    padding: 1.25rem;
+  }
+  .status { display: flex; justify-content: space-between; align-items: baseline;
+    gap: 1rem; margin-bottom: .75rem; }
+  #turn { font-size: .9375rem; font-weight: 700; }
+  #moves-line { color: var(--muted); font-size: .875rem; font-variant-numeric: tabular-nums; }
+  #moves-line b { color: var(--ink); font-weight: 700; }
+
+  /* ドット絵の画面。96×96 の canvas を CSS で 4 倍に */
+  .stage { display: flex; justify-content: center; }
+  #screen {
+    width: min(100%, 384px);
+    aspect-ratio: 1;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    background: #000;
+    border: 2px solid var(--line);
+    border-radius: .35rem;
+    touch-action: none;
+  }
+  .pad { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: .4rem; margin-top: .75rem; }
+  .pad button { padding: .8rem 0; font-size: 1.1rem; color: var(--ink); background: var(--bg); border: 1px solid var(--line); user-select: none; -webkit-user-select: none; }
+  .pad button:active { background: var(--accent); color: var(--panel); }
+  #hud { font-family: ui-monospace, Menlo, monospace; font-size: .8125rem; color: var(--muted); text-align: center; margin: .5rem 0 0; white-space: pre-wrap; }
+  #message {
+    margin: .75rem 0 0;
+    text-align: center;
+    font-weight: 700;
+    color: var(--warn);
+    min-height: 1.7em;
+  }
+  .modes { display: flex; gap: .4rem; margin-top: .75rem; }
+  .row { display: flex; gap: .4rem; margin-top: .5rem; }
+  button {
+    font-family: inherit;
+    font-weight: 600;
+    border: 0;
+    border-radius: .5rem;
+    cursor: pointer;
+  }
+  .mode {
+    flex: 1;
+    padding: .55rem 0;
+    font-size: .875rem;
+    color: var(--muted);
+    background: var(--bg);
+    border: 1px solid var(--line);
+  }
+  .mode.is-on { color: var(--panel); background: var(--accent); border-color: var(--accent); }
+  .row button {
+    flex: 1;
+    padding: .7rem;
+    font-size: 1rem;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--line);
+  }
+  .row button:disabled { opacity: .45; cursor: default; }
+  #loading { color: var(--muted); font-size: .875rem; text-align: center; padding: .5rem 0; margin: .5rem 0 0; }
+  .keys { font-size: .8125rem; color: var(--muted); text-align: center; margin: .75rem 0 0; }
+  .back { font-size: .875rem; margin: 0 0 1rem; }
+  .back a { color: var(--muted); text-decoration: none; }
+  .back a:hover { text-decoration: underline; }
+  .note { font-size: .875rem; color: var(--muted); margin-top: 1.5rem; }
+  .note a { color: inherit; }
+  footer { margin-top: 2rem; font-size: .8125rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <p class="back"><a href="../">← 課題一覧</a></p>
+  <h1>ギャラガ風（ボスと牽引ビーム）</h1>
+  <p class="sub">5 段階の 4 つ目。ボスが降りてきて<strong>牽引ビーム</strong>を出します。ビームに入ると自機が吸い上げられて捕虜に。捕虜を連れたボスが降下中に撃ち落とすと救出できて、<strong>デュアルファイター</strong>（2 機並び・弾 2 発）に。ボスは 2 発で、1 発目で紫になります。</p>
+
+  <div class="card">
+    <div class="status">
+      <span id="turn">SCORE 0</span>
+      <span id="moves-line">残機 <b id="lives">▲▲</b> ・ 敵 <b id="left">32</b> ・ 降下 <b id="diving">0</b> ・ 命中 <b id="acc">-</b></span>
+    </div>
+
+    <div class="stage"><canvas id="screen" width="96" height="96"></canvas></div>
+    <p id="hud"></p>
+
+    <div class="pad">
+      <button type="button" data-key="left" disabled>◀</button>
+      <button type="button" data-key="fire" disabled>撃つ</button>
+      <button type="button" data-key="right" disabled>▶</button>
+    </div>
+
+    <p id="message"></p>
+
+    <div class="row">
+      <button id="start-btn" type="button" disabled>はじめから</button>
+    </div>
+
+    <p class="keys">← → か A / D で移動、スペースで撃つ（同時に 2 発まで）。降下してくる敵と赤い弾、ボスの青いビームをよける。携帯はボタンで。</p>
+    <p id="loading">Python を読み込んでいます… （初回は数秒かかります）</p>
+  </div>
+
+  <p class="note">
+    このページは <strong>Python のコードがブラウザの中でそのまま動いています</strong>（PyScript）。
+    ドット絵は Python が PNG に組み立てて（<code>struct</code> と <code>zlib</code>）、canvas に貼っています。
+  </p>
+
+  <footer>
+    ソース: <a href="https://github.com/hicocho/python-study">github.com/hicocho/python-study</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/docs/g35/game.py">このページの game.py</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/g35-galaga-tractor/main.py">CLI 版 main.py</a>
+  </footer>
+</main>
+
+<script type="py" src="./game.py"></script>
+</body>
+</html>
