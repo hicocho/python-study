@@ -371,7 +371,7 @@ class Pacman:
                 self.offset = 0.0
 
 
-ARROW = {Direction.UP: "\u2191", Direction.DOWN: "\u2193", Direction.LEFT: "\u2190", Direction.RIGHT: "\u2192"}
+ARROW = {Direction.UP: "↑", Direction.DOWN: "↓", Direction.LEFT: "←", Direction.RIGHT: "→"}
 
 
 MOUTH = (0, 1, 2, 1)                                # 口の開き方の順番（閉じ → 半開き → 開き → 半開き）
