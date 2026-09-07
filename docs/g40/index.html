@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>将棋（詰将棋 df-pn） — python-study</title>
+<meta name="description" content="将棋の 4 段階目。証明数・反証数で探す df-pn の詰将棋ソルバー。7 手詰まで 11 題。CLI 版と同じ Python がブラウザでそのまま動いています。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#9816;</text></svg>">
+<link rel="stylesheet" href="https://pyscript.net/releases/2025.8.1/core.css">
+<script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #656d76;
+    --line: #d8dbe0;
+    --accent: #2f6f4e;
+    --warn: #9a6700;
+    --wood: #b58863;
+    --wood-light: #f0d9b5;
+    --wood-line: #8a6a45;
+    --last: #d2402a;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c;
+      --panel: #1f2229;
+      --ink: #e6e6e3;
+      --muted: #9aa2ad;
+      --line: #333842;
+      --accent: #7fc9a1;
+      --warn: #e0b341;
+      --wood: #7d5a3c;
+      --wood-light: #c9a97e;
+      --wood-line: #4f3620;
+      --last: #ff7a63;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2rem 1rem 3rem;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    line-height: 1.7;
+  }
+  main { max-width: 34rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; letter-spacing: .02em; }
+  .sub { color: var(--muted); font-size: .875rem; margin: 0 0 1.5rem; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: .75rem;
+    padding: 1.25rem;
+  }
+  .status { display: flex; justify-content: space-between; align-items: baseline;
+    gap: 1rem; margin-bottom: .75rem; }
+  #turn { font-size: .9375rem; font-weight: 700; }
+  #moves-line { color: var(--muted); font-size: .875rem; font-variant-numeric: tabular-nums; }
+  #moves-line b { color: var(--ink); font-weight: 700; }
+
+  /* チェス盤。64 個のマスを明暗で塗り分け、駒は Unicode の記号 */
+  #board {
+    display: grid;
+    grid-template-columns: repeat(9, 1fr);
+    width: min(100%, 27rem);
+    margin: 0 auto;
+    border: 2px solid var(--wood-line);
+    background: var(--wood-line);
+    gap: 1px;
+    border-radius: .35rem;
+    overflow: hidden;
+    touch-action: manipulation;
+    user-select: none;
+  }
+  .cell {
+    position: relative;
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--wood-light);
+    font-size: clamp(1rem, 5.2vw, 1.6rem);
+    line-height: 1;
+    color: #15181c;
+    font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif;
+    font-weight: 600;
+  }
+  .cell.gote { transform: rotate(180deg); }
+  .cell.promoted { color: #b3261e; }
+  .cell.check { box-shadow: inset 0 0 0 100vmax rgba(210, 64, 42, .45); }
+  .cell.last { box-shadow: inset 0 0 0 100vmax rgba(210, 64, 42, .22); }
+  .cell.selected { box-shadow: inset 0 0 0 3px var(--accent); }
+  .cell.target::after { content: ""; position: absolute; inset: 38%; border-radius: 50%; background: rgba(0, 0, 0, .28); }
+  .cell.capture::after { content: ""; position: absolute; inset: 6%; border-radius: 50%; border: 4px solid rgba(210, 64, 42, .6); }
+  #board.turn-b .cell.sente, #board.turn-w .cell.gote, #board[class] .cell.target, #board[class] .cell.capture { cursor: pointer; }
+  .hand { display: flex; flex-wrap: wrap; gap: .35rem; min-height: 2.4rem; align-items: center; margin: .5rem auto; width: min(100%, 27rem); font-size: .875rem; color: var(--muted); }
+  .hand button { padding: .3rem .55rem; font-size: 1rem; color: var(--ink); background: var(--wood-light); border: 1px solid var(--wood-line); border-radius: .4rem; font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif; }
+  .hand button.selected { box-shadow: inset 0 0 0 3px var(--accent); }
+  .hand button[hidden] { display: none; }
+  .hand.gote button { transform: rotate(180deg); }
+  @media (prefers-color-scheme: dark) { .cell { color: #15181c; } }
+  .promo { display: flex; justify-content: center; align-items: center; gap: .5rem; margin-top: .75rem; font-size: .875rem; color: var(--muted); }
+  .promo select { font-family: inherit; font-size: .875rem; padding: .25rem .5rem; border-radius: .4rem; border: 1px solid var(--line); background: var(--bg); color: var(--ink); }
+
+  #message {
+    margin: .75rem 0 0;
+    text-align: center;
+    font-weight: 700;
+    color: var(--warn);
+    min-height: 1.7em;
+  }
+  .modes { display: flex; gap: .4rem; margin-top: .75rem; }
+  .row { display: flex; gap: .4rem; margin-top: .5rem; }
+  button {
+    font-family: inherit;
+    font-weight: 600;
+    border: 0;
+    border-radius: .5rem;
+    cursor: pointer;
+  }
+  .mode {
+    flex: 1;
+    padding: .55rem 0;
+    font-size: .875rem;
+    color: var(--muted);
+    background: var(--bg);
+    border: 1px solid var(--line);
+  }
+  .mode.is-on { color: var(--panel); background: var(--accent); border-color: var(--accent); }
+  .row button {
+    flex: 1;
+    padding: .7rem;
+    font-size: 1rem;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--line);
+  }
+  .row button:disabled { opacity: .45; cursor: default; }
+  #loading { color: var(--muted); font-size: .875rem; text-align: center; padding: .5rem 0; margin: .5rem 0 0; }
+  .keys { font-size: .8125rem; color: var(--muted); text-align: center; margin: .75rem 0 0; }
+  .back { font-size: .875rem; margin: 0 0 1rem; }
+  .back a { color: var(--muted); text-decoration: none; }
+  .back a:hover { text-decoration: underline; }
+  .note { font-size: .875rem; color: var(--muted); margin-top: 1.5rem; }
+  .note a { color: inherit; }
+  footer { margin-top: 2rem; font-size: .8125rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <p class="back"><a href="../">← 課題一覧</a></p>
+  <h1>将棋（詰将棋 df-pn）</h1>
+  <p class="sub">将棋 6 段階の 4 つ目。ソルバーを<strong>df-pn</strong>（証明数・反証数探索）に替え、<strong>7 手詰</strong>が解けるようになりました。1 手詰から 7 手詰まで 11 題。先手（あなた）は王手だけ、後手は最も粘る受け。「次の一手」でヒント（答えから外れたときは df-pn が探し直します）。</p>
+
+  <div class="card">
+    <div class="status">
+      <span id="turn">先手の番</span>
+      <span id="moves-line"><b id="moves">1</b> 手目</span>
+    </div>
+
+    <div id="hand-w" class="hand gote"><span>☖</span>
+      <button type="button" data-kind="HI" hidden>飛</button><button type="button" data-kind="KA" hidden>角</button><button type="button" data-kind="KI" hidden>金</button><button type="button" data-kind="GI" hidden>銀</button><button type="button" data-kind="KE" hidden>桂</button><button type="button" data-kind="KY" hidden>香</button><button type="button" data-kind="FU" hidden>歩</button>
+    </div>
+    <div id="board"></div>
+    <div id="hand-b" class="hand"><span>☗</span>
+      <button type="button" data-kind="HI" hidden>飛</button><button type="button" data-kind="KA" hidden>角</button><button type="button" data-kind="KI" hidden>金</button><button type="button" data-kind="GI" hidden>銀</button><button type="button" data-kind="KE" hidden>桂</button><button type="button" data-kind="KY" hidden>香</button><button type="button" data-kind="FU" hidden>歩</button>
+    </div>
+
+    <p id="message"></p>
+
+    <div class="promo">
+      <label for="problem">問題</label>
+      <select id="problem"></select>
+    </div>
+    <div class="promo">
+      <label for="promotion">敵陣に入ったら</label>
+      <select id="promotion">
+        <option value="1" selected>成る</option>
+        <option value="0">成らない</option>
+      </select>
+    </div>
+
+    <div class="modes">
+      <button id="mode-tsume" class="mode is-on" type="button">詰将棋</button>
+      <button id="mode-cpu" class="mode" type="button">平手（後手はランダム CPU）</button>
+    </div>
+
+    <div class="row">
+      <button id="hint-btn" type="button" disabled>次の一手</button>
+      <button id="undo-btn" type="button" disabled>待った</button>
+      <button id="start-btn" type="button" disabled>はじめから</button>
+    </div>
+
+    <p class="keys">駒をクリック → 行き先をクリック。持ち駒を打つときは、持ち駒のボタン → 空きマス。詰将棋では点が「王手になる手」だけ出ます。輪が取れる駒、赤いマスが直前の手。手数を超えると失敗、「はじめから」でやり直し。成れないとき（歩の一段目など）は自動で成ります。</p>
+    <p id="loading">Python を読み込んでいます… （初回は数秒かかります）</p>
+  </div>
+
+  <p class="note">
+    このページは <strong>Python のコードがブラウザの中でそのまま動いています</strong>（PyScript）。
+    サーバーはなく、駒の動きの計算もすべて手元の端末で行われます。
+  </p>
+
+  <footer>
+    ソース: <a href="https://github.com/hicocho/python-study">github.com/hicocho/python-study</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/docs/g40/game.py">このページの game.py</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/g40-dfpn/main.py">CLI 版 main.py</a>
+  </footer>
+</main>
+
+<script type="py" src="./game.py"></script>
+</body>
+</html>
