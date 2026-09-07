@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>アイテムと仕掛け — python-study</title>
+<meta name="description" content="鍵を見つけ、扉を開け、窓をこじ開けて脱出するテキストアドベンチャー。拾う・使う・開ける・押す。CLI 版と同じ Python がブラウザでそのまま動いています。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128273;</text></svg>">
+<link rel="stylesheet" href="https://pyscript.net/releases/2025.8.1/core.css">
+<script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #656d76;
+    --line: #d8dbe0;
+    --accent: #2f6f4e;
+    --warn: #9a6700;
+    --wood: #b58863;
+    --wood-light: #f0d9b5;
+    --wood-line: #8a6a45;
+    --last: #d2402a;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c;
+      --panel: #1f2229;
+      --ink: #e6e6e3;
+      --muted: #9aa2ad;
+      --line: #333842;
+      --accent: #7fc9a1;
+      --warn: #e0b341;
+      --wood: #7d5a3c;
+      --wood-light: #c9a97e;
+      --wood-line: #4f3620;
+      --last: #ff7a63;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2rem 1rem 3rem;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    line-height: 1.7;
+  }
+  main { max-width: 34rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; letter-spacing: .02em; }
+  .sub { color: var(--muted); font-size: .875rem; margin: 0 0 1.5rem; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: .75rem;
+    padding: 1.25rem;
+  }
+  .status { display: flex; justify-content: space-between; align-items: baseline;
+    gap: 1rem; margin-bottom: .75rem; }
+  #turn { font-size: .9375rem; font-weight: 700; }
+  #moves-line { color: var(--muted); font-size: .875rem; font-variant-numeric: tabular-nums; }
+  #moves-line b { color: var(--ink); font-weight: 700; }
+
+  /* 冒険。文章のログと、方角のボタン */
+  #log {
+    margin: 0;
+    padding: .9rem 1rem;
+    min-height: 14rem;
+    max-height: 22rem;
+    overflow-y: auto;
+    font: .9rem/1.7 -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    white-space: pre-wrap;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: .5rem;
+  }
+  #log .cmd { color: var(--accent); font-weight: 700; }
+  #log .warn { color: var(--warn); }
+  #map {
+    margin: .75rem 0 0;
+    padding: .6rem .8rem;
+    font: .8125rem/1.5 ui-monospace, Menlo, monospace;
+    white-space: pre;
+    overflow-x: auto;
+    background: var(--bg);
+    border: 1px dashed var(--line);
+    border-radius: .5rem;
+    min-height: 3rem;
+  }
+  .clock { margin: .5rem 0 0; font-size: .8125rem; color: var(--muted); }
+  .compass { display: grid; grid-template-columns: repeat(5, 1fr); gap: .35rem; margin-top: .75rem; }
+  .compass button { padding: .6rem 0; font-size: .9375rem; color: var(--ink); background: var(--bg); border: 1px solid var(--line); }
+  .compass button:disabled { opacity: .35; cursor: default; }
+  .compass .blank { visibility: hidden; }
+  .cmdline { display: flex; gap: .4rem; margin-top: .75rem; }
+  .cmdline input { flex: 1; font: 1rem/1.4 ui-monospace, Menlo, monospace; padding: .55rem .7rem; border: 1px solid var(--line); border-radius: .5rem; background: var(--bg); color: var(--ink); }
+  .cmdline button { padding: .55rem .9rem; font-size: .9375rem; color: var(--panel); background: var(--accent); }
+  #message {
+    margin: .75rem 0 0;
+    text-align: center;
+    font-weight: 700;
+    color: var(--warn);
+    min-height: 1.7em;
+  }
+  .modes { display: flex; gap: .4rem; margin-top: .75rem; }
+  .row { display: flex; gap: .4rem; margin-top: .5rem; }
+  button {
+    font-family: inherit;
+    font-weight: 600;
+    border: 0;
+    border-radius: .5rem;
+    cursor: pointer;
+  }
+  .mode {
+    flex: 1;
+    padding: .55rem 0;
+    font-size: .875rem;
+    color: var(--muted);
+    background: var(--bg);
+    border: 1px solid var(--line);
+  }
+  .mode.is-on { color: var(--panel); background: var(--accent); border-color: var(--accent); }
+  .row button {
+    flex: 1;
+    padding: .7rem;
+    font-size: 1rem;
+    color: var(--ink);
+    background: var(--bg);
+    border: 1px solid var(--line);
+  }
+  .row button:disabled { opacity: .45; cursor: default; }
+  #loading { color: var(--muted); font-size: .875rem; text-align: center; padding: .5rem 0; margin: .5rem 0 0; }
+  .keys { font-size: .8125rem; color: var(--muted); text-align: center; margin: .75rem 0 0; }
+  .back { font-size: .875rem; margin: 0 0 1rem; }
+  .back a { color: var(--muted); text-decoration: none; }
+  .back a:hover { text-decoration: underline; }
+  .note { font-size: .875rem; color: var(--muted); margin-top: 1.5rem; }
+  .note a { color: inherit; }
+  footer { margin-top: 2rem; font-size: .8125rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <p class="back"><a href="../">← 課題一覧</a></p>
+  <h1>アイテムと仕掛け</h1>
+  <p class="sub">屋根裏への扉には鍵がかかり、窓は歪んで開かない。<code>look 鍋</code> で調べ、<code>take 鍵</code> で拾い、<code>open 扉</code> <code>use 鉄の棒</code> <code>push 窓</code> で仕掛けを解いて脱出します。<code>inventory</code> で持ち物、<code>help</code> で使える言葉。5 段階の 3 つ目。</p>
+
+  <div class="card">
+    <div class="status">
+      <span id="turn">玄関</span>
+      <span id="moves-line"><b id="moves">0</b> 歩 ・ 部屋 <b id="rooms">1</b>/<span id="total">11</span> ・ 仕掛け <b id="solved">0</b>/2</span>
+    </div>
+
+    <pre id="log"></pre>
+    <pre id="map"></pre>
+    <p class="clock" id="bag">持ち物: なし</p>
+
+    <div class="compass">
+      <span class="blank"></span>
+      <button type="button" data-dir="north" disabled>北</button>
+      <span class="blank"></span>
+      <button type="button" data-dir="up" disabled>上</button>
+      <button type="button" data-cmd="map" disabled>地図</button>
+      <button type="button" data-dir="west" disabled>西</button>
+      <button type="button" data-dir="south" disabled>南</button>
+      <button type="button" data-dir="east" disabled>東</button>
+      <button type="button" data-dir="down" disabled>下</button>
+      <button type="button" data-cmd="help" disabled>help</button>
+    </div>
+
+    <form class="cmdline" id="form">
+      <input id="cmd" type="text" autocomplete="off" placeholder="look 鍋 / take 鍵 / open 扉 / use 鉄の棒 …" disabled>
+      <button type="submit" id="send" disabled>実行</button>
+    </form>
+
+    <p id="message"></p>
+
+    <div class="row">
+      <button id="start-btn" type="button" disabled>はじめから</button>
+    </div>
+
+    <p class="keys">鍵はどこかの部屋の中に隠れています。落ちているものは <code>take</code>、持ち物は <code>use</code>。</p>
+    <p id="loading">Python を読み込んでいます… （初回は数秒かかります）</p>
+  </div>
+
+  <p class="note">
+    このページは <strong>Python のコードがブラウザの中でそのまま動いています</strong>（PyScript）。
+    部屋も文章も地図も、CLI 版と同じ <code>Game</code> が作っています。
+  </p>
+
+  <footer>
+    ソース: <a href="https://github.com/hicocho/python-study">github.com/hicocho/python-study</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/docs/g29/game.py">このページの game.py</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/g29-puzzles/main.py">CLI 版 main.py</a>
+  </footer>
+</main>
+
+<script type="py" src="./game.py"></script>
+</body>
+</html>
