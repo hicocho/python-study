@@ -47,6 +47,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g29 | [アイテムと仕掛け](g29-puzzles/) | 鍵を見つけ、扉を開け、窓をこじ開けて脱出。拾う・置く・使う・開ける・押す | 自作デコレータで動詞を登録（引数付き） / クロージャと `nonlocal` / `functools.partial` / `__call__` / `getattr` でメソッドを名前から / `Callable` の型ヒント |
 | g30 | [シナリオ](g30-scenario/) | 世界を TOML で。洋館と洞窟の 2 つを同じプログラムで。読めないファイルはどこが悪いかを文で | `tomllib` / 自作例外と `raise … from`（`__cause__`） / `__getattr__` と `from None` / `pathlib.glob` `stem` / `SystemExit` で 1 行のエラー / type ごとの作り方を辞書で |
 | g31 | [セーブと自動テスト](g31-save/) | コマンドの記録をセーブして続きから。指紋で改ざん検知。攻略ファイルと doctest で自動テスト（連作 5 段階の完成形） | `hashlib.sha256` / `zipfile`（`writestr` `read` `BadZipFile`） / `doctest.testmod` / `io.StringIO` と `contextlib.redirect_stdout` / 「読む＝指し直す」セーブ / `SystemExit` の終了コード |
+| g32 | [ギャラガ風（自機とスプライト）](g32-galaga-sprites/) | 多色ドット絵の自機と敵、流れる星。撃って落とすと爆発（連作 5 段階の 1 つ目） | ドット絵をパレット＋文字列で / `str.maketrans` `translate` / トゥルーカラー ANSI と `▀` / `struct` + `zlib` で PNG を手書き / `functools.cache` / `itertools.cycle` / `shutil.get_terminal_size` |
 
 ## 動かし方
 
