@@ -48,6 +48,8 @@ def blocks(path, drop_methods):
             out[node.targets[0].id] = text_of(node)
         elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):   # X: list[T] = ... も
             out[node.target.id] = text_of(node)
+        elif isinstance(node, ast.TypeAlias) and isinstance(node.name, ast.Name):   # type X = ... も
+            out[node.name.id] = text_of(node)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             out[node.name] = text_of(node)
         elif isinstance(node, ast.ClassDef):
