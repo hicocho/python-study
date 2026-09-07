@@ -61,6 +61,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g43 | [グラディウス風（自機と横スクロール）](g43-gradius-scroll/) | 上下の地形が流れる洞窟を飛ぶ。触れると撃墜、先へ行くほど狭い（連作 6 段階の 1 つ目） | `itertools.pairwise` で折れ線 / `bisect_right` で線分を引く / `typing.Protocol` と `@runtime_checkable` / 横スクロールと視差 / 自動操縦で難しさを決める |
 | g44 | [グラディウス風（敵の出現）](g44-gradius-enemies/) | 出現表に沿ってファン・ガルン・ダッカー・砲台が出る。正面の敵は撃ち落とし、弾はよける | `enum.auto` / `dataclass(kw_only=True)` / `functools.partial` でクラスの工場 / `itertools.groupby`（並べてから） / 動きを関数に任せる / `math.atan2` で狙う |
 | g45 | [グラディウス風（パワーアップ）](g45-gradius-powerup/) | カプセルでゲージが進み、選んで発動。スピード・ミサイル・ダブル・レーザー・シールド | `abc.ABC` `@abstractmethod` で武器の型 / `functools.singledispatch` で弾の型ごとの当たり方 / `Enum` の順送り / `register(型)` と前方参照の注意 / `id()` で dataclass を覚える |
+| g46 | [グラディウス風（オプション）](g46-gradius-options/) | 自機の軌跡を遅れてたどる分身。最大 4 つ、同じ武器を撃つ。赤い敵は必ずカプセル | `array` のリングバッファ（剰余で回す） / `__len__` `__iter__` で入れ物らしく / `math.dist` / `functools.cache` と frozen dataclass / `Sprite.recolor` |
 
 ## 動かし方
 
