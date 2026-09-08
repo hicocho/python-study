@@ -84,6 +84,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g66 | [物理の積み木（パチンコで崩す）](g66-physics-slingshot/) | 石を撃って積み木を崩し、標的を割って得点。面は 3 つ、記録も残る（物理 3 段階の完成形） | `enum.IntEnum` / `itertools.groupby`（並べてからでないと分かれない）/ `bisect.insort` / `contextlib.suppress` / `copy.deepcopy` で先を読む |
 | g67 | [倉庫のロボット（自作ミニ言語）](g67-robot-lang/) | `move 3` と書いてロボットに荷物を運ばせる。字句解析から実行まで自作で、書き間違いは行と桁と `^` で指す（自作言語 3 段階の 1 つ目） | `re.finditer` と名前付きの枠（`(?P<name>...)`）/ 位置を持つ `Token` / 自作の例外に `report()` を持たせる / ジェネレータで 1 コマずつ実行 |
 | g68 | [倉庫のロボット2（繰り返しと条件）](g68-robot-loops/) | `repeat` `if` `while` を足し、再帰下降で構文木を作って実行。書き間違いは全部まとめて報告（自作言語 3 段階の 2 つ目） | 再帰下降パーサ（優先順位＝呼び出しの深さ）/ `functools.singledispatch` / `textwrap.indent` / `ExceptionGroup` と `except*` |
+| g69 | [倉庫のロボット3（変数と手順）](g69-robot-procs/) | `set` の変数と `to` の手順、再帰まで書ける自作言語の完成形。手順の中の変数は外に漏れない（自作言語 3 段階の完成形） | `collections.ChainMap` でスコープ / `operator` の関数を表に入れる / 書き間違いと実行時エラーを分ける / 再帰と深さの見張り |
 
 ## 動かし方
 
