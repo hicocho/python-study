@@ -74,6 +74,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g56 | [パックマン風（4 体のおばけ）](g56-pacman-ghosts/) | 赤・桃・水・橙が 1 体ずつ違う狙い方で追ってくる。散らばりと追いかけを時間割で切り替え、そのたびに反転（連作 6 段階の 2 つ目） | `__init_subclass__` の自動登録 / `typing.ClassVar` / `typing.assert_never` / `itertools.accumulate` と `bisect_right` / 走るものを `Walker` にまとめる |
 | g57 | [パックマン風（パワーエサとイジケ）](g57-pacman-power/) | パワーエサでおばけが青くなって逃げ、捕まえると 200・400・800・1600 点。目玉だけになって巣へ帰る（連作 6 段階の 3 つ目） | `type` 文（PEP 695 の型エイリアス） / `functools.singledispatchmethod` / `typing.Final` / `str.maketrans` と `translate` / `assert_never` の回収 |
 | g58 | [パックマン風（ステージと果物）](g58-pacman-stages/) | 全部食べると次の面へ。面が進むとおばけが速くなりイジケが短くなる。途中に出る果物はボーナス（連作 6 段階の 4 つ目） | `fractions.Fraction` / `collections.abc.Sequence` の継承 / `itertools.repeat` と `chain` / `singledispatchmethod` に register を足す |
+| g59 | [パックマン風（演出とアトラクトモード）](g59-pacman-scenes/) | 放っておくとデモが流れ、キーを押すと始まる。READY! の間、捕まって消える動き、面クリアの点滅（連作 6 段階の 5 つ目） | `enum` の `_generate_next_value_` / `functools.partialmethod` / `math.atan2` で絵を作る / 3×5 の英字フォント |
 
 ## 動かし方
 
