@@ -81,6 +81,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g63 | [推理ゲーム風（証言の矛盾と告発）](g63-mystery-verdict/) | 食い違う 2 つの証言を突きつけて言い直させ、最後に犯人・手口・動機を指名して採点（推理もの 3 段階の完成形） | `copy.replace()`（Python 3.13） / `dataclasses.field(metadata=)` と `fields()` / 証言を「誰・いつ・どこ」に分けて矛盾を 1 行で |
 | g64 | [物理の積み木（剛体の箱）](g64-physics-boxes/) | 重力・跳ね返り・摩擦・回転を自分で書いた物理エンジン。落ちて弾んで転がり、止まると眠って完全に静止する（物理 3 段階の 1 つ目） | 複素数で剛体（`1j` をかけて 90 度回す） / 撃力での衝突解決 / クーロン摩擦 / 眠り（sleeping） / 固定の刻み幅 |
 | g65 | [物理の積み木（箱どうしの衝突）](g65-physics-stack/) | 分離軸で重なりを見つけ、撃力で押し返す。箱が積めるので塔が建ち、重い塊をぶつけると崩れる（物理 3 段階の 2 つ目） | 分離軸法（SAT）と `min(key=)` / `typing.NamedTuple` / `math.inf` を質量に入れる / 撃力の 2 体版 / `@dataclass(slots=True)` |
+| g66 | [物理の積み木（パチンコで崩す）](g66-physics-slingshot/) | 石を撃って積み木を崩し、標的を割って得点。面は 3 つ、記録も残る（物理 3 段階の完成形） | `enum.IntEnum` / `itertools.groupby`（並べてからでないと分かれない）/ `bisect.insort` / `contextlib.suppress` / `copy.deepcopy` で先を読む |
 
 ## 動かし方
 

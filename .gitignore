@@ -21,3 +21,6 @@ highscore.json
 
 # g60 の遊んだ記録（遊んだ結果なのでコミットしない）
 records.jsonl
+
+# g66 のパチンコの記録（遊んだ結果なのでコミットしない）
+records.json
