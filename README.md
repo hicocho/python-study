@@ -79,6 +79,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g61 | [推理ゲーム風（現場と聞き込み）](g61-mystery-scene/) | コマンド選択式の推理もの。街を回って調べ、人に聞き、手がかりを集める。手がかりが揃うと聞ける話が増える（事件はオリジナル） | `collections.abc.Set` の継承 / `typing.NewType` / `dataclasses.KW_ONLY` / `string.Template` / 長方形の重ね合わせで絵を作る |
 | g62 | [推理ゲーム風（推理ノートと手がかりの地図）](g62-mystery-notes/) | 一度見た選択肢は消えるので残りが一目で分かる。集めた手がかりは層に並べた図に。事件が詰まないかも機械で確かめる | `graphlib.TopologicalSorter`（`static_order` と `prepare`/`get_ready`）/ `graphlib.CycleError` / `itertools.filterfalse` |
 | g63 | [推理ゲーム風（証言の矛盾と告発）](g63-mystery-verdict/) | 食い違う 2 つの証言を突きつけて言い直させ、最後に犯人・手口・動機を指名して採点（推理もの 3 段階の完成形） | `copy.replace()`（Python 3.13） / `dataclasses.field(metadata=)` と `fields()` / 証言を「誰・いつ・どこ」に分けて矛盾を 1 行で |
+| g64 | [物理の積み木（剛体の箱）](g64-physics-boxes/) | 重力・跳ね返り・摩擦・回転を自分で書いた物理エンジン。落ちて弾んで転がり、止まると眠って完全に静止する（物理 3 段階の 1 つ目） | 複素数で剛体（`1j` をかけて 90 度回す） / 撃力での衝突解決 / クーロン摩擦 / 眠り（sleeping） / 固定の刻み幅 |
 
 ## 動かし方
 
