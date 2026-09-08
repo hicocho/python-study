@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>街づくり2（需給と人口と災害） — python-study</title>
+<meta name="description" content="月を進めると資源が配られ、満ち足りた家に人が入り、税が入る。火事と洪水も起きます。近い順に配るのは heapq.merge、満足度は math.prod。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#127962;</text></svg>">
+<link rel="stylesheet" href="https://pyscript.net/releases/2025.8.1/core.css">
+<script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #656d76;
+    --line: #d8dbe0;
+    --accent: #2f6f4e;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c;
+      --panel: #1f2229;
+      --ink: #e6e6e3;
+      --muted: #9aa2ad;
+      --line: #333842;
+      --accent: #7fc9a1;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2rem 1rem 3rem;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    line-height: 1.7;
+  }
+  main { max-width: 34rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; letter-spacing: .02em; }
+  .sub { color: var(--muted); font-size: .875rem; margin: 0 0 1.5rem; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: .75rem;
+    padding: 1.25rem;
+  }
+  .status { display: flex; justify-content: space-between; align-items: baseline;
+    gap: 1rem; margin-bottom: .75rem; color: var(--muted); font-size: .875rem;
+    font-variant-numeric: tabular-nums; }
+  .status b { color: var(--ink); font-weight: 700; }
+
+  /* ドット絵の画面。126×80 の canvas を CSS で 4 倍に */
+  .stage { display: flex; justify-content: center; }
+  #screen {
+    width: min(100%, 504px);
+    aspect-ratio: 128 / 80;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    background: #000;
+    border: 2px solid var(--line);
+    border-radius: .35rem;
+    touch-action: none;
+    cursor: crosshair;
+  }
+  .pad { display: grid; gap: .4rem; margin-top: .75rem;
+    grid-template-columns: 1fr 1.4fr 1fr; }
+  .pad button { padding: .8rem 0; font-size: 1.05rem; font-family: inherit; font-weight: 600;
+    color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+    border-radius: .5rem; cursor: pointer; user-select: none; -webkit-user-select: none; }
+  .pad button:active { background: var(--accent); color: var(--panel); }
+  .pad { grid-template-columns: 1fr 1fr 1fr; }
+  .pad #example { grid-column: 2 / 4; }
+  #program { width: 100%; box-sizing: border-box; margin-top: .75rem; min-height: 15em;
+    font-family: ui-monospace, Menlo, monospace; font-size: .8125rem; line-height: 1.5;
+    color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+    border-radius: .5rem; padding: .6rem .7rem; resize: vertical; }
+  #lines { font-family: ui-monospace, Menlo, monospace; font-size: .75rem; color: var(--muted);
+    margin: .5rem 0 0; white-space: pre; overflow-x: auto; }
+  #tree { font-family: ui-monospace, Menlo, monospace; font-size: .75rem; color: var(--muted);
+    margin: .4rem 0 0; white-space: pre; overflow-x: auto; }
+  details { margin-top: .6rem; }
+  summary { font-size: .8125rem; color: var(--muted); cursor: pointer; }
+  #message { font-family: ui-monospace, Menlo, monospace; font-size: .75rem; margin: .5rem 0 0;
+    white-space: pre; overflow-x: auto; min-height: 3.4em; color: var(--muted); }
+  #message.bad { color: #d1495b; }
+  #message.done { color: var(--accent); font-weight: 700; }
+  #message { min-height: 2.6em; }
+  label { display: block; font-size: .8125rem; color: var(--muted); margin-top: .75rem; }
+  .legend { display: flex; flex-wrap: wrap; gap: .25rem .9rem; margin: .6rem 0 0;
+    font-size: .8125rem; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: .35rem; }
+  .legend i { width: .8rem; height: .8rem; border-radius: .15rem; display: inline-block; }
+  .howto { margin: .75rem 0 0; padding: .7rem .8rem; background: var(--bg);
+    border: 1px solid var(--line); border-radius: .5rem; font-size: .8125rem; }
+  .howto b { color: var(--ink); }
+  .howto ol { margin: .4rem 0 0; padding-left: 1.2rem; }
+  .howto li { margin: .15rem 0; }
+  .howto code { background: transparent; }
+  table.words { border-collapse: collapse; font-size: .8125rem; margin-top: .4rem; }
+  table.words td { border-top: 1px solid var(--line); padding: .25rem .6rem .25rem 0;
+    vertical-align: top; }
+  table.words td:first-child { font-family: ui-monospace, Menlo, monospace;
+    white-space: nowrap; color: var(--ink); }
+  #lines-title { font-size: .8125rem; color: var(--muted); margin: .75rem 0 0; }
+  #loading { color: var(--muted); font-size: .875rem; text-align: center; padding: .5rem 0; margin: .5rem 0 0; }
+  .keys { font-size: .8125rem; color: var(--muted); text-align: center; margin: .75rem 0 0; }
+  .back { font-size: .875rem; margin: 0 0 1rem; }
+  .back a { color: var(--muted); text-decoration: none; }
+  .back a:hover { text-decoration: underline; }
+  .note { font-size: .875rem; color: var(--muted); margin-top: 1.5rem; }
+  .note a { color: inherit; }
+  footer { margin-top: 2rem; font-size: .8125rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <p class="back"><a href="../">← 課題一覧</a></p>
+  <h1>街づくり2（需給と人口と災害）</h1>
+  <p class="sub">街づくり 3 段階の <strong>2 つ目</strong>。<strong>月が進むと資源が配られ、満ち足りた家に人が入ります</strong>。人が増えれば税が入り、建物が増えれば維持費もかさむ。そして<strong>火事と洪水</strong>が起きます。30 か月で<strong>人口 60 人</strong>が目標。</p>
+
+  <div class="card">
+    <div class="status">
+      <span><b id="month">0/30</b> 月 ・ 人 <b id="people">0/60</b></span>
+      <span>財布 <b id="purse">0</b> ・ 足りない <b id="lack">—</b> ・ 選択 <b id="picked">-</b></span>
+    </div>
+
+    <div class="stage"><canvas id="screen" width="128" height="80"></canvas></div>
+    <p class="legend">
+      <span><i style="background:#e8b040"></i>黄枠＝何かが足りていない</span>
+      <span><i style="background:#d05858"></i>赤枠＝道につながっていない</span>
+      <span><i style="background:#343034"></i>焼け跡（建て直すと半額）</span>
+      <span><i style="background:#2c5684"></i>川（道だけ橋に）</span>
+    </p>
+    <div class="howto">
+      <b>やること</b>：<b>30 か月で人口 60 人</b>。家は<b>電気・水・食べもの</b>が全部そろって初めて人が住みます。
+      <ol>
+        <li>まず道を引き、<b>発電所・井戸・畑</b>を建てる（道に触れていないと届きません）。</li>
+        <li>家を建てて、<b>次の月</b>を押す。足りないものが上に出ます。</li>
+        <li>足りないものの建物を足す → また次の月。人が増えると税が入ります。</li>
+      </ol>
+      <b>火事と洪水</b>が起きます。焼け跡に建て直すと<b>半額</b>。道が切れると供給が届かないので、まっ先に直してください。
+    </div>
+
+    <div class="pad" id="pad"></div>
+
+    <div class="pad tools">
+      <button type="button" data-key="month">▶ 次の月</button>
+      <button type="button" data-key="remove">こわす</button>
+      <button type="button" data-key="reset">はじめから</button>
+    </div>
+
+    <details><summary>建てられるもの（一覧）</summary>
+      <table class="words">
+        <tr><td>道路 5 円</td><td>これでつなぐ。川の上は橋（+15 円）。毎月 0.2</td></tr>
+        <tr><td>家 25 円</td><td>電気・水・食べものが全部そろえば 4 人、品物も届けば 5 人</td></tr>
+        <tr><td>畑 20 円</td><td>食べものを 4 軒ぶん。水が要る。丘には建てられない。毎月 0.5</td></tr>
+        <tr><td>店 40 円</td><td>品物を 6 軒ぶん。電気が要る。毎月 1</td></tr>
+        <tr><td>発電所 30 円</td><td>電気を 4 軒ぶん。毎月 1</td></tr>
+        <tr><td>井戸 15 円</td><td>水を 6 軒ぶん。毎月 0.5</td></tr>
+        <tr><td>公園 10 円</td><td>今はただの飾り。毎月 0.5</td></tr>
+      </table>
+    </details>
+
+    <pre id="message"></pre>
+    <p id="loading">Python を読み込んでいます… （初回は数秒かかります）</p>
+  </div>
+
+  <p class="note">
+    このページは <strong>Python のコードがブラウザの中でそのまま動いています</strong>（PyScript）。
+    面の表も、標的の割れ方も、得点の内訳も、キーを受ける obey() も CLI 版と 1 文字も違いません。
+  </p>
+
+  <footer>
+    ソース: <a href="https://github.com/hicocho/python-study">github.com/hicocho/python-study</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/docs/g71/game.py">このページの game.py</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/g71-town-life/main.py">CLI 版 main.py</a>
+  </footer>
+</main>
+
+<script type="py" src="./game.py"></script>
+</body>
+</html>
