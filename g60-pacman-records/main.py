@@ -1,0 +1,1473 @@
+"""パックマン風 — 完成: 記録と分析。遊んだ結果を 1 行 1 件で残し、--stats で得点の散らばりや死因の内訳を出す。"""
+
+import argparse
+import base64
+import json
+import os
+import random
+import select
+import shutil
+import struct
+import sys
+import termios
+import time
+import tty
+import zlib
+from bisect import bisect_right
+from collections import Counter, deque
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
+from dataclasses import InitVar, astuple, dataclass, field, fields
+from enum import Enum, auto
+from functools import cache, partialmethod, singledispatchmethod
+from fractions import Fraction
+from datetime import datetime
+from math import atan2, radians
+from itertools import accumulate, batched, chain, count, islice, repeat, takewhile
+from pathlib import Path
+from statistics import mean, quantiles
+from operator import attrgetter
+from types import MappingProxyType
+from typing import ClassVar, Final, Self, assert_never
+
+WALL = "#"
+DOOR = "-"                                          # 巣の扉。パックマンは通れない
+PELLET = "."
+POWER = "o"
+EMPTY = " "
+START = "P"                                         # パックマンの出発点（エサは無い）
+FPS = 30
+SPEED = 6.0                                         # 自機が 1 秒に進むマス数
+TUNNEL_SLOW = 0.5                                   # トンネルの中ではおばけがさらに遅くなる
+PELLET_SCORE = 10
+POWER_SCORE = 50
+LIVES = 3
+FRIGHT_BLINK = 2.0                                  # 残りこの秒数から白く点滅して知らせる
+FRIGHT_SPEED = 3.6                                  # イジケているおばけは遅い
+EATEN_SPEED = 12.0                                  # 目玉だけになると速く巣へ帰る
+GHOST_SCORES: Final = (200, 400, 800, 1600)         # 続けて食べるほど倍々に
+POPUP_TIME = 1.0                                    # 点数をその場に出しておく秒数
+FRUIT_CELL = (10, 8)                                # 果物が出るマス（巣の下）
+FRUIT_TIME = 9.0                                    # 果物が置かれている秒数
+FRUIT_AT = (60, 160)                                # エサをこの数だけ食べたら果物が出る
+READY_TIME = 2.0                                    # 「READY!」を出しておく秒数
+CLEAR_TIME = 1.6                                    # 面をクリアしたあと迷路が点滅する秒数
+OVER_TIME = 3.0                                     # 「GAME OVER」を出しておく秒数
+DEATH_TIME = 1.4                                    # 捕まってから消えるまでの秒数
+RECORDS_PATH = Path(__file__).with_name("records.jsonl")    # 記録の置き場所
+HOME_SEAT = (10, 6)                                 # 目玉が帰る巣の中
+CATCH_RANGE = 0.7                                   # これより近づくと捕まる（マス単位）
+DOOR_CELL = (10, 5)                                 # 巣の扉
+HOME_EXIT = (10, 4)                                 # 扉のすぐ外。おばけはまずここを目指す
+TUNNEL_ROW = 7
+
+type Cell = tuple[int, int]                         # 迷路のマスの位置。この 1 行で全部の注釈が短くなる
+
+RESULT_TEXT = {
+    "quit": "やめました。{game.level} 面、{game.score} 点、これまでの最高 {game.records.best} 点。",
+}
+
+MAZE_TEXT = """
+#####################
+#.........#.........#
+#o###.###.#.###.###o#
+#...................#
+#.#####.## ##.#####.#
+#....##.##-##.##....#
+####.##.#   #.##.####
+.....##.#####.##.....
+####.##...P...##.####
+#.........#.........#
+#o##.####.#.####.##o#
+#...................#
+#####################
+"""
+
+
+class Maze(Mapping):                                # Mapping を継承すると get・items・in がついてくる
+    """迷路 1 枚。(x, y) から文字を引ける読み取り専用の入れ物。"""
+
+    def __init__(self, rows: tuple[str, ...]):
+        self.rows = rows
+
+    @classmethod
+    def from_text(cls, text: str) -> Self:          # 戻り値が「このクラス」だと書ける
+        """三重引用符の迷路から作る。行の幅がそろっていなければここで気づく。"""
+        rows = tuple(line for line in text.splitlines() if line.strip())
+        list(zip(*rows, strict=True))               # 幅が違う行があると ValueError。zip は遅延なので list で使い切る
+        return cls(rows)
+
+    # --- Mapping が求める 3 つ。これだけ書けば残りは Mapping が用意する ---
+    def __getitem__(self, pos: Cell) -> str:
+        x, y = pos
+        if not (0 <= x < self.width and 0 <= y < self.height):
+            raise KeyError(pos)                     # IndexError ではなく KeyError。get の既定値が効くようになる
+        return self.rows[y][x]
+
+    def __iter__(self):
+        return ((x, y) for y in range(self.height) for x in range(self.width))
+
+    def __len__(self) -> int:
+        return self.width * self.height
+
+    @property
+    def width(self) -> int:
+        return len(self.rows[0])
+
+    @property
+    def height(self) -> int:
+        return len(self.rows)
+
+    def wall(self, pos: Cell) -> bool:
+        """パックマンが通れないマスか。迷路の外も壁とみなす。"""
+        return self.get(pos, WALL) in (WALL, DOOR)  # 外は KeyError → get の既定値 WALL
+
+    def ahead(self, pos: Cell, d: "Direction") -> Cell:
+        """pos の d 方向の隣。左右は端で反対側につながる（トンネル）。"""
+        x, y = pos
+        return (x + d.dx) % self.width, y + d.dy                                # 横だけ剰余で回す
+
+    def corridor(self, pos: Cell, d: "Direction") -> list[Cell]:
+        """pos から d の向きに、壁にぶつかるまでのマスを順に。トンネルも通る。"""
+        ahead = (self.reach(pos, d, n) for n in count(1))                                # 1 マス先、2 マス先…と無限に作り
+        return list(takewhile(lambda p: not self.wall(p), ahead))                        # 壁が出るまでで打ち切る
+
+    def reach(self, pos: Cell, d: "Direction", n: int) -> Cell:
+        """pos から d の向きに n マス先。"""
+        x, y = pos
+        return (x + d.dx * n) % self.width, y + d.dy * n
+
+    def start(self) -> Cell:
+        """P の位置。"""
+        for pos, ch in self.items():                # items も Mapping が用意したもの
+            if ch == START:
+                return pos
+        raise ValueError("出発点 P がありません")
+
+    def pellets(self) -> dict[Cell, str]:
+        """エサの一覧。{(x, y): "." または "o"}"""
+        return {pos: ch for pos, ch in self.items() if ch in (PELLET, POWER)}
+
+
+class Direction(Enum):
+    """4 方向。値がそのまま (dx, dy) のベクトル。"""
+
+    UP = (0, -1)
+    DOWN = (0, 1)
+    LEFT = (-1, 0)
+    RIGHT = (1, 0)
+
+    @property
+    def dx(self) -> int:
+        return self.value[0]
+
+    @property
+    def dy(self) -> int:
+        return self.value[1]
+
+    @property
+    def opposite(self) -> Self:                     # 戻り値も Direction。Self と書けば名前を繰り返さずに済む
+        return Direction((-self.dx, -self.dy))      # 値から逆引きできるのが Enum の便利なところ
+
+
+KEY_TO_DIR = MappingProxyType({                     # 定数の辞書。うっかり書き換えると TypeError になる
+    "up": Direction.UP, "down": Direction.DOWN, "left": Direction.LEFT, "right": Direction.RIGHT,
+})
+
+
+CELL = 6                                            # 1 マス = 6 ドット
+HUD_H = 8                                           # 上の得点欄の高さ
+WIDTH = 21 * CELL                                   # 126 ドット
+HEIGHT = HUD_H + 13 * CELL                          # 86 ドット → 端末では 43 行
+
+WALL_COLOR = (33, 33, 222)                          # 本家の青い壁
+DOOR_COLOR = (255, 184, 255)
+PELLET_COLOR = (255, 184, 151)
+PAC_COLOR = (255, 255, 0)
+TEXT_COLOR = (222, 222, 255)
+
+GHOST_COLORS = {"R": (255, 0, 0), "P": (255, 184, 222), "C": (0, 255, 222), "O": (255, 184, 82)}
+FRUIT_COLORS = {"G": (0, 200, 60), "A": (255, 140, 0), "M": (140, 220, 90)}   # 果物のヘタと実の色
+PALETTE = {"Y": PAC_COLOR, "W": (255, 255, 255), "K": (0, 0, 0), "U": (33, 33, 222),
+           "B": (66, 66, 255)} | GHOST_COLORS | FRUIT_COLORS
+
+
+def tunnel_cells(maze: Maze) -> frozenset[Cell]:
+    """左右の端でつながっている通路のマス。ここではおばけが遅くなる。"""
+    cells = set()
+    for edge, d in (((0, TUNNEL_ROW), Direction.RIGHT), ((maze.width - 1, TUNNEL_ROW), Direction.LEFT)):
+        cells.add(edge)
+        cells.update(maze.corridor(edge, d))
+    return frozenset(cells)
+
+
+TUNNEL = tunnel_cells(Maze.from_text(MAZE_TEXT))
+
+
+@dataclass(frozen=True)
+class Sprite:
+    """ドット絵 1 枚。rows は 1 行 1 文字列で、文字がパレットの色、. が透明。"""
+
+    name: str
+    rows: tuple[str, ...]
+    palette: dict[str, tuple[int, int, int]] = field(default_factory=lambda: PALETTE, hash=False, compare=False)
+
+    @property
+    def width(self) -> int:
+        return len(self.rows[0])
+
+    @property
+    def height(self) -> int:
+        return len(self.rows)
+
+    @property
+    def pixels(self) -> list[tuple[int, int, tuple[int, int, int]]]:
+        """(x, y, 色) の一覧。透明は含まない。"""
+        return [(x, y, self.palette[ch]) for y, row in enumerate(self.rows) for x, ch in enumerate(row) if ch != "."]
+
+    def __str__(self) -> str:
+        return "\n".join(self.rows)
+
+
+def sprite(name: str, art: str) -> Sprite:
+    """三重引用符のドット絵から Sprite を作る。空行は無視、幅は最長の行にそろえる。"""
+    rows = [line for line in art.splitlines() if line.strip()]
+    width = max(len(r) for r in rows)
+    return Sprite(name, tuple(r.ljust(width, ".") for r in rows))
+
+
+def turned(spr: Sprite, name: str, quarter: int) -> Sprite:
+    """右向きの絵を 90° ずつ回して、上・左・下向きを作る。"""
+    rows = spr.rows
+    for _ in range(quarter % 4):
+        rows = tuple("".join(col) for col in zip(*rows[::-1]))   # 時計回りに 90°
+    return Sprite(name, rows)
+
+
+PAC_RIGHT = [
+    sprite("pac-0", """
+..YYY..
+.YYYYY.
+YYYYYYY
+YYYYYYY
+YYYYYYY
+.YYYYY.
+..YYY..
+"""),
+    sprite("pac-1", """
+..YYY..
+.YYYYY.
+YYYYY..
+YYYY...
+YYYYY..
+.YYYYY.
+..YYY..
+"""),
+    sprite("pac-2", """
+..YYY..
+.YYYY..
+YYYY...
+YYY....
+YYYY...
+.YYYY..
+..YYY..
+"""),
+]
+# 向きごとに 3 コマ。右の絵を回して作る（LEFT は 2 回転 = 180°）
+PAC_SPRITES = {
+    d: [turned(s, f"pac-{d.name.lower()}-{i}", q) for i, s in enumerate(PAC_RIGHT)]
+    for d, q in ((Direction.RIGHT, 0), (Direction.DOWN, 1), (Direction.LEFT, 2), (Direction.UP, 3))
+}
+
+# おばけの体。# が体の色、W が白目、. は透明。黒目は向きに合わせてあとから置く
+GHOST_BODY = ("..###..",
+              ".#####.",
+              "#######",
+              "#WW#WW#",
+              "#WW#WW#",
+              "#######",
+              "#.#.#.#")
+PUPILS = {                                          # 黒目を置く位置（左目と右目で 2 ドットずつ）
+    Direction.LEFT:  ((1, 3), (1, 4), (4, 3), (4, 4)),
+    Direction.RIGHT: ((2, 3), (2, 4), (5, 3), (5, 4)),
+    Direction.UP:    ((1, 3), (2, 3), (4, 3), (5, 3)),
+    Direction.DOWN:  ((1, 4), (2, 4), (4, 4), (5, 4)),
+}
+
+
+def ghost_sprite(label: str, color: str, d: Direction) -> Sprite:
+    """おばけ 1 枚。体の色と目の向きだけが違う。名前を分けないと data_uri の @cache がぶつかる。"""
+    rows = [list(row.replace("#", color)) for row in GHOST_BODY]
+    for x, y in PUPILS[d]:
+        rows[y][x] = "U"
+    return Sprite(f"ghost-{label}-{d.name.lower()}", tuple("".join(row) for row in rows))
+
+
+# 3×5 の数字。1 桁ぶんを 15 文字の 1 本の文字列で書き、batched で 3 文字ずつ切って行に戻す
+DIGIT_FLAT = {
+    "0": "WWWW.WW.WW.WWWW", "1": ".W.WW..W..W.WWW", "2": "WWW..WWWWW..WWW", "3": "WWW..WWWW..WWWW",
+    "4": "W.WW.WWWW..W..W", "5": "WWWW..WWW..WWWW", "6": "WWWW..WWWW.WWWW", "7": "WWW..W..W..W..W",
+    "8": "WWWW.WWWWW.WWWW", "9": "WWWW.WWWW..WWWW",
+}
+DIGITS = {ch: Sprite(f"digit-{ch}", tuple("".join(row) for row in batched(flat, 3)))   # 15 文字を 3 文字ずつ 5 行に
+          for ch, flat in DIGIT_FLAT.items()}
+
+
+# 3×5 の英字。数字と同じく、1 文字を 15 文字の 1 本の文字列で書いて batched で 3 文字ずつ 5 行に戻す
+LETTER_FLAT = {
+    "A": "WWWW.WWWWW.WW.W", "B": "WW.W.WWW.W.WWW.", "C": "WWWW..W..W..WWW", "D": "WW.W.WW.WW.WWW.",
+    "E": "WWWW..WWWW..WWW", "F": "WWWW..WWWW..W..", "G": "WWWW..W.WW.WWWW", "H": "W.WW.WWWWW.WW.W",
+    "I": "WWW.W..W..W.WWW", "J": "..W..W..WW.WWWW", "K": "W.WW.WWW.W.WW.W", "L": "W..W..W..W..WWW",
+    "M": "W.WWWWWWWW.WW.W", "N": "WW.W.WW.WW.WW.W", "O": "WWWW.WW.WW.WWWW", "P": "WWWW.WWWWW..W..",
+    "Q": "WWWW.WW.WWWW..W", "R": "WWWW.WWW.W.WW.W", "S": "WWWW..WWW..WWWW", "T": "WWW.W..W..W..W.",
+    "U": "W.WW.WW.WW.WWWW", "V": "W.WW.WW.WW.W.W.", "W": "W.WW.WWWWWWWW.W", "X": "W.WW.W.W.W.WW.W",
+    "Y": "W.WW.WWWW.W..W.", "Z": "WWW..W.W.W..WWW", "!": ".W..W..W.....W.", "-": "......WWW......",
+}
+GLYPHS = DIGITS | {ch: Sprite(f"glyph-{ch}", tuple("".join(row) for row in batched(flat, 3)))
+                   for ch, flat in LETTER_FLAT.items()}
+
+
+class Screen:
+    """WIDTH × HEIGHT のドットのキャンバス。1 ドットは RGB か None（黒）。"""
+
+    def __init__(self):
+        self.pixels: list[list[tuple[int, int, int] | None]] = [[None] * WIDTH for _ in range(HEIGHT)]
+
+    def clear(self) -> None:
+        for row in self.pixels:
+            row[:] = [None] * WIDTH
+
+    def plot(self, x: int, y: int, color: tuple[int, int, int]) -> None:
+        if 0 <= x < WIDTH and 0 <= y < HEIGHT:
+            self.pixels[y][x] = color
+
+    def blit(self, spr: Sprite, x: float, y: float) -> None:
+        """スプライトを (x, y) を左上にして置く。透明は上書きしない。"""
+        ox, oy = round(x), round(y)
+        for px, py, color in spr.pixels:
+            self.plot(ox + px, oy + py, color)
+
+    def text(self, s: str, x: int, y: int) -> None:
+        """3×5 の字で文字列を描く。表に無い字は空ける。"""
+        for i, ch in enumerate(s):
+            if ch in GLYPHS:
+                self.blit(GLYPHS[ch], x + i * 4, y)
+
+    def banner(self, s: str, y: int) -> None:
+        """横の真ん中に、黒い下地を敷いてから置く。迷路やエサに重なっても読める。"""
+        width = len(s) * 4 - 1
+        left = (WIDTH - width) // 2
+        for bx in range(left - 2, left + width + 2):
+            for by in range(y - 2, y + 7):
+                self.plot(bx, by, (0, 0, 0))
+        self.text(s, left, y)
+
+    def render(self) -> str:
+        """端末用の文字列。1 行に 2 ドット分の行を詰める（上が前景 ▀、下が背景）。色が変わるときだけエスケープを出す。"""
+        out = []
+        last = None
+        for top, bottom in zip(self.pixels[0::2], self.pixels[1::2]):
+            for a, b in zip(top, bottom):
+                if a is None and b is None:
+                    code, ch = "\x1b[0m", " "
+                elif b is None:
+                    code, ch = f"\x1b[0m\x1b[38;2;{a[0]};{a[1]};{a[2]}m", "▀"
+                elif a is None:
+                    code, ch = f"\x1b[0m\x1b[38;2;{b[0]};{b[1]};{b[2]}m", "▄"
+                else:
+                    code, ch = f"\x1b[38;2;{a[0]};{a[1]};{a[2]}m\x1b[48;2;{b[0]};{b[1]};{b[2]}m", "▀"
+                if code != last:
+                    out.append(code)
+                    last = code
+                out.append(ch)
+            out.append("\x1b[0m\n")
+            last = None
+        return "".join(out)
+
+
+def png_bytes(spr: Sprite, scale: int = 1, background: tuple[int, int, int] | None = None) -> bytes:
+    """スプライトを PNG に。ライブラリなしで、チャンクを struct と zlib で組み立てる。background が無ければ透明。"""
+    w, h = spr.width * scale, spr.height * scale
+    colors = {(x, y): c for x, y, c in spr.pixels}
+    blank = bytes(background) + b"\xff" if background else b"\x00\x00\x00\x00"
+    raw = bytearray()
+    for y in range(h):
+        raw.append(0)                                       # フィルタ 0（そのまま）
+        for x in range(w):
+            c = colors.get((x // scale, y // scale))
+            raw += bytes(c) + b"\xff" if c else blank
+
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+
+    header = struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0)   # 8 ビット、RGBA
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b"")
+
+
+@cache
+def data_uri(spr: Sprite, scale: int = 1) -> str:
+    """ブラウザで <img src=...> に入れる文字列。同じスプライトは一度だけ作る。"""
+    return "data:image/png;base64," + base64.b64encode(png_bytes(spr, scale)).decode()
+
+
+@dataclass(frozen=True)
+class Record:
+    """1 回ぶんの記録。ここに並べた順が、そのままファイルの 1 行になる。"""
+
+    when: str                                       # いつ（ISO 8601）。記録の鍵にもする
+    level: int                                      # 到達した面
+    score: int
+    pellets: int                                    # 食べたエサの数（面をまたいだ通算）
+    seconds: float                                  # 遊んだ秒数
+    killer: str                                     # 最後に捕まえたおばけ。やめたときは "-"
+
+
+FIELDS: Final = tuple(f.name for f in fields(Record))       # 見出し。Record を直せば表も付いてくる
+
+
+class Records(MutableMapping):
+    """遊んだ記録。when を鍵にした辞書のように扱える。
+
+    MutableMapping は Mapping（g55）に __setitem__ と __delitem__ を足したもの。
+    その 5 つを書くだけで、update・pop・setdefault・clear まで付いてくる。
+
+    読み書きの口は外から渡す。端末版はファイル、ブラウザ版は localStorage。
+    入れ物の中身は同じで、出入口だけが違う。
+    """
+
+    def __init__(self, read: Callable[[], str] = lambda: "",
+                 write: Callable[[str], None] = lambda text: None):
+        self.read, self.write = read, write
+        self.rows: dict[str, Record] = {}
+        self.load()
+
+    # --- MutableMapping が求める 5 つ ---
+    def __getitem__(self, when: str) -> Record:
+        return self.rows[when]
+
+    def __setitem__(self, when: str, record: Record) -> None:
+        self.rows[when] = record
+        self.flush()                                # 書いたらすぐ残す
+
+    def __delitem__(self, when: str) -> None:
+        del self.rows[when]
+        self.flush()
+
+    def __iter__(self):
+        return iter(self.rows)
+
+    def __len__(self) -> int:
+        return len(self.rows)
+
+    # --- 保存と読み込み。1 行 1 件の JSON の配列 ---
+    def load(self) -> None:
+        for line in self.read().splitlines():
+            if line.strip():
+                record = Record(*json.loads(line))  # 並び順は FIELDS のとおり
+                self.rows[record.when] = record
+
+    def flush(self) -> None:
+        self.write("\n".join(json.dumps(list(astuple(r))) for r in self.rows.values()))
+
+    def add(self, record: Record) -> None:
+        """1 件足して保存する。"""
+        self[record.when] = record
+
+    @property
+    def best(self) -> int:
+        return max((r.score for r in self.values()), default=0)
+
+
+def summary(records: Records) -> str:
+    """記録をまとめた文。回数・得点の散らばり・到達した面・死因。"""
+    if not records:
+        return "まだ記録がありません。"
+    scores = sorted(r.score for r in records.values())
+    levels = Counter(r.level for r in records.values())
+    killers = Counter(r.killer for r in records.values())
+    lines = [f"{len(records)} 回  最高 {scores[-1]} 点  最低 {scores[0]} 点  平均 {mean(scores):.0f} 点"]
+    if len(scores) >= 4:
+        low, mid, high = (round(q) for q in quantiles(scores, n=4))      # 四分位。真ん中の半分がどこか
+        lines.append(f"得点の散らばり: 下から 1/4 が {low} 点、まんなかが {mid} 点、上から 1/4 が {high} 点")
+    lines.append("到達した面: " + "  ".join(f"{lv} 面 ×{n}" for lv, n in sorted(levels.items())))
+    lines.append("最後に捕まえた相手: " + "  ".join(f"{who} ×{n}" for who, n in killers.most_common()))
+    recent = sorted(records.values(), key=attrgetter("when"), reverse=True)[:5]
+    lines.append("")
+    lines.append("  ".join(f"{name:>8}" for name in FIELDS))
+    for r in recent:
+        lines.append("  ".join(f"{str(v)[:8]:>8}" for v in astuple(r)))
+    return "\n".join(lines)
+
+
+@dataclass(frozen=True)
+class Stage:
+    """1 面ぶんの決まりごと。おばけの速さは自機に対する割合で持つ。"""
+
+    ghost_ratio: Fraction                           # 自機の速さに対する割合
+    fright: float                                   # パワーエサ 1 個でイジケている秒数
+    fruit: str                                      # その面に出る果物
+    bonus: int                                      # 取ったときの点
+
+    @property
+    def ghost_speed(self) -> float:
+        """マス/秒。分数で持っておいて、使うときだけ小数にする。"""
+        return SPEED * float(self.ghost_ratio)
+
+
+STAGE_TABLE = (
+    Stage(Fraction(9, 10), 8.0, "cherry", 100),
+    Stage(Fraction(19, 20), 7.0, "strawberry", 300),
+    Stage(Fraction(1), 5.0, "orange", 500),
+    Stage(Fraction(1), 4.0, "apple", 700),
+    Stage(Fraction(21, 20), 3.0, "melon", 1000),
+    Stage(Fraction(11, 10), 2.0, "melon", 1000),
+)
+
+
+class Levels(Sequence):
+    """面の表。Sequence を継承すると、__getitem__ と __len__ の 2 つを書くだけで
+    in・index・count・逆順の繰り返しが付いてくる。
+
+    表より先の面（7 面目以降）は stage() が最後の行を返す。
+    この「尽きない」ふるまいを __getitem__ に入れてはいけない。Sequence の
+    __iter__ と index() は「IndexError が出たら終わり」で終端を知るので、
+    範囲外を丸めて返すと繰り返しが永遠に止まらなくなる（実際に踏んだ）。
+    """
+
+    def __init__(self, table: tuple[Stage, ...]):
+        self.table = table
+
+    def __getitem__(self, i: int) -> Stage:
+        return self.table[i]                        # 範囲外は IndexError。Sequence の作法どおり
+
+    def __len__(self) -> int:
+        return len(self.table)
+
+    def stage(self, level: int) -> Stage:
+        """level 面（1 始まり）の決まりごと。表を過ぎたら最後の行がずっと続く。"""
+        forever = chain(self.table, repeat(self.table[-1]))          # 表 → 最後の行の繰り返し
+        return next(islice(forever, max(level - 1, 0), None))
+
+
+LEVELS = Levels(STAGE_TABLE)
+
+# 果物のドット絵。5×5。R 赤 / G 緑（ヘタ）/ A 橙 / M うす緑 / O 濃い橙 / W 白
+FRUIT_ART = {
+    "cherry": ("..GG.",
+               ".G.G.",
+               "RG.GR",
+               "RRGRR",
+               ".R.R."),
+    "strawberry": (".GGG.",
+                   "..G..",
+                   ".RRR.",
+                   "RRWRR",
+                   ".RRR."),
+    "orange": ("..G..",
+               ".AAA.",
+               "AAAAA",
+               "AAAAA",
+               ".AAA."),
+    "apple": ("..G..",
+              ".RRR.",
+              "RRRRR",
+              "RRRRR",
+              ".R.R."),
+    "melon": ("..G..",
+              ".MGM.",
+              "MGMGM",
+              "MMGMM",
+              ".MMM."),
+}
+FRUIT_SPRITES = {name: Sprite(f"fruit-{name}", rows) for name, rows in FRUIT_ART.items()}
+
+
+@dataclass
+class Fruit:
+    """面の途中に出るボーナス。少しの間だけ置かれ、取ると点になる。"""
+
+    name: str
+    bonus: int
+    cell: Cell = FRUIT_CELL
+    life: float = FRUIT_TIME
+
+    @property
+    def pos(self) -> tuple[float, float]:
+        return float(self.cell[0]), float(self.cell[1])
+
+
+@dataclass
+class Walker:
+    """迷路の通路を走るもの。今いるマスと、次のマスへの進み具合（0.0〜1.0）で位置を持つ。
+
+    パックマンもおばけもこれを継承する。違うのは「速さ」と「扉を通れるか」だけ。
+    """
+
+    cell: Cell
+    facing: Direction = Direction.LEFT
+    offset: float = 0.0
+    wish: Direction | None = None
+
+    @property
+    def at_center(self) -> bool:
+        """マスの中心にぴたりといるか。曲がれるのはこのときだけ。"""
+        return self.offset == 0.0
+
+    @property
+    def pos(self) -> tuple[float, float]:
+        """描画用の連続した座標。マス単位。"""
+        x, y = self.cell
+        return x + self.facing.dx * self.offset, y + self.facing.dy * self.offset
+
+    def blocked(self, maze: Maze, pos: Cell) -> bool:
+        """そのマスへ入れないか。パックマンは扉も壁。"""
+        return maze.wall(pos)
+
+    def speed(self, maze: Maze) -> float:
+        """今いる場所での速さ（マス/秒）。"""
+        return SPEED
+
+    def step(self, maze: Maze, dt: float, decide: Callable[[], Direction] | None = None) -> None:
+        """dt 秒ぶん進む。マスの中心に着くたびに、曲がるか・その先へ入れるかを決める。
+
+        decide があれば中心に着くたびに呼んで向きを決めてもらう。1 コマの間に
+        いくつも中心を通ることがあるので、外側の輪ではなくここで呼ぶ。
+        """
+        remaining = self.speed(maze) * dt
+        while remaining > 1e-9:                                         # 小数の足し算で出る端数は無視する
+            if self.at_center:                                          # マスの中心にいる
+                if decide:
+                    self.wish = decide()
+                if self.wish and not self.blocked(maze, maze.ahead(self.cell, self.wish)):
+                    self.facing = self.wish
+                    self.wish = None                                    # 曲がれたときだけ忘れる。だめなら覚えておく
+                if self.blocked(maze, maze.ahead(self.cell, self.facing)):
+                    break                                               # 壁を向いている。止まったまま
+            move = min(remaining, 1.0 - self.offset)
+            self.offset += move
+            remaining -= move
+            if self.offset > 1.0 - 1e-9:                                # 次のマスに着いた（小数の誤差ぶん余裕を見る）
+                self.cell = maze.ahead(self.cell, self.facing)
+                self.offset = 0.0
+
+    def reverse(self, maze: Maze) -> None:
+        """その場で向きだけ逆にする。画面上の位置は 1 ドットも動かない。"""
+        if self.offset > 0.0:
+            self.cell = maze.ahead(self.cell, self.facing)              # 進みかけの「次のマス」から
+            self.offset = 1.0 - self.offset                             # 逆向きに測り直す
+        self.facing = self.facing.opposite
+        self.wish = None
+
+
+@dataclass
+class Pacman(Walker):
+    """自機。押されたキーは曲がれるまで覚えておく（先行入力）。"""
+
+    def press(self, maze: Maze, d: Direction) -> None:
+        """キーを受け取る。逆向きだけはその場で振り向ける（本家と同じ）。"""
+        if d is self.facing.opposite:
+            self.reverse(maze)
+        else:
+            self.wish = d
+
+
+class Mode(Enum):
+    """おばけの構え。"""
+
+    HOME = auto()                                   # 巣の中で順番待ち
+    LEAVING = auto()                                # 巣から出ようとしている
+    SCATTER = auto()                                # 自分の隅へ散らばる
+    CHASE = auto()                                  # 自機を追う
+    FRIGHTENED = auto()                             # パワーエサを食べられて逃げている
+    EATEN = auto()                                  # 目玉だけになって巣へ帰る
+
+
+# 散らばりと追いかけの時間割。表を過ぎたらずっと追いかけ
+SCHEDULE = ((Mode.SCATTER, 7.0), (Mode.CHASE, 20.0), (Mode.SCATTER, 7.0), (Mode.CHASE, 20.0),
+            (Mode.SCATTER, 5.0), (Mode.CHASE, 20.0), (Mode.SCATTER, 5.0))
+PHASE_ENDS = list(accumulate(seconds for _, seconds in SCHEDULE))       # 切り替わる時刻
+
+
+def phase_at(t: float) -> Mode:
+    """t 秒の時点は散らばりか追いかけか。"""
+    i = bisect_right(PHASE_ENDS, t)
+    return SCHEDULE[i][0] if i < len(SCHEDULE) else Mode.CHASE
+
+
+def dist2(maze: Maze, a: Cell, b: Cell) -> int:
+    """2 マスの距離の 2 乗。左右はトンネルでつながっているので近い方をとる。"""
+    dx = abs(a[0] - b[0])
+    dx = min(dx, maze.width - dx)
+    dy = a[1] - b[1]
+    return dx * dx + dy * dy
+
+
+CHOICE_ORDER = (Direction.UP, Direction.LEFT, Direction.DOWN, Direction.RIGHT)   # 同点のときの優先順
+
+
+@dataclass
+class Ghost(Walker):
+    """おばけ 1 体。目標のマスを決めるところ（target）だけが 4 体で違う。"""
+
+    mode: Mode = Mode.HOME
+    wait: float = 0.0                               # 巣を出るまでの残り秒
+    chase_speed: float = 5.4                        # この面での追いかけの速さ（マス/秒）
+
+    kinds: ClassVar[list[type["Ghost"]]] = []       # 定義された順に並ぶおばけの一覧
+    label: ClassVar[str] = "?"
+    color: ClassVar[str] = "R"                      # パレットの文字
+    corner: ClassVar[Cell] = (1, 1)      # 散らばるときの目標
+    seat: ClassVar[Cell] = (10, 6)       # 巣の中の待ち位置
+    release: ClassVar[float] = 0.0                  # 何秒待ってから出るか
+
+    def __init_subclass__(cls, **kwargs) -> None:
+        """Ghost を継承したクラスは、定義しただけで kinds に載る。"""
+        super().__init_subclass__(**kwargs)
+        Ghost.kinds.append(cls)
+
+    @classmethod
+    def spawn(cls, stage: Stage) -> "Ghost":
+        """待ち位置に置いた 1 体を作る。速さはその面の表から。"""
+        return cls(cell=cls.seat, facing=Direction.LEFT,
+                   mode=Mode.LEAVING if cls.release == 0 else Mode.HOME, wait=cls.release,
+                   chase_speed=stage.ghost_speed)
+
+    def blocked(self, maze: Maze, pos: Cell) -> bool:
+        """扉は巣を出るときだけ通れる。壁はいつでも通れない。"""
+        if maze.get(pos, WALL) == DOOR:
+            return self.mode not in (Mode.HOME, Mode.LEAVING, Mode.EATEN)
+        return maze.wall(pos)
+
+    def speed(self, maze: Maze) -> float:
+        """構えごとの速さ。イジケていると遅く、目玉だけになると速い。"""
+        match self.mode:
+            case Mode.EATEN:
+                return EATEN_SPEED
+            case Mode.FRIGHTENED:
+                return FRIGHT_SPEED
+            case _:
+                return self.chase_speed * (TUNNEL_SLOW if self.cell in TUNNEL else 1.0)
+
+    def aim(self, game: "Game") -> Cell:
+        """今の構えでの目標のマス。"""
+        match self.mode:
+            case Mode.HOME | Mode.LEAVING:
+                return HOME_EXIT                    # 巣の外へ
+            case Mode.SCATTER:
+                return self.corner
+            case Mode.CHASE:
+                return self.target(game)
+            case Mode.FRIGHTENED:
+                return self.corner                  # 使わない（イジケているときの行き先はでたらめ）
+            case Mode.EATEN:
+                return HOME_SEAT                    # 巣の中へ帰る
+            case _:
+                assert_never(self.mode)             # Mode を増やして書き忘れたら型検査が教えてくれる
+
+    def target(self, game: "Game") -> Cell:
+        """追いかけるときの目標。おばけごとに違う。"""
+        return game.pac.cell
+
+    def choose(self, game: "Game") -> Direction:
+        """交差点での向き。来た道以外で、目標に一番近くなるマスへ。同点なら 上・左・下・右 の順。"""
+        if self.mode is Mode.LEAVING and self.cell == HOME_EXIT:
+            self.mode = game.phase                  # 外に出た。時間割に合流する
+        elif self.mode is Mode.EATEN and self.cell == HOME_SEAT:
+            self.mode = Mode.LEAVING                # 巣に着いた。もう一度出直す
+        goal = self.aim(game)
+        back = self.facing.opposite
+        options = [d for d in CHOICE_ORDER
+                   if d is not back and not self.blocked(game.maze, game.maze.ahead(self.cell, d))]
+        if not options:
+            return back                             # 行き止まり。おばけが引き返すのはここだけ
+        if self.mode is Mode.FRIGHTENED:
+            return game.rng.choice(options)         # イジケているときは行き当たりばったり
+        return min(options, key=lambda d: dist2(game.maze, game.maze.ahead(self.cell, d), goal))
+
+    def update(self, game: "Game", dt: float) -> None:
+        """1 コマぶん動かす。巣の中は数えるだけ、外に出たら時間割どおりの構えで走る。"""
+        if self.mode is Mode.HOME:
+            self.wait -= dt
+            if self.wait <= 0:
+                self.mode = Mode.LEAVING
+            return
+        self.step(game.maze, dt, lambda: self.choose(game))
+
+
+class Blinky(Ghost):
+    """赤。自機のいるマスをまっすぐ狙う。最初から巣の外にいる。"""
+
+    label: ClassVar[str] = "BLINKY"
+    color: ClassVar[str] = "R"
+    corner: ClassVar[Cell] = (19, 1)
+    seat: ClassVar[Cell] = HOME_EXIT
+    release: ClassVar[float] = 0.0
+
+
+class Pinky(Ghost):
+    """桃。自機の 4 マス先へ回り込む。"""
+
+    label: ClassVar[str] = "PINKY"
+    color: ClassVar[str] = "P"
+    corner: ClassVar[Cell] = (1, 1)
+    seat: ClassVar[Cell] = (10, 6)
+    release: ClassVar[float] = 2.0
+
+    def target(self, game: "Game") -> Cell:
+        return game.maze.reach(game.pac.cell, game.pac.facing, 4)
+
+
+class Inky(Ghost):
+    """水色。自機の 2 マス先を、ブリンキーから見て 2 倍に伸ばした所。2 体の位置で目標が動く。"""
+
+    label: ClassVar[str] = "INKY"
+    color: ClassVar[str] = "C"
+    corner: ClassVar[Cell] = (19, 11)
+    seat: ClassVar[Cell] = (9, 6)
+    release: ClassVar[float] = 5.0
+
+    def target(self, game: "Game") -> Cell:
+        ax, ay = game.maze.reach(game.pac.cell, game.pac.facing, 2)
+        bx, by = game.ghosts[0].cell                # ブリンキー（kinds の 1 番目）
+        return (2 * ax - bx) % game.maze.width, 2 * ay - by
+
+
+class Clyde(Ghost):
+    """橙。遠いうちは自機を狙い、8 マスより近づくと自分の隅へ帰る。"""
+
+    label: ClassVar[str] = "CLYDE"
+    color: ClassVar[str] = "O"
+    corner: ClassVar[Cell] = (1, 11)
+    seat: ClassVar[Cell] = (11, 6)
+    release: ClassVar[float] = 8.0
+
+    def target(self, game: "Game") -> Cell:
+        return game.pac.cell if dist2(game.maze, self.cell, game.pac.cell) > 8 * 8 else self.corner
+
+
+GHOST_SPRITES = {(kind.label, d): ghost_sprite(kind.label, kind.color, d)
+                 for kind in Ghost.kinds for d in Direction}
+
+FRIGHT_BODY = ("..###..",
+               ".#####.",
+               "#######",
+               "#W###W#",
+               "#######",
+               "#W#W#W#",
+               "#.#.#.#")
+EYES_BODY = (".......",
+             ".......",
+             ".......",
+             ".WW.WW.",
+             ".WW.WW.",
+             ".......",
+             ".......")
+
+
+def fright_sprite(name: str, body: str, mark: str) -> Sprite:
+    """イジケたおばけ。青い体に白い目と口、時間切れが近づくと白と赤に変わる。
+
+    replace を 2 回つなぐと、1 回目で作った文字を 2 回目が拾ってしまう
+    （# → W にしたあと W → R にすると体まで赤くなった）。translate なら 1 度に置き換わる。
+    """
+    table = str.maketrans({"#": body, "W": mark})
+    return Sprite(name, tuple(row.translate(table) for row in FRIGHT_BODY))
+
+
+def eyes_sprite(d: Direction) -> Sprite:
+    """食べられたおばけ。体は消えて目玉だけが巣へ帰る。"""
+    rows = [list(row) for row in EYES_BODY]
+    for x, y in PUPILS[d]:
+        rows[y][x] = "U"
+    return Sprite(f"eyes-{d.name.lower()}", tuple("".join(row) for row in rows))
+
+
+FRIGHT_SPRITES = (fright_sprite("fright-blue", "B", "W"), fright_sprite("fright-white", "W", "R"))
+EYES_SPRITES = {d: eyes_sprite(d) for d in Direction}
+
+
+def ghost_face(ghost: "Ghost", blink: bool) -> Sprite:
+    """今の構えでの見た目。"""
+    match ghost.mode:
+        case Mode.EATEN:
+            return EYES_SPRITES[ghost.facing]
+        case Mode.FRIGHTENED:
+            return FRIGHT_SPRITES[1 if blink else 0]
+        case _:
+            return GHOST_SPRITES[ghost.label, ghost.facing]
+
+
+@dataclass
+class Popup:
+    """食べた点数を、その場に少しの間だけ出す。"""
+
+    text: str
+    pos: tuple[float, float]
+    life: float = POPUP_TIME
+
+
+class Scene(Enum):
+    """今どの場面か。auto() の値を名前から作るので、Scene.READY.value は "ready"。"""
+
+    def _generate_next_value_(name, start, count, last):     # noqa: N805  auto() が呼ぶ
+        return name.lower()
+
+    READY = auto()                                  # 「READY!」を出して待つ
+    PLAY = auto()                                   # 遊んでいる
+    DYING = auto()                                  # 捕まった。回って消える
+    CLEAR = auto()                                  # 面をクリア。迷路が点滅する
+    OVER = auto()                                   # ゲームオーバー
+
+
+# 場面ごとの中央のことば。None のときは何も出さない
+SCENE_TEXT: Final[Mapping[Scene, str | None]] = MappingProxyType({
+    Scene.READY: "READY!",
+    Scene.PLAY: None,
+    Scene.DYING: None,
+    Scene.CLEAR: None,
+    Scene.OVER: "GAME OVER",
+})
+
+
+def death_frames(count: int = 6) -> tuple[Sprite, ...]:
+    """捕まったときのコマ。右向きの口が少しずつ開いていって、最後は消える。
+
+    絵を 6 枚描く代わりに、円から「口の角度ぶん」を削って作る。
+    atan2 が中心から見た角度（右が 0）を返すので、その角度が半角より外なら体。
+    """
+    frames = []
+    for i in range(count):
+        half = radians(20 + i * 28)                 # 口の半角。20° から 160° へ
+        rows = []
+        for y in range(7):
+            row = ""
+            for x in range(7):
+                dx, dy = x - 3, y - 3
+                inside = dx * dx + dy * dy <= 9
+                row += "Y" if inside and abs(atan2(dy, dx)) > half else "."
+            rows.append(row)
+        frames.append(Sprite(f"death-{i}", tuple(rows)))
+    return tuple(frames)
+
+
+DEATH_SPRITES = death_frames()
+
+
+MOUTH = (0, 1, 2, 1)                                # 口の開き方の順番（閉じ → 半開き → 開き → 半開き）
+
+
+def draw_maze(screen: Screen, maze: Maze, eaten: set[Cell], blink: bool) -> None:
+    """迷路とエサを描く。壁は「通路に面した辺だけ線を引く」ので、輪郭だけの本家らしい形になる。"""
+    for pos in maze:
+        x0, y0 = pos[0] * CELL, HUD_H + pos[1] * CELL
+        match maze[pos]:
+            case "#":
+                draw_wall(screen, maze, pos, x0, y0)
+            case "-":
+                for x in range(CELL):
+                    screen.plot(x0 + x, y0 + CELL // 2, DOOR_COLOR)
+            case "." if pos not in eaten:
+                for dx, dy in ((2, 2), (3, 2), (2, 3), (3, 3)):
+                    screen.plot(x0 + dx, y0 + dy, PELLET_COLOR)
+            case "o" if pos not in eaten and blink:
+                for dx in range(1, 5):
+                    for dy in range(1, 5):
+                        if (dx, dy) not in ((1, 1), (4, 1), (1, 4), (4, 4)):
+                            screen.plot(x0 + dx, y0 + dy, PELLET_COLOR)
+
+
+def draw_wall(screen: Screen, maze: Maze, pos: Cell, x0: int, y0: int) -> None:
+    """壁 1 マス。通路に面した辺に線を引き、内側の角には点を打って線をつなぐ。"""
+    cx, cy = pos
+    end = CELL - 1
+
+    def solid(x: int, y: int) -> bool:
+        return maze.get((x % maze.width, y), WALL) in (WALL, DOOR)      # 迷路の外も壁とみなす
+
+    if not solid(cx, cy - 1):
+        for x in range(CELL):
+            screen.plot(x0 + x, y0, WALL_COLOR)
+    if not solid(cx, cy + 1):
+        for x in range(CELL):
+            screen.plot(x0 + x, y0 + end, WALL_COLOR)
+    if not solid(cx - 1, cy):
+        for y in range(CELL):
+            screen.plot(x0, y0 + y, WALL_COLOR)
+    if not solid(cx + 1, cy):
+        for y in range(CELL):
+            screen.plot(x0 + end, y0 + y, WALL_COLOR)
+    for sx, sy, px, py in ((-1, -1, 0, 0), (1, -1, end, 0), (-1, 1, 0, end), (1, 1, end, end)):
+        if solid(cx + sx, cy) and solid(cx, cy + sy) and not solid(cx + sx, cy + sy):
+            screen.plot(x0 + px, y0 + py, WALL_COLOR)                   # 斜めだけが通路 = 内側の角
+
+
+def draw_flash(screen: Screen, game: "Game") -> None:
+    """面クリアの点滅。壁を白くして、エサも登場するものも描かない。"""
+    for pos in game.maze:
+        if game.maze[pos] == WALL:
+            x0, y0 = pos[0] * CELL, HUD_H + pos[1] * CELL
+            for dx in range(CELL):
+                for dy in range(CELL):
+                    screen.plot(x0 + dx, y0 + dy, (255, 255, 255))
+    screen.text(f"{game.score:06d}", 2, 1)
+
+
+def blit_wrapped(screen: Screen, spr: Sprite, fx: float, fy: float) -> None:
+    """マス単位の位置に絵の中心を合わせて置く。画面からはみ出したら反対側にも重ねる。"""
+    x = fx * CELL + CELL // 2 - spr.width // 2
+    y = HUD_H + fy * CELL + CELL // 2 - spr.height // 2
+    screen.blit(spr, x, y)
+    if x < 0:
+        screen.blit(spr, x + WIDTH, y)
+    elif x + spr.width > WIDTH:
+        screen.blit(spr, x - WIDTH, y)
+
+
+def draw(screen: Screen, game: "Game") -> None:
+    """1 コマぶん。得点欄 → 迷路 → 登場するもの → 場面のことば の順に重ねる。"""
+    screen.clear()
+    if game.scene is Scene.CLEAR and int(game.timer * 6) % 2 == 0:
+        return draw_flash(screen, game)             # 面クリアの点滅。壁だけ白く
+    draw_maze(screen, game.maze, game.eaten, blink=int(game.elapsed * 5) % 2 == 0)
+    actors = [*([] if game.fruit is None else [game.fruit]),
+              *([] if game.scene is Scene.DYING else game.ghosts),
+              game.pac, *game.popups]
+    for actor in actors:
+        game.paint(actor, screen)                   # 型ごとに描き分けるのは Game.paint
+    if (word := SCENE_TEXT[game.scene]) is not None:
+        screen.banner(word, HUD_H + 9 * CELL + 1)   # 巣の下の通路
+    screen.text(f"{game.score:06d}", 2, 1)
+    screen.text(f"{game.remaining:03d}", WIDTH - 14, 1)
+    screen.text(f"{max(game.records.best, game.score):06d}", 28, 1)     # ← これまでの最高
+    screen.text(f"{game.level:02d}", 78, 1)                         # 何面目か
+    if game.demo:
+        screen.banner("PUSH KEY", HUD_H + 3 * CELL + 1)
+    screen.blit(FRUIT_SPRITES[game.stage.fruit], 90, 1)             # その面の果物
+    for i in range(game.lives - 1):                 # 残りの機（今使っているぶんは数えない）
+        screen.blit(PAC_SPRITES[Direction.LEFT][2], 56 + i * 9, 1)
+
+
+def eat(maze: Maze, pac: Pacman, eaten: set[Cell]) -> str | None:
+    """今いるマスのエサを食べる。食べたものの文字を返す（何も無ければ None）。"""
+    if pac.cell in eaten or maze[pac.cell] not in (PELLET, POWER):
+        return None
+    eaten.add(pac.cell)
+    return maze[pac.cell]
+
+
+def sight(maze: Maze, pac: Pacman, eaten: set[Cell]) -> dict[Direction, int]:
+    """4 方向それぞれについて、壁までの通路に残っているエサの数。"""
+    return {d: sum(p not in eaten and maze[p] in (PELLET, POWER) for p in maze.corridor(pac.cell, d))
+            for d in Direction}
+
+
+@dataclass
+class Game:
+    """1 回ぶんの遊び。迷路・自機・おばけ・食べたエサ・得点をここにまとめる。"""
+
+    maze_text: InitVar[str] = MAZE_TEXT             # 組み立てにだけ使い、フィールドとしては残さない
+    seed: int | None = None
+    score: int = 0
+    elapsed: float = 0.0
+    lives: int = LIVES
+    level: int = 1
+    skill: int = 2                                  # 自動プレイの腕前。おばけから何歩まで近づかないか
+    records: Records | None = None                  # 記録の入れ物。無ければ残さない
+    result: str | None = None                       # None のうちは続行。"clear" / "over" / "quit" で終わり
+
+    def __post_init__(self, maze_text: str) -> None:    # InitVar はここに引数として届く
+        self.maze = Maze.from_text(maze_text)
+        self.eaten: set[Cell] = set()
+        self.total = len(self.maze.pellets())
+        self.rng = random.Random(self.seed)
+        self.records = self.records if self.records is not None else Records()
+        self.demo = True                            # 誰も遊んでいない。自動で動くデモ
+        self.pellets = 0                            # 面をまたいだ通算のエサ
+        self.played = 0.0                           # この回が始まった時刻
+        self.killer = "-"                           # 最後に捕まえたおばけ
+        self.scene = Scene.READY
+        self.timer = 0.0                            # 今の場面の残り秒（0 なら時間で終わらない）
+        self.fright = 0.0                           # イジケの残り秒
+        self.chain = 0                              # このパワーエサで続けて食べた数
+        self.popups: list[Popup] = []
+        self.fruit: Fruit | None = None             # 今出ている果物
+        self.fruits_done = 0                        # この面で出した果物の数
+        self.start_stage()
+
+    def enter(self, scene: Scene, seconds: float = 0.0) -> None:
+        """場面を切り替える。seconds が 0 より大きければ、その秒数で次へ進む。"""
+        self.scene = scene
+        self.timer = seconds
+
+    # 場面ごとの入口。partialmethod は「引数を先に決めたメソッド」を作る
+    ready = partialmethod(enter, Scene.READY, READY_TIME)
+    play = partialmethod(enter, Scene.PLAY)
+    dying = partialmethod(enter, Scene.DYING, DEATH_TIME)
+    clearing = partialmethod(enter, Scene.CLEAR, CLEAR_TIME)
+    over = partialmethod(enter, Scene.OVER, OVER_TIME)
+
+    def start_stage(self) -> None:
+        """新しい面を始める。エサを戻し、面の表を読み直す。"""
+        self.stage = LEVELS.stage(self.level)
+        self.eaten = set()
+        self.fruit = None
+        self.fruits_done = 0
+        self.restart()
+        self.ready()
+
+    def restart(self) -> None:
+        """自機とおばけを出発点に戻す。エサと得点はそのまま。"""
+        self.pac = Pacman(self.maze.start())
+        self.ghosts = [kind.spawn(self.stage) for kind in Ghost.kinds]
+        self.fright = 0.0
+        self.round_time = 0.0                       # このやり直しが始まってからの秒数（時間割に使う）
+        self.phase = phase_at(0.0)
+
+    @property
+    def remaining(self) -> int:
+        return self.total - len(self.eaten)
+
+    def control(self, keys: list[str]) -> None:
+        """押されたキーを受ける。デモ中に何か押されたら新しいゲームを始める。"""
+        for key in keys:
+            if key == "quit":
+                self.keep()
+                self.result = "quit"
+            elif self.demo:
+                self.new_game()                     # デモ中に何か押されたら本番が始まる
+            elif key in KEY_TO_DIR:
+                self.pac.press(self.maze, KEY_TO_DIR[key])
+
+    def new_game(self) -> None:
+        """1 から遊び直す。記録は残っているので最高得点は消えない。"""
+        self.demo = False
+        self.score = 0
+        self.lives = LIVES
+        self.level = 1
+        self.pellets = 0
+        self.killer = "-"
+        self.played = self.elapsed                  # この回が始まった時刻
+        self.start_stage()
+
+    def keep(self) -> None:
+        """1 回ぶんを記録に残す。デモは残さない。"""
+        if self.demo:
+            return
+        self.records.add(Record(when=datetime.now().isoformat(timespec="seconds"),
+                                level=self.level, score=self.score, pellets=self.pellets,
+                                seconds=round(self.elapsed - self.played, 1), killer=self.killer))
+
+    def update(self, dt: float, auto: bool = False) -> None:
+        """dt 秒ぶん進める。auto なら向きは autopilot が決める。"""
+        if self.result:
+            return
+        self.elapsed += dt
+        if self.timer > 0:                          # 待つ場面。数えて、尽きたら次へ
+            self.timer -= dt
+            if self.timer <= 0:
+                self.finish_scene()
+            return
+        auto = auto or self.demo                    # デモは自動で動く
+        self.round_time += dt
+        self.switch_phase(phase_at(self.round_time))
+        self.cool_down(dt)
+        self.fade_popups(dt)
+        self.pac.step(self.maze, dt, self.autopilot if auto else None)
+        match eat(self.maze, self.pac, self.eaten):
+            case ".":
+                self.score += PELLET_SCORE
+                self.pellets += 1
+                self.maybe_fruit()
+            case "o":
+                self.score += POWER_SCORE
+                self.pellets += 1
+                self.frighten()
+        self.tend_fruit(dt)
+        for ghost in self.ghosts:
+            ghost.update(self, dt)
+        self.touch()
+        if self.remaining == 0:
+            self.clearing()                         # 面をクリア。点滅させてから次へ
+
+    def finish_scene(self) -> None:
+        """待ちが終わったときの行き先。場面ごとに 1 行ずつ。"""
+        match self.scene:
+            case Scene.READY:
+                self.play()
+            case Scene.DYING:
+                if self.lives:
+                    self.restart()
+                    self.ready()
+                else:
+                    self.over()
+            case Scene.CLEAR:
+                self.level += 1
+                self.start_stage()
+            case Scene.OVER:
+                self.keep()                         # 1 回ぶんを記録に残す
+                self.demo = True                    # 誰も遊んでいない状態に戻る
+                self.score, self.lives, self.level = 0, LIVES, 1
+                self.start_stage()
+            case _:
+                pass
+
+    def switch_phase(self, phase: Mode) -> None:
+        """時間割が変わったら、外に出ているおばけの構えを変えて反転させる。"""
+        if phase is self.phase:
+            return
+        self.phase = phase
+        for ghost in self.ghosts:
+            if ghost.mode in (Mode.SCATTER, Mode.CHASE):
+                ghost.mode = phase
+                ghost.reverse(self.maze)            # 切り替えのたびに向きを変えるのが本家
+
+    def maybe_fruit(self) -> None:
+        """エサを決まった数だけ食べたら果物を出す。1 面に 2 回まで。"""
+        if self.fruits_done < len(FRUIT_AT) and len(self.eaten) >= FRUIT_AT[self.fruits_done]:
+            self.fruit = Fruit(self.stage.fruit, self.stage.bonus)
+            self.fruits_done += 1
+
+    def tend_fruit(self, dt: float) -> None:
+        """果物の残り時間を減らし、自機が重なっていれば取らせる。"""
+        if self.fruit is None:
+            return
+        if self.pac.cell == self.fruit.cell:
+            self.score += self.fruit.bonus
+            self.popups.append(Popup(str(self.fruit.bonus), self.fruit.pos))
+            self.fruit = None
+            return
+        self.fruit.life -= dt
+        if self.fruit.life <= 0:
+            self.fruit = None
+
+    def fade_popups(self, dt: float) -> None:
+        """点数の表示を消していく。残り時間が尽きたものを外す。"""
+        for popup in self.popups:
+            popup.life -= dt
+        self.popups = [p for p in self.popups if p.life > 0]
+
+    def frighten(self) -> None:
+        """パワーエサを食べた。外にいるおばけをイジケさせて反転させる。"""
+        self.fright = self.stage.fright
+        self.chain = 0                              # 連続で食べた数。1 匹目から数え直す
+        for ghost in self.ghosts:
+            if ghost.mode in (Mode.SCATTER, Mode.CHASE):
+                ghost.mode = Mode.FRIGHTENED
+                ghost.reverse(self.maze)
+
+    def cool_down(self, dt: float) -> None:
+        """イジケの残り時間を減らす。切れたら時間割の構えに戻す。"""
+        if self.fright <= 0:
+            return
+        self.fright -= dt
+        if self.fright <= 0:
+            for ghost in self.ghosts:
+                if ghost.mode is Mode.FRIGHTENED:
+                    ghost.mode = self.phase
+
+    def overlapping(self) -> list["Ghost"]:
+        """自機と重なっているおばけ。連続した座標で見る（マスだけだとすれ違いを取りこぼす）。"""
+        px, py = self.pac.pos
+        touching = []
+        for ghost in self.ghosts:
+            if ghost.mode is Mode.HOME:
+                continue
+            gx, gy = ghost.pos
+            dx = abs(px - gx)
+            dx = min(dx, self.maze.width - dx)      # トンネルをまたぐとき
+            if dx * dx + (py - gy) ** 2 < CATCH_RANGE * CATCH_RANGE:
+                touching.append(ghost)
+        return touching
+
+    def touch(self) -> None:
+        """重なったおばけの始末。イジケていれば食べ、そうでなければ捕まる。"""
+        for ghost in self.overlapping():
+            if ghost.mode is Mode.FRIGHTENED:
+                gain = GHOST_SCORES[min(self.chain, len(GHOST_SCORES) - 1)]
+                self.score += gain
+                self.chain += 1                     # 同じパワーエサの間は倍々に増える
+                ghost.mode = Mode.EATEN
+                self.popups.append(Popup(str(gain), ghost.pos))
+            elif ghost.mode is not Mode.EATEN:
+                self.lives -= 1
+                self.killer = ghost.label           # 誰に捕まったかを覚えておく
+                self.dying()
+                return
+
+    def spread(self, sources: list[Cell]) -> dict[Cell, int]:
+        """出発点をいくつも同時に置いた幅優先。どのマスが「一番近い出発点」から何歩か。"""
+        far: dict[Cell, int] = {}
+        queue: deque[Cell] = deque()
+        for cell in sources:
+            if cell not in far:
+                far[cell] = 0
+                queue.append(cell)
+        while queue:
+            pos = queue.popleft()
+            for d in Direction:
+                nxt = self.maze.ahead(pos, d)
+                if not self.maze.wall(nxt) and nxt not in far:
+                    far[nxt] = far[pos] + 1
+                    queue.append(nxt)
+        return far
+
+    def autopilot(self) -> Direction:
+        """怖いおばけから skill 歩より近い道を避け、イジケているおばけは追う。"""
+        maze = self.maze
+        open_dirs = [d for d in Direction if not self.pac.blocked(maze, maze.ahead(self.pac.cell, d))]
+        far = self.spread([g.cell for g in self.ghosts if g.mode in (Mode.SCATTER, Mode.CHASE, Mode.LEAVING)])
+        reach = {d: far.get(maze.ahead(self.pac.cell, d), 99) for d in open_dirs}
+        dirs = [d for d in open_dirs if reach[d] > self.skill]
+        if not dirs:                                # 逃げ場がない。一番遠ざかる道へ
+            best_far = max(reach.values())
+            dirs = [d for d in open_dirs if reach[d] == best_far]
+        if self.fruit is not None:                  # 果物は点が大きいので寄り道する
+            way = self.spread([self.fruit.cell])
+            near = min(way.get(maze.ahead(self.pac.cell, d), 99) for d in dirs)
+            if near < 6:
+                return self.rng.choice([d for d in dirs if way.get(maze.ahead(self.pac.cell, d), 99) == near])
+        prey = self.spread([g.cell for g in self.ghosts if g.mode is Mode.FRIGHTENED])
+        if prey and self.fright > FRIGHT_BLINK:     # 追いかける値打ちがあるうちは獲物へ
+            near = min(prey.get(maze.ahead(self.pac.cell, d), 99) for d in dirs)
+            if near < 8:
+                return self.rng.choice([d for d in dirs if prey.get(maze.ahead(self.pac.cell, d), 99) == near])
+        view = sight(maze, self.pac, self.eaten)
+        best = max((view[d] for d in dirs), default=0)
+        if best:
+            choices = [d for d in dirs if view[d] == best]
+        else:
+            choices = [d for d in self.toward_nearest() if d in dirs] or dirs
+        if len(choices) > 1 and self.pac.facing.opposite in choices:
+            choices.remove(self.pac.facing.opposite)        # 引き返しは行き止まりのときだけ
+        return self.rng.choice(choices)
+
+    def toward_nearest(self) -> list[Direction]:
+        """一番近いエサへの最初の 1 歩。通路を幅優先で広げ、最初に見つかったエサまでの道の 1 歩目を返す。"""
+        first: dict[Cell, Direction] = {}
+        queue: deque[Cell] = deque()
+        for d in Direction:
+            nxt = self.maze.ahead(self.pac.cell, d)
+            if not self.pac.blocked(self.maze, nxt) and nxt not in first:
+                first[nxt] = d
+                queue.append(nxt)
+        seen = {self.pac.cell} | set(first)
+        while queue:
+            pos = queue.popleft()
+            if pos not in self.eaten and self.maze[pos] in (PELLET, POWER):
+                return [first[pos]]
+            for d in Direction:
+                nxt = self.maze.ahead(pos, d)
+                if not self.pac.blocked(self.maze, nxt) and nxt not in seen:
+                    seen.add(nxt)
+                    first[nxt] = first[pos]
+                    queue.append(nxt)
+        return []
+
+    @singledispatchmethod
+    def paint(self, actor, screen: Screen) -> None:
+        """描くものの型ごとに分ける。register した型に合う 1 つが選ばれる。"""
+        raise TypeError(f"描き方を知らない: {actor!r}")
+
+    @paint.register
+    def _(self, actor: Pacman, screen: Screen) -> None:
+        if self.scene is Scene.DYING:               # 回って消えていく途中
+            step = int((1 - self.timer / DEATH_TIME) * len(DEATH_SPRITES))
+            if step < len(DEATH_SPRITES):
+                blit_wrapped(screen, DEATH_SPRITES[step], *actor.pos)
+            return
+        blit_wrapped(screen, PAC_SPRITES[actor.facing][MOUTH[int(self.elapsed * 12) % 4]], *actor.pos)
+
+    @paint.register
+    def _(self, actor: Ghost, screen: Screen) -> None:
+        blink = 0 < self.fright <= FRIGHT_BLINK and int(self.elapsed * 6) % 2 == 0
+        blit_wrapped(screen, ghost_face(actor, blink), *actor.pos)
+
+    @paint.register
+    def _(self, actor: Fruit, screen: Screen) -> None:
+        blit_wrapped(screen, FRUIT_SPRITES[actor.name], *actor.pos)
+
+    @paint.register
+    def _(self, actor: Popup, screen: Screen) -> None:
+        x = actor.pos[0] * CELL + CELL // 2 - len(actor.text) * 2
+        screen.text(actor.text, round(x), round(HUD_H + (actor.pos[1] - 0.6) * CELL))
+
+    def draw(self, screen: Screen) -> None:
+        draw(screen, self)
+
+    def status(self) -> str:
+        return (f"{self.score:6d} 点   {self.level} 面   残り {self.remaining:3d}   機 {self.lives}   "
+                f"{self.scene.value}   最高 {max(self.records.best, self.score)}")
+
+
+def read_keys(fd: int) -> list[str]:
+    """押されたキーを名前で。矢印か w a s d、q でやめる。"""
+    keys = []
+    while select.select([fd], [], [], 0)[0]:
+        text = os.read(fd, 64).decode(errors="ignore")
+        for token, name in (("\x1b[D", "left"), ("\x1b[C", "right"), ("\x1b[A", "up"), ("\x1b[B", "down"),
+                            ("q", "quit"), ("a", "left"), ("d", "right"), ("w", "up"), ("s", "down")):
+            keys.extend([name] * text.count(token))
+    return keys
+
+
+def check_terminal() -> str | None:
+    columns, lines = shutil.get_terminal_size()
+    need = HEIGHT // 2 + 2                                          # 1 行に 2 ドット詰めるので高さは半分
+    if columns < WIDTH or lines < need:
+        return f"端末を {WIDTH} 桁 × {need} 行以上にしてください（今は {columns} × {lines}）。"
+    return None
+
+
+def play(game: Game, auto: bool = False) -> None:
+    """端末で遊ぶ。1/FPS 秒ごとに進めて描き直す。auto なら自分で操縦する。"""
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    tty.setcbreak(fd)
+    screen = Screen()
+    try:
+        sys.stdout.write("\x1b[2J\x1b[?25l")
+        last = time.monotonic()
+        while game.result is None:
+            now = time.monotonic()
+            dt = min(now - last, 0.1)
+            last = now
+            game.control(read_keys(fd))
+            game.update(dt, auto)
+            game.draw(screen)
+            sys.stdout.write("\x1b[H" + screen.render() + game.status()
+                             + ("   自動プレイ中" if auto else "   矢印 移動") + "   q やめる\x1b[K\n")
+            sys.stdout.flush()
+            time.sleep(max(0.0, 1 / FPS - (time.monotonic() - now)))
+        game.draw(screen)
+        sys.stdout.write("\x1b[H" + screen.render() + "\x1b[K\n")
+    finally:
+        sys.stdout.write("\x1b[0m\x1b[?25h")
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    print(RESULT_TEXT[game.result].format(game=game))
+
+
+def file_records(path: Path = RECORDS_PATH) -> Records:
+    """ファイルを読み書きする記録の入れ物。無ければ空から始める。"""
+    return Records(read=lambda: path.read_text(encoding="utf-8") if path.exists() else "",
+                   write=lambda text: path.write_text(text, encoding="utf-8"))
+
+
+def main():
+    parser = argparse.ArgumentParser(description="パックマン風 — 記録と分析")
+    parser.add_argument("--stats", action="store_true", help="これまでの記録をまとめて出す")
+    parser.add_argument("--auto", action="store_true", help="自動プレイを見る")
+    parser.add_argument("--skill", type=int, default=2, help="自動プレイの腕前（0 が下手、2 が並）")
+    parser.add_argument("--level", type=int, default=1, help="何面目から始めるか")
+    parser.add_argument("--seed", type=int, help="自動プレイの乱数の種")
+    args = parser.parse_args()
+    records = file_records()
+    if args.stats:
+        print(summary(records))
+        return
+    if problem := check_terminal():
+        print(problem)
+        return
+    play(Game(seed=args.seed, skill=args.skill, level=args.level, records=records), auto=args.auto)
+
+
+if __name__ == "__main__":
+    main()

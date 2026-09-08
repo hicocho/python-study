@@ -75,6 +75,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g57 | [パックマン風（パワーエサとイジケ）](g57-pacman-power/) | パワーエサでおばけが青くなって逃げ、捕まえると 200・400・800・1600 点。目玉だけになって巣へ帰る（連作 6 段階の 3 つ目） | `type` 文（PEP 695 の型エイリアス） / `functools.singledispatchmethod` / `typing.Final` / `str.maketrans` と `translate` / `assert_never` の回収 |
 | g58 | [パックマン風（ステージと果物）](g58-pacman-stages/) | 全部食べると次の面へ。面が進むとおばけが速くなりイジケが短くなる。途中に出る果物はボーナス（連作 6 段階の 4 つ目） | `fractions.Fraction` / `collections.abc.Sequence` の継承 / `itertools.repeat` と `chain` / `singledispatchmethod` に register を足す |
 | g59 | [パックマン風（演出とアトラクトモード）](g59-pacman-scenes/) | 放っておくとデモが流れ、キーを押すと始まる。READY! の間、捕まって消える動き、面クリアの点滅（連作 6 段階の 5 つ目） | `enum` の `_generate_next_value_` / `functools.partialmethod` / `math.atan2` で絵を作る / 3×5 の英字フォント |
+| g60 | [パックマン風（記録と分析）](g60-pacman-records/) | 遊んだ結果を 1 行 1 件で残し、得点の散らばり・到達した面・どのおばけに捕まったかを振り返る（連作 6 段階の完成形） | `collections.abc.MutableMapping` の継承 / `statistics.quantiles` / `dataclasses.astuple` と `fields` / `operator.attrgetter` |
 
 ## 動かし方
 
