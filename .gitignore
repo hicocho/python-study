@@ -24,3 +24,6 @@ records.jsonl
 
 # g66 のパチンコの記録（遊んだ結果なのでコミットしない）
 records.json
+
+# g72 の街の記録（遊んだ結果なのでコミットしない）
+town.csv
