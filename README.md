@@ -76,6 +76,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g58 | [パックマン風（ステージと果物）](g58-pacman-stages/) | 全部食べると次の面へ。面が進むとおばけが速くなりイジケが短くなる。途中に出る果物はボーナス（連作 6 段階の 4 つ目） | `fractions.Fraction` / `collections.abc.Sequence` の継承 / `itertools.repeat` と `chain` / `singledispatchmethod` に register を足す |
 | g59 | [パックマン風（演出とアトラクトモード）](g59-pacman-scenes/) | 放っておくとデモが流れ、キーを押すと始まる。READY! の間、捕まって消える動き、面クリアの点滅（連作 6 段階の 5 つ目） | `enum` の `_generate_next_value_` / `functools.partialmethod` / `math.atan2` で絵を作る / 3×5 の英字フォント |
 | g60 | [パックマン風（記録と分析）](g60-pacman-records/) | 遊んだ結果を 1 行 1 件で残し、得点の散らばり・到達した面・どのおばけに捕まったかを振り返る（連作 6 段階の完成形） | `collections.abc.MutableMapping` の継承 / `statistics.quantiles` / `dataclasses.astuple` と `fields` / `operator.attrgetter` |
+| g61 | [推理ゲーム風（現場と聞き込み）](g61-mystery-scene/) | コマンド選択式の推理もの。街を回って調べ、人に聞き、手がかりを集める。手がかりが揃うと聞ける話が増える（事件はオリジナル） | `collections.abc.Set` の継承 / `typing.NewType` / `dataclasses.KW_ONLY` / `string.Template` / 長方形の重ね合わせで絵を作る |
 
 ## 動かし方
 
