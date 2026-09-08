@@ -80,6 +80,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g62 | [推理ゲーム風（推理ノートと手がかりの地図）](g62-mystery-notes/) | 一度見た選択肢は消えるので残りが一目で分かる。集めた手がかりは層に並べた図に。事件が詰まないかも機械で確かめる | `graphlib.TopologicalSorter`（`static_order` と `prepare`/`get_ready`）/ `graphlib.CycleError` / `itertools.filterfalse` |
 | g63 | [推理ゲーム風（証言の矛盾と告発）](g63-mystery-verdict/) | 食い違う 2 つの証言を突きつけて言い直させ、最後に犯人・手口・動機を指名して採点（推理もの 3 段階の完成形） | `copy.replace()`（Python 3.13） / `dataclasses.field(metadata=)` と `fields()` / 証言を「誰・いつ・どこ」に分けて矛盾を 1 行で |
 | g64 | [物理の積み木（剛体の箱）](g64-physics-boxes/) | 重力・跳ね返り・摩擦・回転を自分で書いた物理エンジン。落ちて弾んで転がり、止まると眠って完全に静止する（物理 3 段階の 1 つ目） | 複素数で剛体（`1j` をかけて 90 度回す） / 撃力での衝突解決 / クーロン摩擦 / 眠り（sleeping） / 固定の刻み幅 |
+| g65 | [物理の積み木（箱どうしの衝突）](g65-physics-stack/) | 分離軸で重なりを見つけ、撃力で押し返す。箱が積めるので塔が建ち、重い塊をぶつけると崩れる（物理 3 段階の 2 つ目） | 分離軸法（SAT）と `min(key=)` / `typing.NamedTuple` / `math.inf` を質量に入れる / 撃力の 2 体版 / `@dataclass(slots=True)` |
 
 ## 動かし方
 
