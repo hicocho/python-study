@@ -83,6 +83,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g65 | [物理の積み木（箱どうしの衝突）](g65-physics-stack/) | 分離軸で重なりを見つけ、撃力で押し返す。箱が積めるので塔が建ち、重い塊をぶつけると崩れる（物理 3 段階の 2 つ目） | 分離軸法（SAT）と `min(key=)` / `typing.NamedTuple` / `math.inf` を質量に入れる / 撃力の 2 体版 / `@dataclass(slots=True)` |
 | g66 | [物理の積み木（パチンコで崩す）](g66-physics-slingshot/) | 石を撃って積み木を崩し、標的を割って得点。面は 3 つ、記録も残る（物理 3 段階の完成形） | `enum.IntEnum` / `itertools.groupby`（並べてからでないと分かれない）/ `bisect.insort` / `contextlib.suppress` / `copy.deepcopy` で先を読む |
 | g67 | [倉庫のロボット（自作ミニ言語）](g67-robot-lang/) | `move 3` と書いてロボットに荷物を運ばせる。字句解析から実行まで自作で、書き間違いは行と桁と `^` で指す（自作言語 3 段階の 1 つ目） | `re.finditer` と名前付きの枠（`(?P<name>...)`）/ 位置を持つ `Token` / 自作の例外に `report()` を持たせる / ジェネレータで 1 コマずつ実行 |
+| g68 | [倉庫のロボット2（繰り返しと条件）](g68-robot-loops/) | `repeat` `if` `while` を足し、再帰下降で構文木を作って実行。書き間違いは全部まとめて報告（自作言語 3 段階の 2 つ目） | 再帰下降パーサ（優先順位＝呼び出しの深さ）/ `functools.singledispatch` / `textwrap.indent` / `ExceptionGroup` と `except*` |
 
 ## 動かし方
 
