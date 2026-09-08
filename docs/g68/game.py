@@ -1060,6 +1060,7 @@ editor = document.querySelector("#program")
 stage_label = document.querySelector("#stage")
 state_label = document.querySelector("#state")
 lines_box = document.querySelector("#lines")
+lines_title = document.querySelector("#lines-title")
 tree_box = document.querySelector("#tree")
 message = document.querySelector("#message")
 
@@ -1089,8 +1090,12 @@ def refresh() -> None:
     draw(screen, game.world)
     screen.flush()
     stage_label.textContent = f"面 {game.level + 1} {game.stage.name}"
-    here = game.beat.line if game.beat else 0
-    lines_box.textContent = "\n".join(listing(game.source, here))
+    if game.beat is None:                           # まだ走らせていないうちは出さない
+        lines_box.textContent = ""                  # （書いたものが 2 か所に出て紛らわしい）
+        lines_title.textContent = "「▶ 走らせる」か「1 コマ」を押すと、今の行がここに出ます"
+    else:
+        lines_box.textContent = "\n".join(listing(game.source, game.beat.line))
+        lines_title.textContent = "▶ が今の行です"
     tree_box.textContent = game.tree() or "（まだ木がありません）"
     message.textContent = "\n".join(game.report())
     message.className = "bad" if game.errors else ("done" if game.done else "")

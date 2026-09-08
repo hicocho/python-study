@@ -86,6 +86,22 @@
   #message.bad { color: #d1495b; }
   #message.done { color: var(--accent); font-weight: 700; }
   label { display: block; font-size: .8125rem; color: var(--muted); margin-top: .75rem; }
+  .legend { display: flex; flex-wrap: wrap; gap: .25rem .9rem; margin: .6rem 0 0;
+    font-size: .8125rem; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: .35rem; }
+  .legend i { width: .8rem; height: .8rem; border-radius: .15rem; display: inline-block; }
+  .howto { margin: .75rem 0 0; padding: .7rem .8rem; background: var(--bg);
+    border: 1px solid var(--line); border-radius: .5rem; font-size: .8125rem; }
+  .howto b { color: var(--ink); }
+  .howto ol { margin: .4rem 0 0; padding-left: 1.2rem; }
+  .howto li { margin: .15rem 0; }
+  .howto code { background: transparent; }
+  table.words { border-collapse: collapse; font-size: .8125rem; margin-top: .4rem; }
+  table.words td { border-top: 1px solid var(--line); padding: .25rem .6rem .25rem 0;
+    vertical-align: top; }
+  table.words td:first-child { font-family: ui-monospace, Menlo, monospace;
+    white-space: nowrap; color: var(--ink); }
+  #lines-title { font-size: .8125rem; color: var(--muted); margin: .75rem 0 0; }
   #loading { color: var(--muted); font-size: .875rem; text-align: center; padding: .5rem 0; margin: .5rem 0 0; }
   .keys { font-size: .8125rem; color: var(--muted); text-align: center; margin: .75rem 0 0; }
   .back { font-size: .875rem; margin: 0 0 1rem; }
@@ -100,7 +116,7 @@
 <main>
   <p class="back"><a href="../">← 課題一覧</a></p>
   <h1>倉庫のロボット2（繰り返しと条件）</h1>
-  <p class="sub">物理 3 段階の <strong>1 つ目</strong>。重力・跳ね返り・摩擦・<strong>回転</strong>を自分で書いています。箱を落とすと床で弾み、傾いた角から落ちて回り、動きが小さくなると<strong>眠って</strong>完全に止まります（暗くなった箱が眠っている箱）。まだ箱どうしはすり抜けます——それは次の課題。</p>
+  <p class="sub">自作ミニ言語 3 段階の <strong>2 つ目</strong>。ことばに <code>repeat</code>（繰り返し）と <code>if</code>（もし〜なら）と <code>while</code>（〜のあいだ）が入りました。<strong>ロボットに命令を書いて、荷物を棚まで運ばせるゲーム</strong>です。書いたプログラムが<strong>どんな形に読まれたか</strong>も見られます。</p>
 
   <div class="card">
     <div class="status">
@@ -109,6 +125,22 @@
     </div>
 
     <div class="stage"><canvas id="screen" width="120" height="80"></canvas></div>
+    <p class="legend">
+      <span><i style="background:#96bef0"></i>ロボット（目のある方が正面）</span>
+      <span><i style="background:#c49256"></i>荷物</span>
+      <span><i style="background:#5e9678"></i>棚（ここへ置く）</span>
+      <span><i style="background:#6eb284"></i>置き終わった荷物</span>
+      <span><i style="background:#806048"></i>壁</span>
+    </p>
+    <div class="howto">
+      <b>やること</b>：ロボットに命令を書いて、<b>荷物を棚まで運ぶ</b>。全部の棚に置けたら終わりです。<br>
+      今回は <code>repeat</code>・<code>if</code>・<code>while</code> が使えます。<b>同じ動きを何度も書かずに済みます。</b>
+      <ol>
+        <li><b>▶ 走らせる</b> を押すと、下のお手本どおりに動きます。まずこれを見てください。</li>
+        <li><b>1 コマ</b> で 1 命令ずつ。<code>while</code> は「条件を見た」のも 1 コマとして出ます。</li>
+        <li><b>もどす</b> で最初から。<b>次の面</b> で別の倉庫へ。</li>
+      </ol>
+    </div>
 
     <div class="pad">
       <button type="button" data-key="run">▶ 走らせる</button>
@@ -118,10 +150,28 @@
       <button type="button" id="example">お手本にもどす</button>
     </div>
 
-    <label for="program">プログラム（<code>move 3</code> / <code>left</code> / <code>right</code> / <code>pick</code> / <code>drop</code> / <code>repeat N { }</code> / <code>if 条件 { } else { }</code> / <code>while 条件 { }</code>、条件は <code>front is wall|free|crate|shelf</code> と <code>holding</code>、<code>not</code> <code>and</code> <code>or</code> でつなげます）</label>
+    <details><summary>使えることば（一覧）</summary>
+      <table class="words">
+        <tr><td>move 3</td><td>3 マス前へ。壁や荷物にぶつかったら止まる</td></tr>
+        <tr><td>left / right</td><td>その場で 90 度回る</td></tr>
+        <tr><td>pick</td><td><b>目の前</b>の荷物を持つ（手はひとつ）</td></tr>
+        <tr><td>drop</td><td><b>目の前</b>に置く。棚の上なら運び終わり</td></tr>
+        <tr><td>wait 2</td><td>2 コマ何もしない</td></tr>
+        <tr><td># メモ</td><td>行末までメモ（動きには関係しない）</td></tr>
+        <tr><td>repeat 4 { … }</td><td>中身を 4 回</td></tr>
+        <tr><td>if 条件 { … } else { … }</td><td>条件を見て、どちらかを 1 回（else は省ける）</td></tr>
+        <tr><td>while 条件 { … }</td><td>条件が本当のあいだ、ずっと</td></tr>
+        <tr><td>front is wall</td><td>目の前が壁か。ほかに free（通れる）/ crate（荷物）/ shelf（棚）</td></tr>
+        <tr><td>holding</td><td>荷物を持っているか</td></tr>
+        <tr><td>not / and / or</td><td>条件をつなぐ（強さは not &gt; and &gt; or）</td></tr>
+      </table>
+    </details>
+
+    <label for="program">プログラム（ここを書き換えます）</label>
     <textarea id="program" spellcheck="false"></textarea>
+    <p id="lines-title">▶ が今の行です</p>
     <pre id="lines"></pre>
-    <details open><summary>構文木（書いたものが、どんな形に読まれたか）</summary><pre id="tree"></pre></details>
+    <details><summary>構文木（書いたものが、どんな形に読まれたか）</summary><pre id="tree"></pre></details>
     <pre id="message"></pre>
     <p id="loading">Python を読み込んでいます… （初回は数秒かかります）</p>
   </div>
