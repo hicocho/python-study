@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>耳コピ3（面と記録と合言葉） — python-study</title>
+<meta name="description" content="47 曲が 4 つの面に分かれ、遊んだ結果が記録に残る。自分で作った旋律は合言葉にして持ち帰れる。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#127929;</text></svg>">
+<link rel="stylesheet" href="https://pyscript.net/releases/2025.8.1/core.css">
+<script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #656d76;
+    --line: #d8dbe0;
+    --accent: #2f6f8e;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c;
+      --panel: #1f2229;
+      --ink: #e6e6e3;
+      --muted: #9aa2ad;
+      --line: #333842;
+      --accent: #8fbfe0;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2rem 1rem 3rem;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    line-height: 1.7;
+  }
+  main { max-width: 34rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; letter-spacing: .02em; }
+  .sub { color: var(--muted); font-size: .875rem; margin: 0 0 1.5rem; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: .75rem;
+    padding: 1.25rem;
+  }
+  .status { display: flex; justify-content: space-between; align-items: baseline;
+    gap: 1rem; margin-bottom: .75rem; color: var(--muted); font-size: .875rem;
+    font-variant-numeric: tabular-nums; }
+  .status b { color: var(--ink); font-weight: 700; }
+
+  /* ドット絵の画面。126×80 の canvas を CSS で 4 倍に */
+  .stage { display: flex; justify-content: center; }
+  #screen {
+    width: min(100%, 504px);
+    aspect-ratio: 128 / 80;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    background: #000;
+    border: 2px solid var(--line);
+    border-radius: .35rem;
+    touch-action: none;
+    cursor: pointer;
+  }
+  .pad { display: grid; gap: .4rem; margin-top: .75rem;
+    grid-template-columns: 1fr 1.4fr 1fr; }
+  .pad button { padding: .8rem 0; font-size: 1.05rem; font-family: inherit; font-weight: 600;
+    color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+    border-radius: .5rem; cursor: pointer; user-select: none; -webkit-user-select: none; }
+  .pad button:active { background: var(--accent); color: var(--panel); }
+  .pad { grid-template-columns: 1.35fr 1fr 1fr; }
+  .pad button { white-space: nowrap; }
+  #program { width: 100%; box-sizing: border-box; margin-top: .75rem; min-height: 15em;
+    font-family: ui-monospace, Menlo, monospace; font-size: .8125rem; line-height: 1.5;
+    color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+    border-radius: .5rem; padding: .6rem .7rem; resize: vertical; }
+  #lines { font-family: ui-monospace, Menlo, monospace; font-size: .75rem; color: var(--muted);
+    margin: .5rem 0 0; white-space: pre; overflow-x: auto; }
+  #record { font-family: ui-monospace, Menlo, monospace; font-size: .7rem; color: var(--muted);
+    margin: .4rem 0 0; white-space: pre; overflow-x: auto; max-height: 16em; overflow-y: auto; }
+  #tree { font-family: ui-monospace, Menlo, monospace; font-size: .75rem; color: var(--muted);
+    margin: .4rem 0 0; white-space: pre; overflow-x: auto; }
+  details { margin-top: .6rem; }
+  summary { font-size: .8125rem; color: var(--muted); cursor: pointer; }
+  #message { font-family: ui-monospace, Menlo, monospace; font-size: .75rem; margin: .5rem 0 0;
+    white-space: pre; overflow-x: auto; min-height: 3.4em; color: var(--muted); }
+  #message.bad { color: #d1495b; }
+  #message.done { color: var(--accent); font-weight: 700; }
+  #message { min-height: 2.6em; }
+  label { display: block; font-size: .8125rem; color: var(--muted); margin-top: .75rem; }
+  .legend { display: flex; flex-wrap: wrap; gap: .25rem .9rem; margin: .6rem 0 0;
+    font-size: .8125rem; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: .35rem; }
+  .legend i { width: .8rem; height: .8rem; border-radius: .15rem; display: inline-block; }
+  .howto { margin: .75rem 0 0; padding: .7rem .8rem; background: var(--bg);
+    border: 1px solid var(--line); border-radius: .5rem; font-size: .8125rem; }
+  .howto b { color: var(--ink); }
+  .howto ol { margin: .4rem 0 0; padding-left: 1.2rem; }
+  .howto li { margin: .15rem 0; }
+  .howto code { background: transparent; }
+  table.words { border-collapse: collapse; font-size: .8125rem; margin-top: .4rem; }
+  table.words td { border-top: 1px solid var(--line); padding: .25rem .6rem .25rem 0;
+    vertical-align: top; }
+  table.words td:first-child { font-family: ui-monospace, Menlo, monospace;
+    white-space: nowrap; color: var(--ink); }
+  #lines-title { font-size: .8125rem; color: var(--muted); margin: .75rem 0 0; }
+  #loading { color: var(--muted); font-size: .875rem; text-align: center; padding: .5rem 0; margin: .5rem 0 0; }
+  .keys { font-size: .8125rem; color: var(--muted); text-align: center; margin: .75rem 0 0; }
+  .back { font-size: .875rem; margin: 0 0 1rem; }
+  .back a { color: var(--muted); text-decoration: none; }
+  .back a:hover { text-decoration: underline; }
+  .note { font-size: .875rem; color: var(--muted); margin-top: 1.5rem; }
+  .note a { color: inherit; }
+  footer { margin-top: 2rem; font-size: .8125rem; color: var(--muted); }
+  .keymap { font-family: ui-monospace, Menlo, monospace; font-size: .75rem; color: var(--muted);
+    margin: .4rem 0 0; white-space: pre; overflow-x: auto; line-height: 1.5; }
+  .stars { font-size: .9rem; letter-spacing: .1em; color: var(--accent); margin: .5rem 0 0;
+    word-break: break-all; }
+  #title { font-family: inherit; }
+  .pad.two { grid-template-columns: 1fr 1fr; }
+  .lengths { font-size: .875rem; color: var(--muted); margin: .6rem 0 0; text-align: center;
+    letter-spacing: .1em; }
+  .lengths b { color: var(--ink); font-size: 1.15rem; }
+  .phrase { display: flex; gap: .4rem; margin-top: .5rem; }
+  .phrase input { flex: 1; min-width: 0; font-family: ui-monospace, Menlo, monospace;
+    font-size: .875rem; letter-spacing: .06em; color: var(--ink); background: var(--bg);
+    border: 1px solid var(--line); border-radius: .5rem; padding: .55rem .7rem; }
+  .phrase button { padding: .55rem .9rem; font-family: inherit; font-size: .875rem;
+    font-weight: 600; color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+    border-radius: .5rem; cursor: pointer; white-space: nowrap; }
+  .phrase button:active { background: var(--accent); color: var(--panel); }
+  .howto hr { border: 0; border-top: 1px solid var(--line); margin: .6rem 0; }
+</style>
+</head>
+<body>
+<main>
+  <p class="back"><a href="../">← 課題一覧</a></p>
+  <h1>耳コピ3（面と記録と合言葉）</h1>
+  <p class="sub">耳コピ 3 段階の<strong>完成形</strong>（<a href="../g73/">1</a> ・ <a href="../g74/">2</a>）。47 曲が<strong>4 つの面</strong>に分かれ、遊んだ結果が<strong>日時つきの記録</strong>に残ります。そして<strong>自分で作った旋律を「合言葉」にして持ち帰れます</strong>——短い文字列を渡せば、相手の画面にも同じ旋律が出題されます。<strong>音を出してお使いください。</strong></p>
+
+  <div class="card">
+    <div class="status">
+      <span>曲 <b id="count">1 / 47</b> ・ <b id="title">？</b></span>
+      <span><b id="stage">すきとおる音</b> ・ 音色 <b id="timbre">サイン</b></span>
+    </div>
+    <div class="status">
+      <span>聞いた <b id="heard">0 回</b> ・ 答え合わせ <b id="tries">0 回</b></span>
+    </div>
+
+    <div class="stage"><canvas id="screen" width="128" height="80"></canvas></div>
+    <p class="legend">
+      <span><i style="background:#3c7a9e"></i>決まった音（もう動かない）</span>
+      <span><i style="background:#ce8a4a"></i>打ち込み中の音</span>
+      <span><i style="background:#4a5650"></i>1 音目の高さの目盛り</span>
+      <span>下の帯の<b>長さ</b>＝その音の長さ</span>
+    </p>
+    <div class="howto">
+      <b>やること</b>：流れた旋律と<b>同じ音の並び</b>を、<b>長さまで合わせて</b>打ち込む。
+      <b>1 音目だけは最初から出ています</b>（そこからの上がり下がりを当てる遊びです）。
+      <ol>
+        <li><b>▶ お題を聞く</b>を押す。何度でも聞けますが、回数が少ないほど★が多い。</li>
+        <li><b>鍵盤を押す</b>と、その音が鳴って左から順に積まれます。間違えたら <b>1つ消す</b>。</li>
+        <li>音が長ければ <b>♩ 長く</b>、短ければ <b>♪ 短く</b>（矢印キーでも）。<b>置いたあとから直せます</b>。</li>
+        <li>全部そろったら <b>答え合わせ</b>。<b>高さと長さの両方が合った音だけ</b>青くなって残ります。</li>
+      </ol>
+      長さの選び先は<b>その曲に出てくる長さだけ</b>（たいてい 2 種類）。
+      合っているかどうかしか教えません。<b>耳で確かめてください。</b>
+      <hr>
+      <b>合言葉</b>：<b>つくる</b>を押して鍵盤で旋律を作り、<b>合言葉にする</b>を押すと短い文字列が出ます。
+      それを渡された人が下の欄に打ち込むと、<b>同じ旋律がその人の画面に出題されます</b>。
+      1 字でも打ち間違えると、その場で分かります。
+    </div>
+
+    <p class="lengths">長さ <b id="length">♩</b></p>
+
+    <div class="pad" id="pad">
+      <button type="button" data-key="space">▶ お題を聞く</button>
+      <button type="button" data-key="enter">答え合わせ</button>
+      <button type="button" data-key="back">1つ消す</button>
+    </div>
+    <div class="pad two">
+      <button type="button" data-key="shorter">♪ 短く</button>
+      <button type="button" data-key="longer">♩ 長く</button>
+    </div>
+    <div class="pad two">
+      <button type="button" data-key="make" id="making">つくる</button>
+      <button type="button" data-key="enter" id="word" hidden>合言葉にする</button>
+    </div>
+
+    <div class="phrase">
+      <input id="phrase" type="text" placeholder="合言葉を打ち込む（例 AEIS-CKJ2-TI）"
+             autocomplete="off" autocapitalize="characters" spellcheck="false">
+      <button type="button" id="read">この旋律で遊ぶ</button>
+    </div>
+
+    <p class="stars" id="stars">—</p>
+    <pre id="message"></pre>
+
+    <details><summary>遊んだ記録（この端末に残ります）</summary><pre id="record">—</pre></details>
+
+    <details><summary>キーボードでも弾けます（本物のピアノと同じ並び）</summary>
+      <p class="keymap">  黒鍵   s d   g h j     2 3   5 6 7
+  白鍵  z x c v b n m   q w e r t y u i
+        ド レ ミ ファソ ラ シ  ド レ ミ ファソ ラ シ ド
+        └─ 低いオクターブ ─┘└─ 高いオクターブ ─┘</p>
+      <table class="words">
+        <tr><td>スペース</td><td>お題を聞く（クリア後は次の曲へ）</td></tr>
+        <tr><td>リターン</td><td>答え合わせ</td></tr>
+        <tr><td>Backspace</td><td>最後に打ち込んだ音を 1 つ消す</td></tr>
+        <tr><td>← → ／ , .</td><td>いま打ち込んだ音の長さを短く／長く</td></tr>
+        <tr><td>1</td><td>つくるモードに入る／出る</td></tr>
+      </table>
+    </details>
+
+    <details><summary>曲について（なぜこの 47 曲なのか）</summary>
+      <p style="font-size:.8125rem;color:var(--muted);margin:.4rem 0 0">
+      小学校で習う童謡・唱歌のうち、<b>著作権の切れたもの</b>だけを選びました。日本の保護期間は
+      没後 70 年ですが、2018 年の延長は<b>その時点でまだ切れていない作品にしか及びません</b>。
+      つまり <b>1967 年以前に亡くなった作曲家の曲は、旧法の 50 年で満了済み</b>です。
+      この線で選んでいます（山田耕筰は 1965 年没なので「赤とんぼ」が入り、井上武士は 1974 年没なので
+      「チューリップ」は入っていません）。旋律は 1 曲ずつ耳で確かめました。</p>
+    </details>
+
+    <p id="loading">Python を読み込んでいます… （初回は数秒かかります）</p>
+  </div>
+
+  <p class="note">
+    このページは <strong>Python のコードがブラウザの中でそのまま動いています</strong>（PyScript）。
+    合言葉の作り方（to_word）も読み方（from_word）も、面の分け方も、キーを受ける obey() も
+    CLI 版と 1 文字も違いません。<strong>端末で作った合言葉が、このページでそのまま開きます</strong>。
+  </p>
+
+  <footer>
+    ソース: <a href="https://github.com/hicocho/python-study">github.com/hicocho/python-study</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/docs/g75/game.py">このページの game.py</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/g75-ear-course/main.py">CLI 版 main.py</a>
+  </footer>
+</main>
+
+<script type="py" src="./game.py"></script>
+</body>
+</html>
