@@ -167,6 +167,10 @@ python3 .claude/skills/gnn/scripts/extract_shared.py gNN-<slug>/main.py \
 
 `docs/index.html` の課題一覧にカードを 1 枚足す（既存カードと同じ形。タグは覚えた文法 4 つ）。
 
+**`game.py` の読み込みには版を付ける**（`src="./game.py?v=<中身の sha256 先頭 8 桁>"`）。
+`python3 .claude/skills/gnn/scripts/stamp.py docs/gNN` で付く。付けないと、直したのに
+古い画面を見続けることになる（g73 で 2 回起きた）。**game.py を組み立て直すたびに走らせる。**
+
 `pickle` は PyScript でも動く。セーブは `pickle.dumps` → base64 → `localStorage`（g21）。
 データファイル（TOML など）は `<script type="py" src="./game.py" config='{"files": {"./scenarios/x.toml": "./scenarios/x.toml"}}'>`
 で仮想 FS に置く。`Path("scenarios").glob` も `tomllib` もそのまま動く（g30）。`__file__` を使う定数は共有部分に入れず header で定義する。
