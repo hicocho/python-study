@@ -48,6 +48,10 @@ EBONY = (26, 30, 28)                                # 黒鍵
 LIT = (232, 176, 84)                                # 押している鍵
 SURE = (60, 122, 158)                               # 確定した音
 TRY = (206, 138, 74)                                # 打ち込み中の音
+MISS = (198, 82, 70)                                # 答え合わせで違っていた音
+BAND = (30, 40, 46)                                 # いま打ち込む列の帯
+SURE_W = (150, 186, 208)                            # 決まった音の白鍵
+SURE_B = (38, 72, 94)                               # 決まった音の黒鍵
 FAINT = (74, 86, 80)                                # 1 音目の高さの目盛り
 GRID = (38, 46, 42)                                 # 半音ごとの目盛り
 BACK = (18, 22, 20)                                 # 背景
@@ -269,17 +273,26 @@ class Screen:
 # ── 絵を描く ────────────────────────────────────────────────────────────
 
 def roll(screen: "Screen", game: "Game") -> None:
-    """お題の音を横に並べる。確定した音は塗り、打ち込み中は色を変える。
+    """お題の音を横に並べる。
 
-    横は 1 音ぶんずつ、画面の幅を音の数で割って決める（音が少ない曲ほど太くなる）。
-    縦は半音 1 つが SEMI ドット。窓の**高さ**は曲によらず SPAN 半音で固定してある——
+    1 列が 1 音。色でその音がどうなっているかを出す。
+      青  決まった（もう動かない）
+      橙  いま打ち込んでいる
+      赤  さっきの答え合わせで違っていた（次に何か押すと消える）
+    いま打ち込む列は縦の帯で示す。**どこに入るのかが見えないと、耳より先に迷う。**
+
+    縦は半音 1 つが SEMI ドット。窓の高さは曲によらず SPAN 半音で固定してある——
     曲に合わせて伸び縮みさせると、目盛りの間隔が「その曲の音の幅」を教えてしまう。
     位置だけは曲の真ん中に合わせる（せまい曲が鍵盤に張りつかないように）。
     """
     count = len(game.answer)
     step = (WIDTH - LEFT * 2) // count
     high = OFFSET + SPAN - (SPAN - max(game.song.notes)) // 2
-    base = ROLL_TOP + SPAN * SEMI + 4
+    tall = SPAN * SEMI + SEMI
+    base = ROLL_TOP + tall            # 印を置く行。鍵盤とぶつからない高さ
+    here = game.at()
+    if here is not None:                            # いま打ち込む列を先に塗る（目盛りの下）
+        screen.box(LEFT + here * step, ROLL_TOP, step - 2, tall, BAND)
     for line in range(SPAN + 1):                    # 半音ごとの目盛り。空いた所も「音の高さ」だと分かる
         y = ROLL_TOP + line * SEMI + SEMI - 1
         color = FAINT if (high - line) == game.answer[0] else GRID
@@ -287,27 +300,36 @@ def roll(screen: "Screen", game: "Game") -> None:
             screen.plot(x, y, color)
     for i in range(count):
         x = LEFT + i * step
-        screen.box(x + step // 2 - 1, base + 2, 2, 2, TRY if i == game.at() else GRID)
         if game.fixed[i]:
-            note, color = game.answer[i], SURE
+            note, color, mark = game.answer[i], SURE, SURE
+        elif game.missed[i] is not None:
+            note, color, mark = game.missed[i], MISS, MISS
         elif game.typed[i] is not None:
-            note, color = game.typed[i], TRY
+            note, color, mark = game.typed[i], TRY, TRY
         else:
-            continue
-        screen.box(x, ROLL_TOP + (high - note) * SEMI, step - 2, SEMI, color)
+            note, color, mark = None, None, TRY if i == here else GRID
+        screen.box(x + step // 2 - 1, base + 2, 2, 2, mark)
+        if note is not None:
+            screen.box(x, ROLL_TOP + (high - note) * SEMI, step - 2, SEMI, color)
     for x in range(LEFT, LEFT + count * step - 2):
         screen.plot(x, base, LINE)
 
 
 def board(screen: "Screen", game: "Game") -> None:
-    """25 鍵の鍵盤。黒鍵をあとに描いて白鍵の上に載せる。"""
+    """25 鍵の鍵盤。黒鍵をあとに描いて白鍵の上に載せる。
+
+    **決まった音の鍵は青く塗る。** 上のバーと鍵盤がこれでつながる——
+    「青いバーはこの鍵のこと」が一目で分かるようにするため。
+    もう分かっている音なので、これで教えすぎになることもない。
+    """
+    done = {game.answer[i] for i in range(len(game.answer)) if game.fixed[i]}
     for index, note in enumerate(WHITE):
         x, y, w, h = white_box(index)
-        screen.box(x, y, w, h, LIT if note == game.lit else INK)
+        screen.box(x, y, w, h, LIT if note == game.lit else SURE_W if note in done else INK)
         screen.frame(x, y, w, h, SHADE)
     for index, note in enumerate(BLACK):
         x, y, w, h = black_box(index)
-        screen.box(x, y, w, h, LIT if note == game.lit else EBONY)
+        screen.box(x, y, w, h, LIT if note == game.lit else SURE_B if note in done else EBONY)
 
 
 def draw(screen: "Screen", game: "Game") -> None:
@@ -326,6 +348,7 @@ class Game:
     index: int = 0                                  # 何曲目
     typed: list[int | None] = field(default_factory=list)
     fixed: list[bool] = field(default_factory=list)
+    missed: list[int | None] = field(default_factory=list)  # 答え合わせで違っていた音
     heard: int = 0                                  # お題を聞いた回数
     tries: int = 0                                  # 答え合わせをした回数
     lit: int | None = None                          # いま光っている鍵
@@ -354,6 +377,7 @@ class Game:
         answer = self.answer
         self.typed = [None] * len(answer)
         self.fixed = [False] * len(answer)
+        self.missed = [None] * len(answer)
         self.typed[0] = answer[0]
         self.fixed[0] = True
         self.heard = 0
@@ -372,19 +396,31 @@ class Game:
     def press(self, note: int) -> bool:
         """鍵を押す。打ち込む場所があれば入れる。"""
         self.lit = note
+        self.forget()
         spot = self.at()
         if spot is None or self.cleared:
             return False
         self.typed[spot] = note
-        self.message = "そろったらリターンで答え合わせ" if self.at() is None else ""
+        self.message = self.left()
         return True
+
+    def left(self) -> str:
+        """あと何音そろえればいいか。**押すべきときが分かるように、いつも出す。**"""
+        rest = sum(1 for i, note in enumerate(self.typed) if not self.fixed[i] and note is None)
+        return "そろった。リターンで答え合わせ" if rest == 0 else f"あと {rest} 音"
+
+    def forget(self) -> None:
+        """赤い印（さっき違っていた音）を消す。何か打ったら消える。"""
+        if any(note is not None for note in self.missed):
+            self.missed = [None] * len(self.typed)
 
     def erase(self) -> None:
         """最後に打ち込んだ音を消す。確定した音は消せない。"""
+        self.forget()
         for i in reversed(range(len(self.typed))):
             if not self.fixed[i] and self.typed[i] is not None:
                 self.typed[i] = None
-                self.message = ""
+                self.message = self.left()
                 return
 
     def judge(self) -> bool:
@@ -392,23 +428,30 @@ class Game:
 
         位置も高さも教えない。合っていたかどうかだけ。
         耳で確かめれば分かることを字で教えると、耳を使わずに解けてしまう。
+
+        違っていた音は**赤のまま残す**。黙って消すと、何が起きたのか分からない。
+        次に鍵を押したときに消える。
         """
         if self.at() is not None or self.cleared:
             self.message = "まだ全部そろっていない"
             return False
         self.tries += 1
         answer = self.answer
+        self.missed = [None] * len(answer)
         for i in range(len(answer)):
             if self.typed[i] == answer[i]:
                 self.fixed[i] = True
             else:
+                self.missed[i] = self.typed[i]      # 何を押したかを赤で残す
                 self.typed[i] = None
         if all(self.fixed):
             self.cleared = True
             self.stars.append(self.score())      # ←
             self.message = f"{self.song.name}　★ {self.score()}"
         else:
-            self.message = f"{sum(self.fixed)} / {len(answer)} 音が決まった"
+            wrong = sum(1 for note in self.missed if note is not None)
+            self.message = (f"青が {sum(self.fixed)} 音そろった。"
+                            f"赤い {wrong} 音をもう一度")
         return self.cleared
 
     def score(self) -> int:                         # ←
@@ -437,7 +480,7 @@ def obey(game: Game, key: str) -> tuple[list[int], float] | None:
         if game.cleared:                                # ←
             return None if not game.advance() else (game.answer, NOTE)  # ←
         game.heard += 1
-        game.message = ""
+        game.message = game.left()
         return game.answer, NOTE
     if key == "enter":
         if game.cleared:                                # ←

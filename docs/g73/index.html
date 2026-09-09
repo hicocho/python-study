@@ -88,12 +88,14 @@
     white-space: pre; overflow-x: auto; min-height: 3.4em; color: var(--muted); }
   #message.bad { color: #d1495b; }
   #message.done { color: var(--accent); font-weight: 700; }
-  #message { min-height: 2.6em; }
+  #message { min-height: 1.6em; margin: .6rem 0 0; font-size: .8125rem; color: var(--ink);
+    font-family: inherit; white-space: normal; }
   label { display: block; font-size: .8125rem; color: var(--muted); margin-top: .75rem; }
   .legend { display: flex; flex-wrap: wrap; gap: .25rem .9rem; margin: .6rem 0 0;
     font-size: .8125rem; color: var(--muted); }
   .legend span { display: inline-flex; align-items: center; gap: .35rem; }
-  .legend i { width: .8rem; height: .8rem; border-radius: .15rem; display: inline-block; }
+  .legend i { width: .8rem; height: .8rem; border-radius: .15rem; display: inline-block;
+    border: 1px solid var(--line); }
   .howto { margin: .75rem 0 0; padding: .7rem .8rem; background: var(--bg);
     border: 1px solid var(--line); border-radius: .5rem; font-size: .8125rem; }
   .howto b { color: var(--ink); }
@@ -136,19 +138,30 @@
     <div class="stage"><canvas id="screen" width="128" height="80"></canvas></div>
     <p class="legend">
       <span><i style="background:#3c7a9e"></i>決まった音（もう動かない）</span>
-      <span><i style="background:#ce8a4a"></i>打ち込み中の音</span>
-      <span><i style="background:#4a5650"></i>1 音目の高さの目盛り</span>
+      <span><i style="background:#ce8a4a"></i>いま打ち込んでいる音</span>
+      <span><i style="background:#c65246"></i>さっき違っていた音</span>
+      <span><i style="background:#1e282e"></i>いま打ち込む場所（縦の帯）</span>
+      <span><i style="background:#96bad0"></i>決まった音の鍵盤</span>
     </p>
+    <pre id="message"></pre>
+
     <div class="howto">
       <b>やること</b>：流れた旋律と<b>同じ音の並び</b>を鍵盤で打ち込む。
-      <b>1 音目だけは最初から出ています</b>（そこからの上がり下がりを当てる遊びです）。
+      画面の<b>1 列が 1 音</b>で、左から順に埋めていきます。
+      <b>1 音目だけは最初から青く出ています</b>（そこからの上がり下がりを当てる遊びです）。
       <ol>
         <li><b>▶ お題を聞く</b>を押す。何度でも聞けますが、回数が少ないほど★が多い。</li>
-        <li><b>鍵盤を押す</b>と、その音が鳴って左から順に積まれます。間違えたら <b>1つ消す</b>。</li>
-        <li>全部そろったら <b>答え合わせ</b>。<b>合っていた音だけ青くなって残り</b>、違った音は消えます。</li>
+        <li><b>鍵盤を押す</b>と、その音が鳴って<b>縦の帯のところ</b>に入り、帯が次の列へ進みます。
+            間違えたら <b>1つ消す</b>。下に「あと ◯ 音」と出ます。</li>
+        <li>全部そろったら <b>答え合わせ</b>。ここで 2 つのことが起きます。
+          <ul>
+            <li>合っていた音は<b>青</b>になり、<b>もう動かなくなります</b>（その鍵盤も青くなります）。</li>
+            <li>違っていた音は<b>赤</b>で残ります。<b>そこだけ</b>打ち直してください（次に鍵を押すと赤は消えます）。</li>
+          </ul>
+        </li>
+        <li>青がぜんぶ埋まればクリア。曲名が出ます。</li>
       </ol>
-      合っているかどうかしか教えません（位置も高さも出ません）。<b>耳で確かめてください。</b>
-      全部そろうと曲名が出ます。
+      <b>合っているかどうかしか教えません</b>（「惜しい」「もっと高い」は出しません）。<b>耳で確かめてください。</b>
     </div>
 
     <div class="pad" id="pad">
@@ -158,7 +171,6 @@
     </div>
 
     <p class="stars" id="stars">—</p>
-    <pre id="message"></pre>
 
     <details><summary>キーボードでも弾けます（本物のピアノと同じ並び）</summary>
       <p class="keymap">  黒鍵   s d   g h j     2 3   5 6 7
