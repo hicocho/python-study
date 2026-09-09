@@ -90,6 +90,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g72 | [街づくり3（季節と備えと記録）](g72-town-rebuild/) | 季節が巡り、消防署と堤防が災害を止め、街の歩みが csv の記録に残る（街づくり 3 段階の完成形） | `itertools.cycle`（季節）/ `csv.DictWriter` と `io.StringIO`（出す先を選ばない）/ 決まりを機械に確かめさせる（リプレイ） |
 | g73 | [耳コピ1（音を作る）](g73-ear-piano/) | 流れた旋律を聞いて鍵盤で同じ音を打ち込む。音は正弦波から自分で作り、端末とブラウザで同じ wav が鳴る（耳コピ 3 段階の 1 つ目） | `array` の生データ列 / `wave` と `io.BytesIO`（出す先を選ばない）/ 平均律 `440×2^((n-9)/12)` / `subprocess` で鳴らす |
 | g74 | [耳コピ2（音色とリズム）](g74-ear-rhythm/) | お題が本物のリズムで鳴り、音の高さと長さの両方を当てる。波の形を変えて音色 4 種（耳コピ 3 段階の 2 つ目） | `TypeAlias` で波の形に名前 / `functools.reduce` で倍音を重ねる / `memoryview` で場所を決めて書き込む / `math.tau` |
+| g75 | [耳コピ3（面と記録と合言葉）](g75-ear-course/) | 47 曲が 4 つの面に分かれ、遊んだ結果が日時つきの記録に残る。自分で作った旋律は合言葉にして持ち帰れる（耳コピ 3 段階の完成形） | `base64.b32encode` と `hashlib.blake2s`（打ち間違いを見つける）/ `zoneinfo`（動く場所で使える範囲が違う）/ `OrderedDict.move_to_end` / `itertools.chain.from_iterable` |
 
 ## 動かし方
 
