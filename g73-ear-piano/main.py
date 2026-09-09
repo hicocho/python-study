@@ -489,7 +489,7 @@ class Game:
             self.call = "GOOD！"
             self.stars.append(self.score())      # ←
             how = f"（{self.shift:+d} 半音の高さで弾きましたが、形が同じなので正解）" if self.shift else ""
-            self.message = f"★ {self.score()}{how}　次の曲へ進めます"
+            self.message = f"★ {self.score()}{how}"
         else:
             self.call = "ALMOST！" if wrong <= ALMOST else "BAD！"
             self.message = (f"青が {sum(self.fixed)} 音そろった。"
@@ -518,15 +518,16 @@ def obey(game: Game, key: str) -> tuple[list[int], float] | None:
 
     端末もブラウザもここを通る。鳴らし方は違っても、判断はここ 1 か所。
     """
-    if key == "space":
+    if key == "space":                                  # いつでも「お題を聞く」だけ
         if game.cleared:                                # ←
-            return None if not game.advance() else (game.answer, NOTE)  # ←
+            return game.answer, NOTE                    # ← クリア後は聞き直すだけ。進まない
         game.heard += 1
         game.message = game.left()
         return game.answer, NOTE
-    if key == "enter":
+    if key == "enter":                                  # 「答え合わせ」、クリア後は「次の曲へ」
         if game.cleared:                                # ←
-            game.advance()                              # ←
+            if not game.advance():                      # ←
+                game.message = "最後の曲です"            # ←
             return None                                 # ←
         game.judge()
         return None
@@ -588,7 +589,8 @@ def show(screen: Screen, game: Game) -> str:
         f" {game.call}",
         f" {game.message}",
         f" {star}",
-        " スペース=お題　リターン=答え合わせ　BS=1つ消す　Esc=やめる",
+        (" スペース=もう一度聞く　リターン=次の曲へ　Esc=やめる" if game.cleared else
+         " スペース=お題　リターン=答え合わせ　BS=1つ消す　Esc=やめる"),
         " 白鍵 z x c v b n m q w e r t y u i ／ 黒鍵 s d g h j 2 3 5 6 7",
     ]
     return "\n".join(lines)

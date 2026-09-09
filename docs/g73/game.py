@@ -523,7 +523,7 @@ class Game:
             self.call = "GOOD！"
             self.stars.append(self.score())
             how = f"（{self.shift:+d} 半音の高さで弾きましたが、形が同じなので正解）" if self.shift else ""
-            self.message = f"★ {self.score()}{how}　次の曲へ進めます"
+            self.message = f"★ {self.score()}{how}"
         else:
             self.call = "ALMOST！" if wrong <= ALMOST else "BAD！"
             self.message = (f"青が {sum(self.fixed)} 音そろった。"
@@ -552,15 +552,16 @@ def obey(game: Game, key: str) -> tuple[list[int], float] | None:
 
     端末もブラウザもここを通る。鳴らし方は違っても、判断はここ 1 か所。
     """
-    if key == "space":
+    if key == "space":                                  # いつでも「お題を聞く」だけ
         if game.cleared:
-            return None if not game.advance() else (game.answer, NOTE)
+            return game.answer, NOTE                    # ← クリア後は聞き直すだけ。進まない
         game.heard += 1
         game.message = game.left()
         return game.answer, NOTE
-    if key == "enter":
+    if key == "enter":                                  # 「答え合わせ」、クリア後は「次の曲へ」
         if game.cleared:
-            game.advance()
+            if not game.advance():
+                game.message = "最後の曲です"
             return None
         game.judge()
         return None
@@ -586,6 +587,9 @@ heard_label = document.querySelector("#heard")
 tries_label = document.querySelector("#tries")
 stars_label = document.querySelector("#stars")
 message = document.querySelector("#message")
+hear_button = document.querySelector('#pad [data-key="space"]')
+next_button = document.querySelector('#pad [data-key="enter"]')
+erase_button = document.querySelector('#pad [data-key="back"]')
 verdict = document.querySelector("#verdict")
 who_label = document.querySelector("#who")
 
@@ -648,6 +652,11 @@ def refresh() -> None:
     verdict.hidden = not game.call
     verdict.className = "verdict " + {"GOOD！": "good", "ALMOST！": "almost"}.get(game.call, "bad")
     message.textContent = game.message
+    # ボタンの意味は 1 つずつ。クリアしたら文字を変えて、できないことは押せなくする
+    hear_button.textContent = "▶ もう一度聞く" if game.cleared else "▶ お題を聞く"
+    next_button.textContent = "次の曲へ →" if game.cleared else "答え合わせ"
+    next_button.className = "go" if game.cleared else ""
+    erase_button.disabled = game.cleared
 
 
 def act(key: str) -> None:

@@ -70,6 +70,8 @@
     color: var(--ink); background: var(--bg); border: 1px solid var(--line);
     border-radius: .5rem; cursor: pointer; user-select: none; -webkit-user-select: none; }
   .pad button:active { background: var(--accent); color: var(--panel); }
+  .pad button.go { background: var(--accent); color: var(--panel); border-color: var(--accent); }
+  .pad button:disabled { opacity: .35; cursor: default; }
   .pad { grid-template-columns: 1.35fr 1fr 1fr; }
   .pad button { white-space: nowrap; }
   #program { width: 100%; box-sizing: border-box; margin-top: .75rem; min-height: 15em;
@@ -158,7 +160,9 @@
   .verdict.good { color: #2f7d52; }
   .verdict.almost { color: #b7791f; }
   .verdict.bad { color: #c0453a; }
+  .pad button.go { background: #2f7d52; border-color: #2f7d52; color: #fff; }
   @media (prefers-color-scheme: dark) {
+    .pad button.go { background: #3f8f62; border-color: #3f8f62; color: #0f1512; }
     .verdict.good { color: #79c99b; }
     .verdict.almost { color: #e0b25c; }
     .verdict.bad { color: #e58579; }
@@ -229,8 +233,8 @@
         ド レ ミ ファソ ラ シ  ド レ ミ ファソ ラ シ ド
         └─ 低いオクターブ ─┘└─ 高いオクターブ ─┘</p>
       <table class="words">
-        <tr><td>スペース</td><td>お題を聞く（クリア後は次の曲へ）</td></tr>
-        <tr><td>リターン</td><td>答え合わせ</td></tr>
+        <tr><td>スペース</td><td>お題を聞く（クリア後も、もう一度聞ける）</td></tr>
+        <tr><td>リターン</td><td>答え合わせ（クリア後は次の曲へ）</td></tr>
         <tr><td>Backspace</td><td>最後に打ち込んだ音を 1 つ消す</td></tr>
       </table>
     </details>
