@@ -116,6 +116,32 @@
   .note { font-size: .875rem; color: var(--muted); margin-top: 1.5rem; }
   .note a { color: inherit; }
   footer { margin-top: 2rem; font-size: .8125rem; color: var(--muted); }
+  /* スマホでは、遊ぶところ（絵・曲名・ボタン）を 1 画面に収める */
+  @media (max-width: 480px) {
+    body { padding: 1rem .75rem 2rem; }
+    h1 { font-size: 1.25rem; }
+    .sub { font-size: .8125rem; margin-bottom: 1rem; }
+    .card { padding: .9rem; }
+    .legend { font-size: .75rem; gap: .2rem .7rem; margin-top: .45rem; }
+    .legend i { width: .7rem; height: .7rem; }
+    .song { font-size: 1.35rem; margin-top: .5rem; }
+    .verdict { font-size: 1.4rem; }
+    .pad button { padding: .7rem 0; font-size: 1rem; }
+    /* 遊ぶのに要るものを先に、読みものはあとに並べ替える */
+    .card { display: flex; flex-direction: column; }
+    .status { order: 1; }
+    .stage  { order: 2; }
+    #title  { order: 3; }
+    #who    { order: 4; }
+    #verdict { order: 5; }
+    #message { order: 6; }
+    #pad    { order: 7; }
+    .stars  { order: 8; }
+    .legend { order: 9; }
+    .howto  { order: 10; }
+    details { order: 11; }
+    #loading { order: 12; }
+  }
   .keymap { font-family: ui-monospace, Menlo, monospace; font-size: .75rem; color: var(--muted);
     margin: .4rem 0 0; white-space: pre; overflow-x: auto; line-height: 1.5; }
   .stars { font-size: .9rem; letter-spacing: .1em; color: var(--accent); margin: .5rem 0 0;
@@ -164,6 +190,12 @@
     <p class="verdict" id="verdict" hidden></p>
     <pre id="message"></pre>
 
+    <div class="pad" id="pad">
+      <button type="button" data-key="space">▶ お題を聞く</button>
+      <button type="button" data-key="enter">答え合わせ</button>
+      <button type="button" data-key="back">1つ消す</button>
+    </div>
+
     <div class="howto">
       <b>やること</b>：流れた旋律と<b>同じ音の並び</b>を鍵盤で打ち込む。
       画面の<b>1 列が 1 音</b>で、左から順に埋めていきます。
@@ -188,11 +220,6 @@
       いちど青がついたら、そこからは高さが決まります。
     </div>
 
-    <div class="pad" id="pad">
-      <button type="button" data-key="space">▶ お題を聞く</button>
-      <button type="button" data-key="enter">答え合わせ</button>
-      <button type="button" data-key="back">1つ消す</button>
-    </div>
 
     <p class="stars" id="stars">—</p>
 

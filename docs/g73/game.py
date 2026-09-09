@@ -450,7 +450,7 @@ class Game:
         self.tries = 0
         self.lit = None
         self.cleared = False
-        self.message = "スペースでお題を聞く"
+        self.message = "まずお題を聞いてください"
 
     def at(self) -> int | None:
         """次に打ち込む場所。確定していなくて、まだ空いているところの左から。"""
@@ -523,7 +523,7 @@ class Game:
             self.call = "GOOD！"
             self.stars.append(self.score())
             how = f"（{self.shift:+d} 半音の高さで弾きましたが、形が同じなので正解）" if self.shift else ""
-            self.message = f"★ {self.score()}{how}　スペースで次の曲へ"
+            self.message = f"★ {self.score()}{how}　次の曲へ進めます"
         else:
             self.call = "ALMOST！" if wrong <= ALMOST else "BAD！"
             self.message = (f"青が {sum(self.fixed)} 音そろった。"
