@@ -121,6 +121,16 @@
   .stars { font-size: .9rem; letter-spacing: .1em; color: var(--accent); margin: .5rem 0 0;
     word-break: break-all; }
   #title { font-family: inherit; }
+  .verdict { margin: .7rem 0 0; text-align: center; font-size: 1.6rem; font-weight: 800;
+    letter-spacing: .08em; line-height: 1.2; }
+  .verdict.good { color: #2f7d52; }
+  .verdict.almost { color: #b7791f; }
+  .verdict.bad { color: #c0453a; }
+  @media (prefers-color-scheme: dark) {
+    .verdict.good { color: #79c99b; }
+    .verdict.almost { color: #e0b25c; }
+    .verdict.bad { color: #e58579; }
+  }
 </style>
 </head>
 <body>
@@ -143,6 +153,7 @@
       <span><i style="background:#1e282e"></i>いま打ち込む場所（縦の帯）</span>
       <span><i style="background:#96bad0"></i>決まった音の鍵盤</span>
     </p>
+    <p class="verdict" id="verdict" hidden></p>
     <pre id="message"></pre>
 
     <div class="howto">

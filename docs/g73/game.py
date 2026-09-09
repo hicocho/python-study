@@ -45,6 +45,9 @@ OFFSET = 6                                          # 曲を鍵盤のどこに�
 SPAN = 12                                           # ロールに映す音の幅（半音）
 
 
+ALMOST = 2                                          # 残りがこれ以下なら ALMOST
+
+
 ROLL_TOP = 4                                        # ロールの上端
 
 
@@ -399,6 +402,7 @@ class Game:
     tries: int = 0                                  # 答え合わせをした回数
     lit: int | None = None                          # いま光っている鍵
     shift: int = 0                                  # 弾いている高さのずれ（半音）
+    call: str = ""                                  # GOOD / ALMOST / BAD
     stars: list[int] = field(default_factory=list)  # ← 曲ごとの星
     cleared: bool = False
     message: str = ""
@@ -441,6 +445,7 @@ class Game:
         self.fixed = [False] * len(answer)
         self.missed = [None] * len(answer)
         self.shift = 0
+        self.call = ""
         self.heard = 0
         self.tries = 0
         self.lit = None
@@ -473,9 +478,10 @@ class Game:
         return f"{len(self.typed)} 音の曲。あと {rest} 音"
 
     def forget(self) -> None:
-        """赤い印（さっき違っていた音）を消す。何か打ったら消える。"""
-        if any(note is not None for note in self.missed):
+        """さっきの答え合わせの跡（赤い印と GOOD/BAD）を消す。何か打ったら消える。"""
+        if self.call or any(note is not None for note in self.missed):
             self.missed = [None] * len(self.typed)
+            self.call = ""
 
     def erase(self) -> None:
         """最後に打ち込んだ音を消す。確定した音は消せない。"""
@@ -511,13 +517,15 @@ class Game:
             else:
                 self.missed[i] = self.typed[i]      # 何を押したかを赤で残す
                 self.typed[i] = None
+        wrong = sum(1 for note in self.missed if note is not None)
         if all(self.fixed):
             self.cleared = True
+            self.call = "GOOD！"
             self.stars.append(self.score())
             how = f"（{self.shift:+d} 半音の高さで弾きましたが、形が同じなので正解）" if self.shift else ""
             self.message = f"{self.song.name}　★ {self.score()}{how}"
         else:
-            wrong = sum(1 for note in self.missed if note is not None)
+            self.call = "ALMOST！" if wrong <= ALMOST else "BAD！"
             self.message = (f"青が {sum(self.fixed)} 音そろった。"
                             f"赤い {wrong} 音をもう一度")
         return self.cleared
@@ -578,6 +586,7 @@ heard_label = document.querySelector("#heard")
 tries_label = document.querySelector("#tries")
 stars_label = document.querySelector("#stars")
 message = document.querySelector("#message")
+verdict = document.querySelector("#verdict")
 
 
 class CanvasScreen(Screen):
@@ -632,6 +641,9 @@ def refresh() -> None:
     heard_label.textContent = f"{game.heard} 回"
     tries_label.textContent = f"{game.tries} 回"
     stars_label.textContent = "".join("★" * n + "・" for n in game.stars[-14:]) or "—"
+    verdict.textContent = game.call
+    verdict.hidden = not game.call
+    verdict.className = "verdict " + {"GOOD！": "good", "ALMOST！": "almost"}.get(game.call, "bad")
     message.textContent = game.message
 
 
