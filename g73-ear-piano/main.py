@@ -489,7 +489,7 @@ class Game:
             self.call = "GOOD！"
             self.stars.append(self.score())      # ←
             how = f"（{self.shift:+d} 半音の高さで弾きましたが、形が同じなので正解）" if self.shift else ""
-            self.message = f"{self.song.name}　★ {self.score()}{how}"
+            self.message = f"★ {self.score()}{how}　スペースで次の曲へ"
         else:
             self.call = "ALMOST！" if wrong <= ALMOST else "BAD！"
             self.message = (f"青が {sum(self.fixed)} 音そろった。"

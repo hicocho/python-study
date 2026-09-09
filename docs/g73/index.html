@@ -121,7 +121,10 @@
   .stars { font-size: .9rem; letter-spacing: .1em; color: var(--accent); margin: .5rem 0 0;
     word-break: break-all; }
   #title { font-family: inherit; }
-  .verdict { margin: .7rem 0 0; text-align: center; font-size: 1.6rem; font-weight: 800;
+  .song { margin: .8rem 0 0; text-align: center; font-size: 1.5rem; font-weight: 700;
+    letter-spacing: .04em; line-height: 1.3; color: var(--muted); text-wrap: balance; }
+  .song.revealed { color: var(--ink); font-size: 1.75rem; }
+  .verdict { margin: .35rem 0 0; text-align: center; font-size: 1.6rem; font-weight: 800;
     letter-spacing: .08em; line-height: 1.2; }
   .verdict.good { color: #2f7d52; }
   .verdict.almost { color: #b7791f; }
@@ -141,7 +144,7 @@
 
   <div class="card">
     <div class="status">
-      <span>曲 <b id="count">1 / 47</b> ・ <b id="title">？</b></span>
+      <span>曲 <b id="count">1 / 47</b></span>
       <span>聞いた <b id="heard">0 回</b> ・ 答え合わせ <b id="tries">0 回</b></span>
     </div>
 
@@ -153,6 +156,7 @@
       <span><i style="background:#1e282e"></i>いま打ち込む場所（縦の帯）</span>
       <span><i style="background:#96bad0"></i>決まった音の鍵盤</span>
     </p>
+    <h2 class="song" id="title">？</h2>
     <p class="verdict" id="verdict" hidden></p>
     <pre id="message"></pre>
 
