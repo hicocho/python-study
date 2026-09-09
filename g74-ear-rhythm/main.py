@@ -185,7 +185,7 @@ class Song:
         return tuple(sorted({length for _, length in self.notes}))
 
 
-SONGS = [
+SONGS = [                                           # ← 3 曲 → 47 曲に
     Song("うれしいひなまつり", "河村光陽（1946 没）", [(0, 2), (0, 2), (0, 2), (2, 2), (3, 2), (2, 2), (0, 4)]),
     Song("雀の学校", "弘田龍太郎（1952 没）", [(0, 2), (3, 2), (3, 2), (3, 2), (0, 2), (3, 2), (3, 2), (3, 4)]),
     Song("かごめかごめ", "わらべうた", [(0, 2), (0, 2), (2, 2), (0, 2), (2, 2), (3, 2), (2, 4), (0, 2), (0, 2), (2, 2), (0, 4)]),
@@ -238,9 +238,9 @@ SONGS = [
 
 # ── 鍵盤 ────────────────────────────────────────────────────────────────
 
-def shape_of(index: int) -> tuple[str, Shape]:
+def shape_of(index: int) -> tuple[str, Shape]:      # ←
     """何曲目かで音色が変わる。倍音が多い音ほど、高さが取りにくい。"""
-    return SHAPES[index * len(SHAPES) // len(SONGS)]
+    return SHAPES[index * len(SHAPES) // len(SONGS)] # ←
 
 
 WHITE = [0, 2, 4, 5, 7, 9, 11, 12, 14, 16, 17, 19, 21, 23, 24]      # 白鍵の音
@@ -398,7 +398,7 @@ class Game:
     heard: int = 0                                  # お題を聞いた回数
     tries: int = 0                                  # 答え合わせをした回数
     lit: int | None = None                          # いま光っている鍵
-    stars: list[int] = field(default_factory=list)
+    stars: list[int] = field(default_factory=list)  # ←
     cleared: bool = False
     message: str = ""
 
@@ -494,27 +494,27 @@ class Game:
                 self.typed[i] = None
         if all(self.fixed):
             self.cleared = True
-            self.stars.append(self.score())
+            self.stars.append(self.score())      # ←
             self.message = f"{self.song.name}　★ {self.score()}"
         else:
             self.message = f"{sum(self.fixed)} / {len(answer)} 音が決まった"
         return self.cleared
 
-    def score(self) -> int:
+    def score(self) -> int:                         # ←
         """星の数。聞いた回数と答え合わせの回数が少ないほど多い。"""
-        if self.heard <= 3 and self.tries <= 2:
-            return 3
-        if self.heard <= 6 and self.tries <= 4:
-            return 2
-        return 1
+        if self.heard <= 3 and self.tries <= 2:     # ←
+            return 3                                # ←
+        if self.heard <= 6 and self.tries <= 4:     # ←
+            return 2                                # ←
+        return 1                                    # ←
 
-    def advance(self) -> bool:
+    def advance(self) -> bool:                      # ←
         """次の曲へ。最後まで行ったら False。"""
-        if self.index + 1 >= len(SONGS):
-            return False
-        self.index += 1
-        self.start()
-        return True
+        if self.index + 1 >= len(SONGS):            # ←
+            return False                            # ←
+        self.index += 1                             # ←
+        self.start()                                # ←
+        return True                                 # ←
 
 
 def obey(game: Game, key: str) -> tuple[list[tuple[int, int]], Shape] | None:
@@ -523,15 +523,15 @@ def obey(game: Game, key: str) -> tuple[list[tuple[int, int]], Shape] | None:
     端末もブラウザもここを通る。鳴らし方は違っても、判断はここ 1 か所。
     """
     if key == "space":
-        if game.cleared:
-            return None if not game.advance() else (game.answer, game.wave_shape)
+        if game.cleared:                                # ←
+            return None if not game.advance() else (game.answer, game.wave_shape)  # ←
         game.heard += 1
         game.message = ""
         return game.answer, game.wave_shape
     if key == "enter":
-        if game.cleared:
-            game.advance()
-            return None
+        if game.cleared:                                # ←
+            game.advance()                              # ←
+            return None                                 # ←
         game.judge()
         return None
     if key == "back":
@@ -591,16 +591,17 @@ NAMES = {" ": "space", "\r": "enter", "\n": "enter", "\x7f": "back", "\b": "back
 def show(screen: Screen, game: Game) -> str:
     """画面と、その下に出す字。"""
     draw(screen, game)
-    star = "".join("★" * n + "・" for n in game.stars[-12:])
+    star = "".join("★" * n + "・" for n in game.stars[-12:])  # ←
     choices = "  ".join(("[" + MARKS[n] + "]") if n == game.length else (" " + MARKS[n] + " ")
                         for n in game.song.lengths())
     lines = [
         screen.render(),
-        f" {game.index + 1:2d}/{len(SONGS)}曲目  音色 {shape_of(game.index)[0]}  "
+        f" {game.index + 1:2d}/{len(SONGS)}曲目  "
+        f"音色 {shape_of(game.index)[0]}  "              # ←
         f"聞いた {game.heard} 回  答え合わせ {game.tries} 回",
         f" 長さ  {choices}",
         f" {game.message}",
-        f" {star}",
+        f" {star}",                                     # ←
         " スペース=お題　リターン=答え合わせ　BS=1つ消す　, . =長さ　Esc=やめる",
         " 白鍵 z x c v b n m q w e r t y u i ／ 黒鍵 s d g h j 2 3 5 6 7",
     ]
@@ -638,21 +639,21 @@ def run() -> None:
 
 # ── 確かめる ────────────────────────────────────────────────────────────
 
-def check() -> None:
+def check() -> None:                                # ←
     """決まりを機械に確かめさせる。"""
-    print("● 波の形")
-    for name, wave_shape in SHAPES:
-        values = [wave_shape(i / 400) for i in range(400)]
-        assert all(-1.001 <= v <= 1.001 for v in values), name
-        assert abs(wave_shape(0.0)) < 0.001, f"{name} は位相 0 で 0 から始まらない"
-        steep = max(abs(b - a) for a, b in zip(values, values[1:]))
-        print(f"  {name:6s} 上下 {min(values):+.2f}〜{max(values):+.2f}　"
-              f"いちばん急な変わり方 {steep:.4f}")
-    assert organ(0.13) != sine(0.13), "倍音を重ねたのに正弦波と同じ"
-    peak = max(abs(organ(i / 20000)) for i in range(20000))
-    assert abs(peak - 1.0) < 0.01, f"LOUDEST が合っていない（山の高さ {peak:.4f}）"
-    print(f"  オルガンの山の高さ {peak:.4f}。重ねた合計 "
-          f"{sum(s for _, s in HARMONICS)} ではなく、実際に測った {LOUDEST} で割る")
+    print("● 波の形")                                  # ←
+    for name, wave_shape in SHAPES:                 # ←
+        values = [wave_shape(i / 400) for i in range(400)] # ←
+        assert all(-1.001 <= v <= 1.001 for v in values), name # ←
+        assert abs(wave_shape(0.0)) < 0.001, f"{name} は位相 0 で 0 から始まらない" # ←
+        steep = max(abs(b - a) for a, b in zip(values, values[1:])) # ←
+        print(f"  {name:6s} 上下 {min(values):+.2f}〜{max(values):+.2f}　" # ←
+              f"いちばん急な変わり方 {steep:.4f}")            # ←
+    assert organ(0.13) != sine(0.13), "倍音を重ねたのに正弦波と同じ" # ←
+    peak = max(abs(organ(i / 20000)) for i in range(20000)) # ←
+    assert abs(peak - 1.0) < 0.01, f"LOUDEST が合っていない（山の高さ {peak:.4f}）" # ←
+    print(f"  オルガンの山の高さ {peak:.4f}。重ねた合計 "          # ←
+          f"{sum(s for _, s in HARMONICS)} ではなく、実際に測った {LOUDEST} で割る") # ←
     def steepest(wave_shape: Shape) -> float:
         values = [wave_shape(i / 400) for i in range(400)]
         return max(abs(b - a) for a, b in zip(values, values[1:]))
@@ -757,14 +758,14 @@ def check() -> None:
     print("\nぜんぶ通った。")
 
 
-def write_wav(index: int) -> None:
+def write_wav(index: int) -> None:                  # ←
     """耳で確かめる用に wav を書き出す。"""
-    song = SONGS[index]
-    name, wave_shape = shape_of(index)
-    path = f"{index:02d}-{song.name}.wav"
-    with open(path, "wb") as out:
-        out.write(wav_bytes(melody(song.on_board(), wave_shape)))
-    print(f"{path} に書き出した（{song.who} / 音色 {name}）")
+    song = SONGS[index]                             # ←
+    name, wave_shape = shape_of(index)              # ←
+    path = f"{index:02d}-{song.name}.wav"           # ←
+    with open(path, "wb") as out:                   # ←
+        out.write(wav_bytes(melody(song.on_board(), wave_shape))) # ←
+    print(f"{path} に書き出した（{song.who} / 音色 {name}）") # ←
 
 
 def main() -> None:
