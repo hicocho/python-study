@@ -405,7 +405,7 @@ class Game:
                 self.typed[i] = None
         if all(self.fixed):
             self.cleared = True
-            self.stars.append(self.score())
+            self.stars.append(self.score())      # ←
             self.message = f"{self.song.name}　★ {self.score()}"
         else:
             self.message = f"{sum(self.fixed)} / {len(answer)} 音が決まった"

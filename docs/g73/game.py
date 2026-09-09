@@ -169,7 +169,7 @@ class Song:
         return [note + OFFSET for note in self.notes]
 
 
-SONGS = [
+SONGS = [                                           # ← 3 曲 → 47 曲に
     Song("うれしいひなまつり", "河村光陽（1946 没）", [0, 0, 0, 2, 3, 2, 0]),
     Song("雀の学校", "弘田龍太郎（1952 没）", [0, 3, 3, 3, 0, 3, 3, 3]),
     Song("かごめかごめ", "わらべうた", [0, 0, 2, 0, 2, 3, 2, 0, 0, 2, 0]),
@@ -349,7 +349,7 @@ class Game:
     heard: int = 0                                  # お題を聞いた回数
     tries: int = 0                                  # 答え合わせをした回数
     lit: int | None = None                          # いま光っている鍵
-    stars: list[int] = field(default_factory=list)  # 曲ごとの星
+    stars: list[int] = field(default_factory=list)  # ← 曲ごとの星
     cleared: bool = False
     message: str = ""
 
