@@ -587,6 +587,7 @@ tries_label = document.querySelector("#tries")
 stars_label = document.querySelector("#stars")
 message = document.querySelector("#message")
 verdict = document.querySelector("#verdict")
+who_label = document.querySelector("#who")
 
 
 class CanvasScreen(Screen):
@@ -636,8 +637,9 @@ def refresh() -> None:
     """CLI 版の show() にあたる。draw() を canvas へ、様子を HTML へ。"""
     draw(screen, game)
     screen.flush()
-    title_label.textContent = game.song.name if game.cleared else "？"
-    title_label.className = "song revealed" if game.cleared else "song"
+    title_label.textContent = game.song.name        # 曲名は最初から出す（曲そのものを覚えるため）
+    title_label.className = "song done" if game.cleared else "song"
+    who_label.textContent = game.song.who
     count_label.textContent = f"{game.index + 1} / {len(SONGS)}"
     heard_label.textContent = f"{game.heard} 回"
     tries_label.textContent = f"{game.tries} 回"
