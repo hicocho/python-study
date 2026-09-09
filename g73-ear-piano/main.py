@@ -47,6 +47,7 @@ SHADE = (176, 180, 170)                             # 白鍵の押されたと�
 EBONY = (26, 30, 28)                                # 黒鍵
 LIT = (232, 176, 84)                                # 押している鍵
 SURE = (60, 122, 158)                               # 確定した音
+HINT = (44, 80, 100)                                # 1 音目の高さの下書き
 TRY = (206, 138, 74)                                # 打ち込み中の音
 MISS = (198, 82, 70)                                # 答え合わせで違っていた音
 BAND = (30, 40, 46)                                 # いま打ち込む列の帯
@@ -306,11 +307,18 @@ def roll(screen: "Screen", game: "Game") -> None:
             note, color, mark = game.missed[i], MISS, MISS
         elif game.typed[i] is not None:
             note, color, mark = game.typed[i], TRY, TRY
+        elif i == 0:
+            note, color, mark = game.answer[0], HINT, TRY if i == here else GRID
         else:
             note, color, mark = None, None, TRY if i == here else GRID
         screen.box(x + step // 2 - 1, base + 2, 2, 2, mark)
-        if note is not None:
+        if note is None:
+            continue
+        if high - SPAN <= note <= high:
             screen.box(x, ROLL_TOP + (high - note) * SEMI, step - 2, SEMI, color)
+        else:                                       # 窓の外の音。端に細く出して「外にある」と示す
+            edge = ROLL_TOP if note > high else ROLL_TOP + tall - 1
+            screen.box(x, edge, step - 2, 1, color)
     for x in range(LEFT, LEFT + count * step - 2):
         screen.plot(x, base, LINE)
 
@@ -369,17 +377,16 @@ class Game:
         return self.song.on_board()
 
     def start(self) -> None:
-        """新しい曲を出す。1 音目だけは最初から見せておく。
+        """新しい曲を出す。1 音目の高さは**下書きとして見せるだけ**にする。
 
-        これが無いと、絶対音感が無いかぎり出だしの高さを当てられない。
-        「そこからの上がり下がり」を当てる遊びにするための 3 行。
+        見せないと、絶対音感が無いかぎり出だしの高さを当てられない。
+        かといって埋めてしまうと、**聞いたとおりに全部打つと 1 つずれる**。
+        だから見せるが埋めない。打ち込むのは 1 音目から。
         """
         answer = self.answer
         self.typed = [None] * len(answer)
         self.fixed = [False] * len(answer)
         self.missed = [None] * len(answer)
-        self.typed[0] = answer[0]
-        self.fixed[0] = True
         self.heard = 0
         self.tries = 0
         self.lit = None
@@ -407,7 +414,9 @@ class Game:
     def left(self) -> str:
         """あと何音そろえればいいか。**押すべきときが分かるように、いつも出す。**"""
         rest = sum(1 for i, note in enumerate(self.typed) if not self.fixed[i] and note is None)
-        return "そろった。リターンで答え合わせ" if rest == 0 else f"あと {rest} 音"
+        if rest == 0:
+            return "そろった。リターンで答え合わせ"
+        return f"{len(self.typed)} 音の曲。あと {rest} 音"
 
     def forget(self) -> None:
         """赤い印（さっき違っていた音）を消す。何か打ったら消える。"""
@@ -632,24 +641,38 @@ def check() -> None:                                # ←
 
     print("● 遊びの決まり")                               # ←
     game = Game()                                   # ←
-    assert game.fixed[0] and not any(game.fixed[1:]), "1 音目だけ見えているはず" # ←
-    for note in game.answer[1:]:                    # ←
+    assert not any(game.fixed) and not any(game.typed), "はじめは何も埋まっていないはず" # ←
+    assert game.at() == 0, "打ち込みは 1 音目から始まるはず"      # ←
+    for note in game.answer:                        # 聞いたとおり、音の数だけ打つ # ←
         game.press(note)                            # ←
+    assert game.at() is None, "音の数と打ち込む場所の数が合っていない" # ←
     assert game.judge() and game.cleared, "正解を打ち込んだのにクリアにならない" # ←
     assert game.stars == [3], game.stars            # ←
+    print("  聞いた音の数だけ打てば、そのままそろう（ずれない）")            # ←
 
     game = Game()                                   # ←
     answer = game.answer                            # ←
-    for i in range(1, len(answer)):                 # わざと 1 音だけ間違える # ←
+    for i in range(len(answer)):                    # わざと 1 音だけ間違える # ←
         game.press(answer[i] if i != 2 else answer[2] + 1) # ←
     assert not game.judge()                         # ←
     assert sum(game.fixed) == len(answer) - 1       # ←
-    assert game.typed[2] is None, "違った音は消えるはず"      # ←
+    assert game.typed[2] is None and game.missed[2] == answer[2] + 1, "違った音は赤で残るはず" # ←
     kept = list(game.fixed)                         # ←
     game.press(answer[2] + 5)                       # 確定した音は動かない # ←
+    assert all(note is None for note in game.missed), "何か押したら赤は消えるはず" # ←
     game.judge()                                    # ←
     assert all(a or not b for a, b in zip(game.fixed, kept)) # ←
-    print("  合った音だけ残り、違った音は消え、確定した音は動かない")          # ←
+    print("  合った音だけ残り、違った音は赤で残り、確定した音は動かない")        # ←
+
+    print("● 鍵盤ぜんぶが画面に出るか")                         # ←
+    outside = []                                    # ←
+    for index, song in enumerate(SONGS):            # ←
+        high = OFFSET + SPAN - (SPAN - max(song.notes)) // 2 # ←
+        outside.append([note for note in range(25) if not (high - SPAN <= note <= high)]) # ←
+    counts = [len(row) for row in outside]          # ←
+    print(f"  窓は 13 半音なので、25 鍵のうち {min(counts)}〜{max(counts)} 鍵は窓の外に来る。") # ←
+    print("  窓の外の音は端に細く出す（押しても何も起きない、にはしない）")       # ←
+
 
     print("● どの曲も必ず解ける（総当たりの上限）")                   # ←
     worst = 0                                       # ←

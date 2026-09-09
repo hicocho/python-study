@@ -84,6 +84,9 @@ LIT = (232, 176, 84)                                # 押している鍵
 SURE = (60, 122, 158)                               # 確定した音
 
 
+HINT = (44, 80, 100)                                # 1 音目の高さの下書き
+
+
 TRY = (206, 138, 74)                                # 打ち込み中の音
 
 
@@ -336,11 +339,18 @@ def roll(screen: "Screen", game: "Game") -> None:
             note, color, mark = game.missed[i], MISS, MISS
         elif game.typed[i] is not None:
             note, color, mark = game.typed[i], TRY, TRY
+        elif i == 0:
+            note, color, mark = game.answer[0], HINT, TRY if i == here else GRID
         else:
             note, color, mark = None, None, TRY if i == here else GRID
         screen.box(x + step // 2 - 1, base + 2, 2, 2, mark)
-        if note is not None:
+        if note is None:
+            continue
+        if high - SPAN <= note <= high:
             screen.box(x, ROLL_TOP + (high - note) * SEMI, step - 2, SEMI, color)
+        else:                                       # 窓の外の音。端に細く出して「外にある」と示す
+            edge = ROLL_TOP if note > high else ROLL_TOP + tall - 1
+            screen.box(x, edge, step - 2, 1, color)
     for x in range(LEFT, LEFT + count * step - 2):
         screen.plot(x, base, LINE)
 
@@ -397,17 +407,16 @@ class Game:
         return self.song.on_board()
 
     def start(self) -> None:
-        """新しい曲を出す。1 音目だけは最初から見せておく。
+        """新しい曲を出す。1 音目の高さは**下書きとして見せるだけ**にする。
 
-        これが無いと、絶対音感が無いかぎり出だしの高さを当てられない。
-        「そこからの上がり下がり」を当てる遊びにするための 3 行。
+        見せないと、絶対音感が無いかぎり出だしの高さを当てられない。
+        かといって埋めてしまうと、**聞いたとおりに全部打つと 1 つずれる**。
+        だから見せるが埋めない。打ち込むのは 1 音目から。
         """
         answer = self.answer
         self.typed = [None] * len(answer)
         self.fixed = [False] * len(answer)
         self.missed = [None] * len(answer)
-        self.typed[0] = answer[0]
-        self.fixed[0] = True
         self.heard = 0
         self.tries = 0
         self.lit = None
@@ -435,7 +444,9 @@ class Game:
     def left(self) -> str:
         """あと何音そろえればいいか。**押すべきときが分かるように、いつも出す。**"""
         rest = sum(1 for i, note in enumerate(self.typed) if not self.fixed[i] and note is None)
-        return "そろった。リターンで答え合わせ" if rest == 0 else f"あと {rest} 音"
+        if rest == 0:
+            return "そろった。リターンで答え合わせ"
+        return f"{len(self.typed)} 音の曲。あと {rest} 音"
 
     def forget(self) -> None:
         """赤い印（さっき違っていた音）を消す。何か打ったら消える。"""
