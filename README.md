@@ -92,6 +92,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g74 | [耳コピ2（楽器を選ぶ）](g74-ear-voices/) | g73 と同じ遊びで、ピアノ・エレクトーン・ギター・ベース・木琴から楽器を選べる。どれも波から作る（耳コピ 3 段階の 2 つ目） | `TypeAlias` で楽器の形をそろえる / `functools.reduce` で倍音を畳む / `collections.deque(maxlen=)` で弦をはじく（Karplus-Strong）/ `math.tau` |
 | g75 | [タイピング1（キーボードと指）](g75-type-keys/) | ブラインドタッチの練習。JIS 配列のキーボードに次のキーと指が出る。ホームポジション→上の段→下の段→数字と段階を踏む（タイピング 3 段階の 1 つ目） | 絵の「もと」を表にして共有する（`keyboard_view`）/ `enum.Enum` で指 / `string.digits` / `statistics.fmean` / 時計を外から渡す |
 | g76 | [タイピング2（ローマ字で日本語）](g76-type-kana/) | 「さくら」を sakura と打つ。shi/si、n/nn、っ のような綴りのゆれを「いま居られる状態」の集合で全部受ける（タイピング 3 段階の 2 つ目） | 状態の集合で判定（NFA）/ `re.sub` に関数を渡す / `str.removeprefix` / `itertools.product` で全綴りを作って検査 |
+| g77 | [タイピング3（記録と苦手キー）](g77-type-record/) | 記録を残し、自己ベストといつもの速さを添える。ミスを押すべきだったキーごとに数え、苦手キーを含むことばを多めに出す（タイピング 3 段階の完成形） | `dataclasses.asdict` と `json` で記録の形を 1 つに / `random.choices(weights=)` / `heapq.nlargest` / `datetime.fromisoformat` / 中央値 |
 
 ## 動かし方
 
