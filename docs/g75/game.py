@@ -10,11 +10,17 @@ CLI 版（g75-type-keys/main.py）と中身はまったく同じ。JIS 配列の
         時計は端末が time.perf_counter()、ブラウザが performance.now()。
         どちらも obey() に「いま」を渡すだけで、中では時計を読まない。
 
-持ってこなかったのは端末の描画（paint / show / run）と検査だけ。
+音（beep_bytes）も同じ。端末は wav をファイルにして afplay へ、ブラウザは data URI にして Audio へ。
+持ってこなかったのは端末の描画（paint / show / run）と Speaker と検査だけ。
 """
 
+import base64
+import io
+import math
 import random
 import string
+import wave
+from array import array
 from dataclasses import dataclass, field
 from enum import Enum
 from statistics import fmean
@@ -30,6 +36,48 @@ GROUP_LEN = 4                                       # かたまり 1 つのキ�
 
 
 FRESH = 0.6                                         # 新しいキーを出す割合（残りは復習）
+
+
+RATE = 22050                                        # 音の標本の数（1 秒あたり）
+
+
+VOLUME = 0.12                                       # 小さく。0〜1
+
+
+def tone(hz: float, seconds: float, volume: float = VOLUME) -> array:
+    """正弦波 1 つ。出だしと終わりを短く絞って「プツッ」を消す（g73 と同じ）。"""
+    count = int(RATE * seconds)
+    edge = RATE / 200                               # 200 分の 1 秒でなめらかに
+    samples = array("h")
+    for i in range(count):
+        fade = min(1.0, i / edge, (count - i) / edge)
+        samples.append(int(32767 * volume * fade * math.sin(math.tau * hz * i / RATE)))
+    return samples
+
+
+def beep_bytes(kind: str) -> bytes:
+    """キーを押したときの音を wav の bytes にする。
+
+    hit   合った。高く、ごく短く（0.04 秒）
+    miss  違った。低く、少し長く（0.12 秒）——目を上げなくても分かる
+    done  打ち終わった。2 つの音を上がる向きに
+    """
+    if kind == "hit":
+        samples = tone(1320, 0.04)
+    elif kind == "miss":
+        samples = tone(196, 0.12, VOLUME * 1.4)
+    else:
+        samples = tone(880, 0.08) + tone(1320, 0.14)
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(RATE)
+        out.writeframes(samples.tobytes())
+    return buffer.getvalue()
+
+
+BEEPS = ("hit", "miss", "done")
 
 
 class Finger(Enum):
@@ -210,20 +258,21 @@ class Game:
         self.start()
 
 
-def obey(game: Game, key: str, now: float) -> None:
-    """キーを 1 つ受け取って練習を進める。端末もブラウザもここを通る。
+def obey(game: Game, key: str, now: float) -> str | None:
+    """キーを 1 つ受け取って練習を進め、鳴らす音（hit / miss / done）があれば返す。
 
-    now は外から渡す。中で時計を読まないので、同じキー列と同じ時刻を与えれば
-    端末でもブラウザでも同じ結果になる（検証で使う）。
+    端末もブラウザもここを通る。now は外から渡す。中で時計を読まないので、
+    同じキー列と同じ時刻を与えれば端末でもブラウザでも同じ結果になる（検証で使う）。
     """
     if key == "enter":
         if game.done:
             game.advance()
-        return
-    if key == "escape":
-        return
-    if key in KEYS:
-        game.press(key, now)
+        return None
+    if key == "escape" or game.done or key not in KEYS:
+        return None
+    if game.press(key, now):
+        return "done" if game.done else "hit"
+    return "miss"
 
 
 def keyboard_view(game: Game) -> list[list[tuple[str, Finger, str]]]:
@@ -278,8 +327,28 @@ next_button = document.querySelector("#go")
 ime_warning = document.querySelector("#ime")
 
 FINGER_CLASS = {finger: f"f{n}" for n, finger in enumerate(Finger)}
+sound_switch = document.querySelector("#sound")
+
+
+class Speaker:
+    """ブラウザで音を出す係。3 つの wav を data URI にして Audio に持たせておく。"""
+
+    def __init__(self):
+        self.made = {}
+        for kind in BEEPS:
+            uri = "data:audio/wav;base64," + base64.b64encode(beep_bytes(kind)).decode()
+            self.made[kind] = window.Audio.new(uri)
+
+    def say(self, kind: str | None) -> None:
+        if kind is None or not sound_switch.checked:
+            return
+        sound = self.made[kind]
+        sound.currentTime = 0
+        sound.play()
+
 
 game = Game()
+speaker = Speaker()
 
 
 def build_board() -> None:
@@ -337,7 +406,7 @@ def refresh() -> None:
 
 @when("click", "#go")
 def go(event) -> None:
-    obey(game, "enter", window.performance.now() / 1000)
+    speaker.say(obey(game, "enter", window.performance.now() / 1000))
     refresh()
 
 
@@ -350,7 +419,7 @@ def typed(event) -> None:
     key = {"Enter": "enter", "Escape": "escape"}.get(event.key, event.key)
     if key in KEYS or key in ("enter", "escape"):
         event.preventDefault()
-        obey(game, key, window.performance.now() / 1000)
+        speaker.say(obey(game, key, window.performance.now() / 1000))
         refresh()
 
 

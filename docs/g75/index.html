@@ -162,6 +162,8 @@
   .f6, .tag.f6 { background: #f8d59a; }   /* 右 薬指 */
   .f7, .tag.f7 { background: #f5b2c4; }   /* 右 小指 */
   .f8, .tag.f8 { background: #cfcfcf; }   /* 親指 */
+  .sound { display: block; font-size: .8125rem; color: var(--muted); margin: .5rem 0 0; }
+  .sound input { accent-color: var(--accent); vertical-align: -1px; margin-right: .3rem; }
   #report { font-family: ui-monospace, Menlo, monospace; font-size: .8125rem; margin: .6rem 0 0;
     white-space: pre-wrap; color: var(--ink); }
   #go { margin-top: .6rem; width: 100%; }
@@ -194,6 +196,7 @@
     <div id="text"></div>
     <p id="next"></p>
     <div id="board"></div>
+    <label class="sound"><input type="checkbox" id="sound" checked> キーを押したら音を鳴らす（合えば高く、違えば低く）</label>
     <p id="ime" hidden>日本語入力がオンになっています。<b>英数</b>に切り替えてください（キーが届きません）。</p>
     <pre id="report"></pre>
     <pre id="message"></pre>
@@ -245,6 +248,6 @@
   </footer>
 </main>
 
-<script type="py" src="./game.py?v=16699528"></script>
+<script type="py" src="./game.py?v=762d1d16"></script>
 </body>
 </html>

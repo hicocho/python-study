@@ -57,7 +57,18 @@ def drill(index: int, seed: int = 0) -> str:
 
 同じ段階・同じ回なら端末でもブラウザでも同じ文。新しいキーを 6 割、覚えたキーを 4 割。
 
-**3. 時計を中で読まない — `obey(game, key, now)`**
+**3. 鳴らす音も `obey()` が決める**
+
+```python
+    if game.press(key, now):
+        return "done" if game.done else "hit"
+    return "miss"
+```
+
+`obey()` は鳴らす音の名前（`hit` / `miss` / `done`）を返す。端末は wav をファイルにして `afplay` へ、
+ブラウザは data URI にして `Audio` へ。**どちらも同じ `beep_bytes()` の bytes**（g73 と同じ作り方で、短く小さく）。
+
+**4. 時計を中で読まない — `obey(game, key, now)`**
 
 ```python
 def obey(game: Game, key: str, now: float) -> None:
@@ -88,6 +99,8 @@ def obey(game: Game, key: str, now: float) -> None:
 - 打ち終わると成績（打鍵・ミス・正確さ・秒・1 分あたり・**ミスの多い指**）
 - **正確さ 95% 以上**でリターン → 次の段階。届かなければ同じ段階を別の文で
 - 端末は指ごとに 9 色、ホームポジションは下線。ブラウザも同じ色分け
+- **キーを押すと小さく音が鳴る**——合えば高く短く（1320 Hz・0.04 秒）、違えば低く（196 Hz・0.12 秒）、
+  打ち終わると「ピロン」。目を上げなくても合否が分かる。端末は Tab、ブラウザはチェックで切れる
 
 ## 仕様
 

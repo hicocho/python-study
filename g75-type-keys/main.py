@@ -4,6 +4,8 @@
 「どの指で押すか」を出す。ホームポジション → 上の段 → 下の段 → 数字、と段階を踏む。
 正確さ 95% 以上で次の段階へ。
 
+キーを押すと小さく音が鳴る（合えば高く短く、違えば低く）。音は g73 と同じく波から作る。
+
 今回の主題は「絵を、まずデータにする」こと。キーボードは (文字, 指, 段) の表で持ち、
 「いまどのキーが光るか」も表として組み立てる（keyboard_view）。端末はその表を
 色つきの字に、ブラウザは同じ表を <div> に変える。**絵の中身は 1 か所で決まる。**
@@ -13,9 +15,13 @@
     python3 main.py --drill 2  段階 3 の練習文を見る
 """
 
+import io
+import math
 import random
 import string
 import sys
+import wave
+from array import array
 from dataclasses import dataclass, field
 from enum import Enum
 from statistics import fmean
@@ -24,6 +30,46 @@ PASS = 0.95                                         # 次の段階へ行ける�
 GROUPS = 8                                          # 1 回の練習に出す「かたまり」の数
 GROUP_LEN = 4                                       # かたまり 1 つのキーの数
 FRESH = 0.6                                         # 新しいキーを出す割合（残りは復習）
+RATE = 22050                                        # 音の標本の数（1 秒あたり）
+VOLUME = 0.12                                       # 小さく。0〜1
+
+
+# ── 音 ──────────────────────────────────────────────────────────────────
+
+def tone(hz: float, seconds: float, volume: float = VOLUME) -> array:
+    """正弦波 1 つ。出だしと終わりを短く絞って「プツッ」を消す（g73 と同じ）。"""
+    count = int(RATE * seconds)
+    edge = RATE / 200                               # 200 分の 1 秒でなめらかに
+    samples = array("h")
+    for i in range(count):
+        fade = min(1.0, i / edge, (count - i) / edge)
+        samples.append(int(32767 * volume * fade * math.sin(math.tau * hz * i / RATE)))
+    return samples
+
+
+def beep_bytes(kind: str) -> bytes:
+    """キーを押したときの音を wav の bytes にする。
+
+    hit   合った。高く、ごく短く（0.04 秒）
+    miss  違った。低く、少し長く（0.12 秒）——目を上げなくても分かる
+    done  打ち終わった。2 つの音を上がる向きに
+    """
+    if kind == "hit":
+        samples = tone(1320, 0.04)
+    elif kind == "miss":
+        samples = tone(196, 0.12, VOLUME * 1.4)
+    else:
+        samples = tone(880, 0.08) + tone(1320, 0.14)
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(RATE)
+        out.writeframes(samples.tobytes())
+    return buffer.getvalue()
+
+
+BEEPS = ("hit", "miss", "done")
 
 
 # ── キーボード ──────────────────────────────────────────────────────────
@@ -209,20 +255,21 @@ class Game:
         self.start()
 
 
-def obey(game: Game, key: str, now: float) -> None:
-    """キーを 1 つ受け取って練習を進める。端末もブラウザもここを通る。
+def obey(game: Game, key: str, now: float) -> str | None:
+    """キーを 1 つ受け取って練習を進め、鳴らす音（hit / miss / done）があれば返す。
 
-    now は外から渡す。中で時計を読まないので、同じキー列と同じ時刻を与えれば
-    端末でもブラウザでも同じ結果になる（検証で使う）。
+    端末もブラウザもここを通る。now は外から渡す。中で時計を読まないので、
+    同じキー列と同じ時刻を与えれば端末でもブラウザでも同じ結果になる（検証で使う）。
     """
     if key == "enter":
         if game.done:
             game.advance()
-        return
-    if key == "escape":
-        return
-    if key in KEYS:
-        game.press(key, now)
+        return None
+    if key == "escape" or game.done or key not in KEYS:
+        return None
+    if game.press(key, now):
+        return "done" if game.done else "hit"
+    return "miss"
 
 
 # ── 絵をデータで組む ────────────────────────────────────────────────────
@@ -284,7 +331,7 @@ def paint(label: str, finger: Finger, state: str) -> str:
     return f"\x1b[38;5;{color}m {label} \x1b[0m"
 
 
-def show(game: Game) -> str:
+def show(game: Game, sound: bool = True) -> str:
     """画面ぜんぶ。"""
     stage = STAGES[game.stage]
     done_part = game.text[:game.at]
@@ -312,8 +359,40 @@ def show(game: Game) -> str:
             lines.append("  " + " " * 15 + paint("   空白   ", finger, state))
     lines.append("")
     lines.append(f" {game.message}")
-    lines.append(" リターン=つぎへ（終わったら）　Esc=やめる　※ 日本語入力はオフに")
+    lines.append(f" リターン=つぎへ（終わったら）　Tab=音 {'オン' if sound else 'オフ'}　Esc=やめる　※ 日本語入力はオフに")
     return "\n".join(lines)
+
+
+class Speaker:
+    """端末で音を出す係。3 つの wav を先に書いておき、押されたら afplay に渡す。"""
+
+    def __init__(self):
+        import os
+        import shutil
+        import tempfile
+
+        self.player = shutil.which("afplay") or shutil.which("aplay")
+        self.folder = tempfile.mkdtemp(prefix="type-keys-")
+        self.paths = {}
+        for kind in BEEPS:
+            path = os.path.join(self.folder, f"{kind}.wav")
+            with open(path, "wb") as out:
+                out.write(beep_bytes(kind))
+            self.paths[kind] = path
+        self.on = True
+
+    def say(self, kind: str | None) -> None:
+        import subprocess
+
+        if kind is None or not self.on or self.player is None:
+            return
+        subprocess.Popen([self.player, self.paths[kind]],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def close(self) -> None:
+        import shutil
+
+        shutil.rmtree(self.folder, ignore_errors=True)
 
 
 def run() -> None:
@@ -323,22 +402,27 @@ def run() -> None:
     import tty
 
     game = Game()
+    speaker = Speaker()
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
     try:
         tty.setcbreak(fd)
         sys.stdout.write("\x1b[2J\x1b[?25l")
         while True:
-            sys.stdout.write("\x1b[H\x1b[J" + show(game))
+            sys.stdout.write("\x1b[H\x1b[J" + show(game, speaker.on))
             sys.stdout.flush()
             ch = sys.stdin.read(1)
             if ch in ("\x1b", "\x03", "\x04"):
                 break
+            if ch == "\t":                             # 音の on/off
+                speaker.on = not speaker.on
+                continue
             key = {"\r": "enter", "\n": "enter"}.get(ch, ch)
-            obey(game, key, time.perf_counter())
+            speaker.say(obey(game, key, time.perf_counter()))
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
         sys.stdout.write("\x1b[?25h\x1b[2J\x1b[H")
+        speaker.close()
 
 
 # ── 確かめる ────────────────────────────────────────────────────────────
@@ -391,7 +475,7 @@ def check() -> None:
 
     game = Game()
     first = game.target
-    assert not obey(game, "z" if first != "z" else "x", 1.0) and game.at == 0
+    assert obey(game, "z" if first != "z" else "x", 1.0) == "miss" and game.at == 0
     assert game.misses == 1 and game.wrong and game.target == first
     assert game.miss_by == {KEYS[first].finger.value: 1}
     obey(game, first, 1.2)
@@ -417,6 +501,27 @@ def check() -> None:
     obey(game, "enter", 2.0)
     assert game.stage == 1 and game.round == 0, "合格なら次の段階のはず"
     print("  合格ならリターンで次の段階へ")
+
+    print("● 音")
+    for kind in BEEPS:
+        data = beep_bytes(kind)
+        assert data[:4] == b"RIFF" and data[8:12] == b"WAVE"
+        with wave.open(io.BytesIO(data)) as back:
+            frames = back.getnframes()
+            samples = array("h")
+            samples.frombytes(back.readframes(frames))
+        peak = max(abs(v) for v in samples)
+        assert peak <= 32767 * VOLUME * 1.5, f"{kind} が大きすぎる（{peak}）"
+        assert abs(samples[0]) < 300 and abs(samples[-1]) < 300, f"{kind} の端が切れている"
+        print(f"  {kind:5s} {frames / RATE * 1000:4.0f} ms  いちばん大きい標本 {peak:5d}（小さく）")
+    assert beep_bytes("hit") != beep_bytes("miss"), "合ったときと違ったときの音が同じ"
+    game = Game()
+    assert obey(game, "z" if game.target != "z" else "x", 1.0) == "miss"
+    assert obey(game, game.target, 1.1) == "hit"
+    for char in game.text[1:]:
+        last = obey(game, char, 2.0)
+    assert last == "done", last
+    print("  合えば hit、違えば miss、打ち終われば done を obey() が返す")
 
     print("● キーボードの見た目（データ）")
     game = Game()
