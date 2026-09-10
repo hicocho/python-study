@@ -91,6 +91,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g73 | [耳コピ1（音を作る）](g73-ear-piano/) | 流れた旋律を聞いて鍵盤で同じ音を打ち込む。音は正弦波から自分で作り、端末とブラウザで同じ wav が鳴る（耳コピ 3 段階の 1 つ目） | `array` の生データ列 / `wave` と `io.BytesIO`（出す先を選ばない）/ 平均律 `440×2^((n-9)/12)` / `subprocess` で鳴らす |
 | g74 | [耳コピ2（楽器を選ぶ）](g74-ear-voices/) | g73 と同じ遊びで、ピアノ・エレクトーン・ギター・ベース・木琴から楽器を選べる。どれも波から作る（耳コピ 3 段階の 2 つ目） | `TypeAlias` で楽器の形をそろえる / `functools.reduce` で倍音を畳む / `collections.deque(maxlen=)` で弦をはじく（Karplus-Strong）/ `math.tau` |
 | g75 | [タイピング1（キーボードと指）](g75-type-keys/) | ブラインドタッチの練習。JIS 配列のキーボードに次のキーと指が出る。ホームポジション→上の段→下の段→数字と段階を踏む（タイピング 3 段階の 1 つ目） | 絵の「もと」を表にして共有する（`keyboard_view`）/ `enum.Enum` で指 / `string.digits` / `statistics.fmean` / 時計を外から渡す |
+| g76 | [タイピング2（ローマ字で日本語）](g76-type-kana/) | 「さくら」を sakura と打つ。shi/si、n/nn、っ のような綴りのゆれを「いま居られる状態」の集合で全部受ける（タイピング 3 段階の 2 つ目） | 状態の集合で判定（NFA）/ `re.sub` に関数を渡す / `str.removeprefix` / `itertools.product` で全綴りを作って検査 |
 
 ## 動かし方
 
