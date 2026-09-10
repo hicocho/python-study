@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>タイピング2（ローマ字で日本語） — python-study</title>
+<meta name="description" content="「さくら」を sakura と打つ。shi/si、n/nn、っ のような綴りのゆれは全部受ける。ことばから文へ。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#9000;</text></svg>">
+<link rel="stylesheet" href="https://pyscript.net/releases/2025.8.1/core.css">
+<script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #656d76;
+    --line: #d8dbe0;
+    --accent: #4f6b8f;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c;
+      --panel: #1f2229;
+      --ink: #e6e6e3;
+      --muted: #9aa2ad;
+      --line: #333842;
+      --accent: #9fb8de;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2rem 1rem 3rem;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    line-height: 1.7;
+  }
+  main { max-width: 34rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; letter-spacing: .02em; }
+  .sub { color: var(--muted); font-size: .875rem; margin: 0 0 1.5rem; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: .75rem;
+    padding: 1.25rem;
+  }
+  .status { display: flex; justify-content: space-between; align-items: baseline;
+    gap: 1rem; margin-bottom: .75rem; color: var(--muted); font-size: .875rem;
+    font-variant-numeric: tabular-nums; }
+  .status b { color: var(--ink); font-weight: 700; }
+
+  .pad { display: grid; gap: .4rem; margin-top: .75rem;
+    grid-template-columns: 1fr 1.4fr 1fr; }
+  .pad button { padding: .8rem 0; font-size: 1.05rem; font-family: inherit; font-weight: 600;
+    color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+    border-radius: .5rem; cursor: pointer; user-select: none; -webkit-user-select: none; }
+  .pad button:active { background: var(--accent); color: var(--panel); }
+  .pad button.go { background: var(--accent); color: var(--panel); border-color: var(--accent); }
+  .pad button:disabled { opacity: .35; cursor: default; }
+  .pad { grid-template-columns: 1.35fr 1fr 1fr; }
+  .pad button { white-space: nowrap; }
+  details { margin-top: .6rem; }
+  summary { font-size: .8125rem; color: var(--muted); cursor: pointer; }
+  #message { font-family: ui-monospace, Menlo, monospace; font-size: .75rem; margin: .5rem 0 0;
+    white-space: pre; overflow-x: auto; min-height: 3.4em; color: var(--muted); }
+  #message.bad { color: #d1495b; }
+  #message.done { color: var(--accent); font-weight: 700; }
+  #message { min-height: 1.6em; margin: .6rem 0 0; font-size: .8125rem; color: var(--ink);
+    font-family: inherit; white-space: normal; }
+  label { display: block; font-size: .8125rem; color: var(--muted); margin-top: .75rem; }
+  .legend { display: flex; flex-wrap: wrap; gap: .25rem .9rem; margin: .6rem 0 0;
+    font-size: .8125rem; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: .35rem; }
+  .legend i { width: .8rem; height: .8rem; border-radius: .15rem; display: inline-block;
+    border: 1px solid var(--line); }
+  .howto { margin: .75rem 0 0; padding: .7rem .8rem; background: var(--bg);
+    border: 1px solid var(--line); border-radius: .5rem; font-size: .8125rem; }
+  .howto b { color: var(--ink); }
+  .howto ol { margin: .4rem 0 0; padding-left: 1.2rem; }
+  .howto li { margin: .15rem 0; }
+  .howto code { background: transparent; }
+  table.words { border-collapse: collapse; font-size: .8125rem; margin-top: .4rem; }
+  table.words td { border-top: 1px solid var(--line); padding: .25rem .6rem .25rem 0;
+    vertical-align: top; }
+  table.words td:first-child { font-family: ui-monospace, Menlo, monospace;
+    white-space: nowrap; color: var(--ink); }
+  #lines-title { font-size: .8125rem; color: var(--muted); margin: .75rem 0 0; }
+  #loading { color: var(--muted); font-size: .875rem; text-align: center; padding: .5rem 0; margin: .5rem 0 0; }
+  .keys { font-size: .8125rem; color: var(--muted); text-align: center; margin: .75rem 0 0; }
+  .back { font-size: .875rem; margin: 0 0 1rem; }
+  .back a { color: var(--muted); text-decoration: none; }
+  .back a:hover { text-decoration: underline; }
+  .note { font-size: .875rem; color: var(--muted); margin-top: 1.5rem; }
+  .note a { color: inherit; }
+  footer { margin-top: 2rem; font-size: .8125rem; color: var(--muted); }
+  /* スマホでは、遊ぶところ（絵・曲名・ボタン）を 1 画面に収める */
+  @media (max-width: 480px) {
+    body { padding: 1rem .75rem 2rem; }
+    h1 { font-size: 1.25rem; }
+    .sub { font-size: .8125rem; margin-bottom: 1rem; }
+    .card { padding: .9rem; }
+    .legend { font-size: .75rem; gap: .2rem .7rem; margin-top: .45rem; }
+    .legend i { width: .7rem; height: .7rem; }
+    .song { font-size: 1.35rem; margin-top: .5rem; }
+    .verdict { font-size: 1.4rem; }
+    .pad button { padding: .7rem 0; font-size: 1rem; }
+  }
+  .keymap { font-family: ui-monospace, Menlo, monospace; font-size: .75rem; color: var(--muted);
+    margin: .4rem 0 0; white-space: pre; overflow-x: auto; line-height: 1.5; }
+  .stars { font-size: .9rem; letter-spacing: .1em; color: var(--accent); margin: .5rem 0 0;
+    word-break: break-all; }
+  #title { font-family: inherit; }
+  .song { margin: .8rem 0 0; text-align: center; font-size: 1.5rem; font-weight: 700;
+    letter-spacing: .04em; line-height: 1.3; color: var(--muted); text-wrap: balance; }
+  .song { color: var(--ink); }
+  .song.done { color: #2f7d52; }
+  .who { text-align: center; font-size: .8125rem; color: var(--muted); margin: .15rem 0 0; }
+  @media (prefers-color-scheme: dark) { .song.done { color: #79c99b; } }
+  .verdict { margin: .5rem 0 0; text-align: center; font-size: 1.6rem; font-weight: 800;
+    letter-spacing: .08em; line-height: 1.2; }
+  .verdict.good { color: #2f7d52; }
+  .verdict.almost { color: #b7791f; }
+  .verdict.bad { color: #c0453a; }
+  .pad button.go { background: #2f7d52; border-color: #2f7d52; color: #fff; }
+  @media (prefers-color-scheme: dark) {
+    .pad button.go { background: #3f8f62; border-color: #3f8f62; color: #0f1512; }
+    .verdict.good { color: #79c99b; }
+    .verdict.almost { color: #e0b25c; }
+    .verdict.bad { color: #e58579; }
+  }
+
+  /* 打つことば（かな）と、ローマ字 */
+  #kana { font-size: 1.6rem; letter-spacing: .08em; line-height: 1.5; padding: .4rem .8rem 0; }
+  #kana .done { color: var(--muted); opacity: .55; }
+  #text { font-family: ui-monospace, Menlo, monospace; font-size: 1.5rem; letter-spacing: .12em;
+    line-height: 1.6; word-break: break-all; padding: .6rem .8rem; background: var(--bg);
+    border: 1px solid var(--line); border-radius: .5rem; min-height: 3.2em; }
+  #text .done { color: var(--muted); opacity: .55; }
+  #text .cur { color: var(--ink); background: #ffe37a; border-radius: .2rem; }
+  @media (prefers-color-scheme: dark) { #text .cur { background: #7a6a1f; } }
+  #next { font-size: 1rem; margin: .6rem 0 0; text-align: center; min-height: 1.6em; }
+  #next b { font-family: ui-monospace, Menlo, monospace; font-size: 1.35rem; padding: 0 .3em; }
+  .tag { padding: .1rem .55rem; border-radius: 999px; font-size: .85rem; color: #1a1a1a; }
+
+  /* キーボード。指ごとに 9 色 */
+  #board { margin-top: .9rem; user-select: none; -webkit-user-select: none; overflow-x: auto; }
+  .row { display: flex; gap: .25rem; margin-bottom: .25rem; white-space: nowrap; }
+  .key { display: inline-flex; align-items: center; justify-content: center;
+    width: 2rem; height: 2rem; border-radius: .35rem; font-family: ui-monospace, Menlo, monospace;
+    font-size: .95rem; color: #1a1a1a; opacity: .55; border: 2px solid transparent; }
+  .key.space { width: 12rem; font-family: inherit; font-size: .8rem; }
+  .key.home { opacity: .85; border-bottom-color: rgba(0,0,0,.35); }
+  .key.next { opacity: 1; transform: scale(1.12); box-shadow: 0 0 0 3px var(--ink);
+    font-weight: 700; }
+  .key.miss { opacity: 1; background: #d9463b !important; color: #fff; }
+  .f0, .tag.f0 { background: #f2a7b3; }   /* 左 小指 */
+  .f1, .tag.f1 { background: #f6c98b; }   /* 左 薬指 */
+  .f2, .tag.f2 { background: #c7e08c; }   /* 左 中指 */
+  .f3, .tag.f3 { background: #8fd0e8; }   /* 左 人さし指 */
+  .f4, .tag.f4 { background: #a9c4f5; }   /* 右 人さし指 */
+  .f5, .tag.f5 { background: #b9e2a0; }   /* 右 中指 */
+  .f6, .tag.f6 { background: #f8d59a; }   /* 右 薬指 */
+  .f7, .tag.f7 { background: #f5b2c4; }   /* 右 小指 */
+  .f8, .tag.f8 { background: #cfcfcf; }   /* 親指 */
+  .sound { display: block; font-size: .8125rem; color: var(--muted); margin: .5rem 0 0; }
+  .sound input { accent-color: var(--accent); vertical-align: -1px; margin-right: .3rem; }
+  #report { font-family: ui-monospace, Menlo, monospace; font-size: .8125rem; margin: .6rem 0 0;
+    white-space: pre-wrap; color: var(--ink); }
+  #go { margin-top: .6rem; width: 100%; }
+  #ime { margin: .6rem 0 0; padding: .6rem .8rem; border-radius: .5rem; font-size: .875rem;
+    background: #fde8e6; color: #8a1f14; border: 1px solid #f2b5ae; }
+  @media (max-width: 480px) {
+    body { padding: 1rem .75rem 2rem; }
+    h1 { font-size: 1.25rem; }
+    .sub { font-size: .8125rem; margin-bottom: 1rem; }
+    .card { padding: .9rem; }
+    #text { font-size: 1.2rem; }
+    .key { width: 1.55rem; height: 1.7rem; font-size: .8rem; }
+    .key.space { width: 9rem; }
+    .row { gap: .18rem; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <p class="back"><a href="../">← 課題一覧</a></p>
+  <h1>タイピング2（ローマ字で日本語）</h1>
+  <p class="sub"><a href="../g75/">タイピング1</a> の続き。打つものが<strong>ことば</strong>になります——「さくら」を <code>sakura</code> と。<strong>shi / si、tsu / tu、n / nn、っ</strong> のような綴りのゆれは<strong>全部受け付けます</strong>。下に出るローマ字は「おすすめ」で、打ったゆれに合わせて残りが変わります。<strong>みじかい ことば → ながい ことば → ぶん</strong>と段階を踏み、正確さ 95% 以上で次へ。</p>
+
+  <div class="card">
+    <div class="status">
+      <span>段階 <b id="stage">1 / 3</b> ・ <b id="name">みじかい ことば</b></span>
+      <span>打った <b id="hits">0</b> ・ ミス <b id="misses">0</b> ・ 正確さ <b id="acc">100%</b></span>
+    </div>
+
+    <div id="kana"></div>
+    <div id="text"></div>
+    <p id="next"></p>
+    <div id="board"></div>
+    <label class="sound"><input type="checkbox" id="sound" checked> キーを押したら音を鳴らす（合えば高く、違えば低く）</label>
+    <p id="ime" hidden>日本語入力がオンになっています。<b>英数</b>に切り替えてください（キーが届きません）。</p>
+    <pre id="report"></pre>
+    <pre id="message"></pre>
+    <div class="pad" style="grid-template-columns: 1fr"><button type="button" id="go" hidden>つぎの段階へ →</button></div>
+
+    <p class="legend">
+      <span><i style="background:#ffe37a"></i>いま打つ字</span>
+      <span><i style="background:#d9463b"></i>間違えて押したキー</span>
+      <span><i style="background:#8fd0e8"></i>キーの色 ＝ 指（下線はホームポジション）</span>
+    </p>
+    <div class="howto">
+      <b>やること</b>：上のことばをローマ字で打つ。<b>手元は見ない</b>。キーボードの絵で場所と指を確かめる。
+      <ol>
+        <li>下のローマ字は<b>おすすめの綴り</b>。<b>自分の綴りで打ってかまいません</b>（し = shi でも si でも）。打ったあとの残りは、その綴りに合わせて変わります。</li>
+        <li>黄色の字を打つ。合えば次へ。<b>違えば赤く光って、正しいキーを押すまで進みません</b>。</li>
+        <li><b>ん</b>は、次が母音・な行・や行のときと最後は <code>nn</code>。それ以外は <code>n</code> 1 つでも通ります。<b>っ</b>は次の子音を重ねる（きって = <code>kitte</code>）。</li>
+        <li>ことばの間の空白は<b>親指</b>で。文の「。」は <code>.</code>、「、」は <code>,</code>。</li>
+        <li>打ち終わると成績が出ます。<b>正確さ 95% 以上</b>なら「つぎの段階へ」、届かなければ別の文でもう一度。</li>
+      </ol>
+    </div>
+
+    <details><summary>受け付ける綴りのゆれ</summary>
+      <table class="words">
+        <tr><td>し ち つ ふ じ</td><td>shi/si　chi/ti　tsu/tu　fu/hu　ji/zi</td></tr>
+        <tr><td>しゃ ちゃ じゃ</td><td>sha/sya　cha/tya/cya　ja/zya/jya（ゅ・ょ も同じ）</td></tr>
+        <tr><td>ん</td><td>nn / xn。次が子音（な行・や行を除く）なら n 1 つでも</td></tr>
+        <tr><td>っ</td><td>次の子音を重ねる（kitte）。xtu / ltu でも</td></tr>
+        <tr><td>ぁ ぃ ぅ ぇ ぉ ゃ ゅ ょ</td><td>x か l を頭に（xa / la）</td></tr>
+        <tr><td>ー 、 。</td><td>- , .</td></tr>
+      </table>
+    </details>
+
+    <details><summary>指の割り当て（JIS 配列）</summary>
+      <table class="words">
+        <tr><td>左手 小指</td><td>1 q a z　　（右へはみ出したキーは全部小指）</td></tr>
+        <tr><td>左手 薬指</td><td>2 w s x</td></tr>
+        <tr><td>左手 中指</td><td>3 e d c</td></tr>
+        <tr><td>左手 人さし指</td><td>4 5 r t f g v b</td></tr>
+        <tr><td>右手 人さし指</td><td>6 7 y u h j n m</td></tr>
+        <tr><td>右手 中指</td><td>8 i k ,</td></tr>
+        <tr><td>右手 薬指</td><td>9 o l .</td></tr>
+        <tr><td>右手 小指</td><td>0 - ^ ¥ p @ [ ; : ] / _</td></tr>
+        <tr><td>親指</td><td>空白</td></tr>
+      </table>
+    </details>
+
+    <p id="loading">Python を読み込んでいます… （初回は数秒かかります）</p>
+  </div>
+
+  <p class="note">
+    このページは <strong>Python のコードがブラウザの中でそのまま動いています</strong>（PyScript）。
+    ローマ字の表、かなの切り方、綴りのゆれを「状態の集合」で受ける判定、そして「どのキーが光るか」の表は
+    CLI 版と 1 文字も違いません。端末は同じ表を色つきの字に、ここでは &lt;div&gt; にしているだけです。
+  </p>
+
+  <footer>
+    ソース: <a href="https://github.com/hicocho/python-study">github.com/hicocho/python-study</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/docs/g76/game.py">このページの game.py</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/g76-type-kana/main.py">CLI 版 main.py</a>
+  </footer>
+</main>
+
+<script type="py" src="./game.py?v=e8e75a35"></script>
+</body>
+</html>
