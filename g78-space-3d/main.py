@@ -44,6 +44,13 @@ RING_R = 6.5                                        # 輪の半径
 RING_Y = 1.0                                        # 輪の中心の高さ
 FOG_FROM = 8.0                                      # ここより奥は背景の色に溶けていく
 STEP = 1 / 30                                       # 1 コマの時間（固定）
+HIT_GAP = 0.55                                      # 小惑星の縁からこれより近いとぶつかる
+GRAZE_GAP = 0.5                                     # ぶつかる境目からこれ以内なら「スレスレ」（+3、コンボが伸びる）
+NEAR_GAP = 1.2                                      # これ以内なら「近い」（+2、コンボが伸びる）。それより遠くは +1
+COMBO_MAX = 5                                       # コンボの倍率の上限
+SHAKE_HIT = 0.45                                    # ぶつかったときに揺れる秒数
+SHAKE_GRAZE = 0.12                                  # スレスレのときに軽く揺れる秒数
+SHAKE_AMP = 0.35                                    # 揺れの大きさ（世界の単位）
 
 LIGHT_DIR = (-0.5, 0.8, -0.6)                       # 光の向き（左上・手前から）
 SPACE = (6, 8, 14)                                  # 背景
@@ -53,6 +60,8 @@ FLAME = (255, 160, 60)                              # 自機の噴射
 STAR_NEAR = (240, 240, 250)
 STAR_FAR = (90, 95, 120)
 RING = (70, 120, 160)                               # トンネルの輪
+GLOW = (255, 228, 96)                               # スレスレのとき画面の縁が光る色
+BLOOD = (235, 70, 60)                               # ぶつかったときの縁の色
 RATE = 22050                                        # 音の標本の数（1 秒あたり）
 VOLUME = 0.14
 
@@ -70,9 +79,12 @@ def tone(hz: float, seconds: float, volume: float = VOLUME) -> array:
 
 
 def sound_bytes(kind: str) -> bytes:
-    """出来事の音。pass はよけた（小さく高く）、hit はぶつかった（低く長く）、over はおしまい。"""
-    if kind == "pass":
+    """出来事の音。pass はよけた（小さく高く）、graze はスレスレ（キラッと 2 音）、
+    hit はぶつかった（低く長く）、over はおしまい。"near" は pass と同じ音。"""
+    if kind in ("pass", "near"):
         samples = tone(1320, 0.05)
+    elif kind == "graze":
+        samples = tone(1760, 0.04) + tone(2640, 0.08)
     elif kind == "hit":
         samples = tone(110, 0.28, VOLUME * 1.8)
     else:
@@ -86,7 +98,8 @@ def sound_bytes(kind: str) -> bytes:
     return buffer.getvalue()
 
 
-SOUNDS = ("pass", "hit", "over")
+EVENTS = ("pass", "near", "graze", "hit", "over")   # update() が返す出来事。目立つ順
+SOUNDS = EVENTS                                     # 出来事ごとに音を 1 つ（near は pass と同じ音）
 
 
 # ── 3D の点 ─────────────────────────────────────────────────────────────
@@ -134,10 +147,12 @@ def rotate(p: V, ax: float, ay: float, az: float) -> V:
 
 
 class Camera(NamedTuple):
-    """視点。横の位置と、傾き（ロール）。自機を追いかけ、曲がると傾く。"""
+    """視点。横の位置と、傾き（ロール）、揺れ。自機を追いかけ、曲がると傾き、ぶつかると揺れる。"""
 
     x: float = 0.0
     roll: float = 0.0
+    jolt_x: float = 0.0                             # 揺れ（カメラそのものがずれる。近いものほど大きく揺れて見える）
+    jolt_y: float = 0.0
 
 
 def view(p: V, cam: Camera = Camera()) -> V:
@@ -146,7 +161,7 @@ def view(p: V, cam: Camera = Camera()) -> V:
     カメラの位置を引いてから、カメラの傾きのぶん逆に回す。カメラが右に傾けば
     世界は左に傾いて見える。視点は EYE の高さで、まっすぐ前を見ている。
     """
-    q = V(p.x - cam.x, p.y - EYE, p.z)
+    q = V(p.x - cam.x - cam.jolt_x, p.y - EYE - cam.jolt_y, p.z)
     return rotate(q, 0, 0, -cam.roll)
 
 
@@ -198,6 +213,16 @@ class Screen:
                 left, right = max(0, int(min(xs))), min(self.width - 1, int(max(xs)))
                 if left <= right:
                     self.rows[y][left * 3:(right + 1) * 3] = paint * (right - left + 1)
+
+    def frame(self, thick: int, color: tuple[int, int, int]) -> None:
+        """画面の縁を太さ thick で塗る（光る演出）。"""
+        paint = bytes(color)
+        for y in range(self.height):
+            if y < thick or y >= self.height - thick:
+                self.rows[y][:] = paint * self.width
+            else:
+                self.rows[y][:thick * 3] = paint * thick
+                self.rows[y][-thick * 3:] = paint * thick
 
     def line(self, a: tuple[float, float], b: tuple[float, float], color: tuple[int, int, int]) -> None:
         """2 点を結ぶ線。長い方の軸に沿って 1 ドットずつ置く。"""
@@ -318,9 +343,16 @@ class World:
     speed: float = 10.0                             # 前へ進む速さ
     time: float = 0.0
     spawn_at: float = 0.0
-    score: int = 0
+    score: int = 0                                  # 点。スレスレ +3、近い +2、それ以外 +1 に、コンボの倍率をかける
+    passed: int = 0                                 # よけた数（速さはこれで決まる）
+    combo: int = 0                                  # スレスレ・近いが続いた数。ぶつかるか、遠くをよけると 0 に戻る
     lives: int = 3
     hurt: float = 0.0                               # ぶつかった直後（点滅）
+    shake: float = 0.0                              # 揺れの残り秒数
+    flash: float = 0.0                              # 画面の縁が光る残り秒数
+    flash_color: tuple[int, int, int] = GLOW
+    note: str = ""                                  # 直近の出来事の言葉（「スレスレ！ +6」など）
+    note_until: float = 0.0
     over: bool = False
 
     def __post_init__(self):
@@ -336,12 +368,52 @@ class World:
                     self.luck.uniform(0.7, 1.6), self.luck.randrange(1 << 30),
                     V(self.luck.uniform(-1.2, 1.2), self.luck.uniform(-1.2, 1.2), self.luck.uniform(-0.6, 0.6)))
 
+    def judge(self, rock: Rock) -> str:
+        """自機の横を通り過ぎた小惑星との近さで、出来事を決める。
+        ぶつかる境目（縁 + HIT_GAP）からの余りが GRAZE_GAP 以内なら graze、NEAR_GAP 以内なら near。"""
+        gap = math.dist((rock.pos.x, rock.pos.y), (self.ship.x, self.ship.y)) - rock.radius - HIT_GAP
+        if gap < 0:
+            return "hit"
+        if gap < GRAZE_GAP:
+            return "graze"
+        if gap < NEAR_GAP:
+            return "near"
+        return "pass"
+
+    def reward(self, event: str) -> int:
+        """よけた点。スレスレ・近いはコンボを伸ばし、点にコンボの倍率がかかる。遠くをよけると +1 でコンボは途切れる。"""
+        if event in ("graze", "near"):
+            self.combo += 1
+            points = {"graze": 3, "near": 2}[event] * min(self.combo, COMBO_MAX)
+        else:
+            self.combo = 0
+            points = 1
+        self.score += points
+        self.passed += 1
+        self.speed = min(34.0, self.speed + 0.35)
+        return points
+
+    def tell(self, text: str) -> None:
+        self.note = text
+        self.note_until = self.time + 1.2
+
+    @property
+    def cam_now(self) -> Camera:
+        """揺れを足したカメラ。揺れは時間から決まる（乱数を使わないので端末とブラウザで同じ）。"""
+        if self.shake <= 0:
+            return self.cam
+        amp = SHAKE_AMP * min(1.0, self.shake / 0.3)   # 終わりに向けて小さく
+        return self.cam._replace(jolt_x=amp * math.sin(self.time * 71),
+                                 jolt_y=amp * 0.7 * math.cos(self.time * 53))
+
     def update(self, dt: float) -> str | None:
-        """1 コマ進める。起きたこと（"pass" / "hit"）を返す。"""
+        """1 コマ進める。起きたこと（EVENTS のどれか）を返す。"""
         if self.over:
             return None
         self.time += dt
         self.hurt = max(0.0, self.hurt - dt)
+        self.shake = max(0.0, self.shake - dt)
+        self.flash = max(0.0, self.flash - dt)
         # 自機
         x = max(-REACH_X, min(REACH_X, self.ship.x + self.aim.x * 7 * dt))
         y = max(REACH_Y[0], min(REACH_Y[1], self.ship.y + self.aim.y * 5 * dt))
@@ -367,18 +439,30 @@ class World:
             rock.angle = rock.angle + rock.spin.scale(dt)
             if not rock.passed and rock.pos.z <= self.ship.z:
                 rock.passed = True
-                gap = math.dist((rock.pos.x, rock.pos.y), (self.ship.x, self.ship.y))
-                if gap < rock.radius + 0.55 and self.hurt == 0:
+                event = self.judge(rock)
+                if event == "hit" and self.hurt > 0:   # 点滅中（無敵）はぶつからないが、点にもならない
+                    pass
+                elif event == "hit":
                     self.lives -= 1
                     self.hurt = 1.0
+                    self.combo = 0
+                    self.shake = SHAKE_HIT
+                    self.flash, self.flash_color = SHAKE_HIT, BLOOD
+                    self.tell("ぶつかった！ コンボ 0")
                     happened = "hit"
                     if self.lives <= 0:
                         self.over = True
                         happened = "over"
                 else:
-                    self.score += 1
-                    self.speed = min(34.0, self.speed + 0.35)
-                    happened = happened or "pass"
+                    points = self.reward(event)
+                    if event == "graze":
+                        self.shake = max(self.shake, SHAKE_GRAZE)
+                        self.flash, self.flash_color = 0.25, GLOW
+                        self.tell(f"スレスレ！ +{points}" + (f"  ×{min(self.combo, COMBO_MAX)}" if self.combo > 1 else ""))
+                    elif event == "near":
+                        self.tell(f"近い +{points}" + (f"  ×{min(self.combo, COMBO_MAX)}" if self.combo > 1 else ""))
+                    if happened is None or EVENTS.index(event) > EVENTS.index(happened):
+                        happened = event            # 同じコマに 2 つ起きたら、目立つ方（EVENTS の後ろ）を返す
             if rock.pos.z > NEAR:
                 kept.append(rock)
         self.rocks = kept
@@ -388,7 +472,7 @@ class World:
 def draw(screen: Screen, world: World) -> None:
     """場面を描く。星 → 小惑星（奥から）→ 自機。"""
     screen.clear(SPACE)
-    cam = world.cam
+    cam = world.cam_now                             # 揺れ込み
     scale = screen.width / WIDTH
     for star in world.stars:
         sx, sy = project(view(star, cam), scale)
@@ -413,6 +497,8 @@ def draw(screen: Screen, world: World) -> None:
         fx, fy = project(tail, scale)
         screen.plot(int(fx), int(fy), FLAME)
         screen.plot(int(fx), int(fy) + 1, FLAME)
+    if world.flash > 0:                             # 画面の縁が光る（スレスレは黄、ぶつかったら赤）
+        screen.frame(int(scale), world.flash_color)
 
 
 def obey(world: World, key: str, down: bool = True) -> None:
@@ -446,7 +532,7 @@ def read_keys(fd: int) -> list[str]:
 
 
 class Speaker:
-    """端末で音を出す係。3 つの wav を先に書いておき、出来事があったら afplay に渡す。"""
+    """端末で音を出す係。出来事ごとの wav を先に書いておき、起きたら afplay に渡す。"""
 
     def __init__(self):
         import shutil
@@ -476,9 +562,11 @@ class Speaker:
 
 
 def status(world: World) -> str:
-    return (f" よけた {world.score:3d}  残り {'♥' * world.lives}{'♡' * (3 - world.lives)}  "
-            f"速さ {world.speed:4.1f}   ← → ↑ ↓ で動く（w a s d でも）  q でやめる"
-            + ("   ★ おしまい。r でもう一度" if world.over else ""))
+    combo = f"コンボ ×{min(world.combo, COMBO_MAX)}" if world.combo > 1 else "コンボ ―"
+    note = world.note if world.time < world.note_until else ""
+    return (f" 点 {world.score:4d}  よけた {world.passed:3d}  {combo}  残り {'♥' * world.lives}{'♡' * (3 - world.lives)}  "
+            f"速さ {world.speed:4.1f}   {note:<18}"
+            + ("★ おしまい。r でもう一度" if world.over else "← → ↑ ↓ で動く（w a s d でも）  q でやめる"))
 
 
 def run() -> None:
@@ -579,8 +667,42 @@ def check() -> None:
         got = world.update(STEP)
         if got:
             events.append(got)
-    assert world.score + (3 - world.lives) == events.count("pass") + events.count("hit") + events.count("over")
-    print(f"  20 秒動かして、よけた {world.score}、ぶつかった {3 - world.lives}、速さ {world.speed:.1f}")
+    dodged = sum(events.count(k) for k in ("pass", "near", "graze"))
+    assert world.passed >= dodged and 3 - world.lives == events.count("hit") + events.count("over")
+    assert world.score >= world.passed, "点はよけた数より少なくならないはず"
+    print(f"  20 秒動かして、よけた {world.passed}（点 {world.score}）、ぶつかった {3 - world.lives}、速さ {world.speed:.1f}")
+    print("● スレスレとコンボ")
+    world = World(seed=1)
+
+    def pass_by(offset: float) -> str | None:
+        """自機の右 offset のところを、半径 1 の小惑星が通り過ぎる。"""
+        world.rocks = [Rock(V(world.ship.x + offset, world.ship.y, world.ship.z + 0.01), 1.0, 0, V(0, 0, 0))]
+        world.spawn_at = world.time + 99
+        return world.update(STEP)
+
+    edge = 1.0 + HIT_GAP
+    assert pass_by(edge + GRAZE_GAP * 0.5) == "graze" and world.score == 3 and world.combo == 1
+    assert pass_by(edge + GRAZE_GAP * 0.5) == "graze" and world.score == 3 + 6 and world.combo == 2
+    assert pass_by(edge + NEAR_GAP * 0.9) == "near" and world.score == 9 + 2 * 3 and world.combo == 3
+    assert pass_by(edge + NEAR_GAP * 3) == "pass" and world.score == 15 + 1 and world.combo == 0, "遠くをよけると +1 で、コンボは途切れる"
+    for _ in range(6):
+        pass_by(edge + GRAZE_GAP * 0.5)
+    assert world.combo == 6 and pass_by(edge + GRAZE_GAP * 0.5) == "graze"
+    assert world.score == 16 + 3 * (1 + 2 + 3 + 4 + 5 + 5) + 3 * COMBO_MAX, world.score
+    world.hurt = 0.0
+    assert pass_by(edge * 0.5) == "hit" and world.combo == 0 and world.lives == 2 and world.shake == SHAKE_HIT
+    assert world.cam_now != world.cam and world.cam_now.jolt_x != 0
+    assert world.passed == 11 and world.note.startswith("ぶつかった")
+    print(f"  スレスレ +3、近い +2、それ以外 +1。続くと ×2 ×3 …（上限 ×{COMBO_MAX}）、途切れるか、ぶつかると 0 に戻る。ぶつかると {SHAKE_HIT} 秒揺れる")
+    for _ in range(int(SHAKE_HIT / STEP) + 2):
+        world.update(STEP)
+    assert world.shake == 0 and world.cam_now == world.cam and world.flash == 0
+    print("  揺れと縁の光は時間で消え、カメラは元の位置に戻る")
+    world.hurt = 0.0
+    world.time, world.shake = 0.0, SHAKE_HIT
+    a = world.cam_now
+    world.time = 0.1
+    assert world.cam_now != a, "揺れは時間で変わる（乱数は使わない → 端末とブラウザで同じ）"
     print("● 自動でよけると")
     world = World(seed=1)
     for _ in range(30 * 40):
@@ -591,7 +713,7 @@ def check() -> None:
         else:
             world.aim = V(-world.ship.x * 0.5, -world.ship.y * 0.5, 0)
         world.update(STEP)
-    print(f"  40 秒: よけた {world.score}、残り {world.lives}、速さ {world.speed:.1f}")
+    print(f"  40 秒: よけた {world.passed}（点 {world.score}）、残り {world.lives}、速さ {world.speed:.1f}")
     print("● 板の大きさ")
     world = World(seed=2)
     for _ in range(90):
@@ -611,8 +733,9 @@ def check() -> None:
     for kind in SOUNDS:
         data = sound_bytes(kind)
         assert data[:4] == b"RIFF"
-    assert len({sound_bytes(k) for k in SOUNDS}) == 3
-    print("  よけた・ぶつかった・おしまい の 3 つ。全部別の音")
+    assert len({sound_bytes(k) for k in SOUNDS}) == 4 and sound_bytes("near") == sound_bytes("pass")
+    assert all(k in SOUNDS for k in EVENTS), "update() が返す出来事には全部、音があるはず（near が抜けて KeyError になった）"
+    print("  よけた・スレスレ・ぶつかった・おしまい の 4 つ。全部別の音（近いは、よけたと同じ音）")
     print("\nぜんぶ通った。")
 
 
@@ -641,7 +764,7 @@ def shot(path: str, seconds: float = 6.0) -> None:
            + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
     with open(path, "wb") as out:
         out.write(png)
-    print(f"{path} に書き出した（{len(world.rocks)} 個の小惑星、よけた {world.score}）")
+    print(f"{path} に書き出した（{len(world.rocks)} 個の小惑星、よけた {world.passed}）")
 
 
 def main() -> None:

@@ -46,10 +46,11 @@
     border-radius: .75rem;
     padding: 1.25rem;
   }
-  .status { display: flex; justify-content: space-between; align-items: baseline;
-    gap: 1rem; margin-bottom: .75rem; color: var(--muted); font-size: .875rem;
+  .status { display: flex; flex-wrap: wrap; gap: .15rem 1.2rem; justify-content: space-between; align-items: baseline;
+    margin-bottom: .75rem; color: var(--muted); font-size: .875rem;
     font-variant-numeric: tabular-nums; }
   .status b { color: var(--ink); font-weight: 700; }
+  .status span { white-space: nowrap; }
 
   /* ドット絵の画面。126×80 の canvas を CSS で 4 倍に */
   .stage { display: flex; justify-content: center; }
@@ -146,6 +147,7 @@
   .cross .r { grid-column: 3; grid-row: 2; } .cross .d { grid-column: 2; grid-row: 3; }
   #again { width: 100%; margin-top: .6rem; }
   #message { min-height: 1.6em; text-align: center; font-family: inherit; white-space: normal; color: var(--ink); }
+  .note-line { margin: .3rem 0 0; min-height: 1.4em; text-align: center; font-weight: 700; color: #b8860b; font-size: .95rem; }
   .cues { display: grid; grid-template-columns: 1fr 1fr; gap: .3rem .9rem; margin: .6rem 0 0; font-size: .8125rem;
     color: var(--muted); }
   .cues b { color: var(--ink); }
@@ -159,11 +161,12 @@
 
   <div class="card">
     <div class="status">
-      <span>よけた <b id="score">0</b> ・ 残り <b id="lives">♥♥♥</b></span>
-      <span>速さ <b id="speed">10.0</b> ・ <b id="fps">–</b> コマ/秒</span>
+      <span>点 <b id="score">0</b> ・ よけた <b id="passed">0</b> ・ コンボ <b id="combo">―</b></span>
+      <span>残り <b id="lives">♥♥♥</b> ・ 速さ <b id="speed">10.0</b> ・ <b id="fps">–</b> コマ/秒</span>
     </div>
 
     <div class="stage"><canvas id="screen" width="256" height="160"></canvas></div>
+    <p id="note" class="note-line">&nbsp;</p>
     <pre id="message"></pre>
 
     <div class="pad cross">
@@ -180,6 +183,7 @@
         <li>小惑星は奥から迫ってきます。<b>近づくほど大きく</b>、回りながら来ます。</li>
         <li>ぶつかると ♥ が 1 つ減り、しばらく点滅します。3 回で終わり。</li>
         <li>よけるたびに<b>速さが上がります</b>。どこまでいけるか。</li>
+        <li><b>ギリギリで通ると点が高い</b>：スレスレ +3、近い +2、それ以外 +1。スレスレ・近いが<b>続くとコンボ</b>で ×2 ×3 …（×5 まで）。遠くをよけるか、ぶつかるとコンボは 0。ぶつかると画面が揺れます。</li>
       </ol>
       <div class="cues">
         <span><b>遠近</b>：近いものは大きい（x' = x / z）</span>
@@ -205,6 +209,6 @@
   </footer>
 </main>
 
-<script type="py" src="./game.py?v=e587769d"></script>
+<script type="py" src="./game.py?v=6b3ed171"></script>
 </body>
 </html>
