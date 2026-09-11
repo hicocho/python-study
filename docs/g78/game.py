@@ -13,6 +13,7 @@ CLI 版（g78-space-3d/main.py）と中身はまったく同じ。3D の点（V�
 import asyncio
 import base64
 import io
+import json
 import math
 import random
 import wave
@@ -144,11 +145,13 @@ def tone(hz: float, seconds: float, volume: float = VOLUME) -> array:
 
 def sound_bytes(kind: str) -> bytes:
     """出来事の音。pass はよけた（小さく高く）、graze はスレスレ（キラッと 2 音）、
-    hit はぶつかった（低く長く）、over はおしまい。"near" は pass と同じ音。"""
+    hit はぶつかった（低く長く）、over はおしまい、best はベスト更新（上がっていく 4 音）。"near" は pass と同じ音。"""
     if kind in ("pass", "near"):
         samples = tone(1320, 0.05)
     elif kind == "graze":
         samples = tone(1760, 0.04) + tone(2640, 0.08)
+    elif kind == "best":
+        samples = tone(523, 0.1) + tone(659, 0.1) + tone(784, 0.1) + tone(1047, 0.3)
     elif kind == "hit":
         samples = tone(110, 0.28, VOLUME * 1.8)
     else:
@@ -165,7 +168,7 @@ def sound_bytes(kind: str) -> bytes:
 EVENTS = ("pass", "near", "graze", "hit", "over")   # update() が返す出来事。目立つ順
 
 
-SOUNDS = EVENTS                                     # 出来事ごとに音を 1 つ（near は pass と同じ音）
+SOUNDS = EVENTS + ("best",)                         # 出来事ごとに音を 1 つ（near は pass と同じ音）＋ ベスト更新
 
 
 class V(NamedTuple):
@@ -376,6 +379,35 @@ class Rock:
 
 
 @dataclass
+class Best:
+    """これまでのベスト。端末は records.json、ブラウザは localStorage に置くが、中身の形（dump）は同じ。"""
+
+    score: int = 0
+    combo: int = 0                                  # 最高コンボ
+    passed: int = 0                                 # 最多よけた数
+
+    def dump(self) -> str:
+        return json.dumps({"score": self.score, "combo": self.combo, "passed": self.passed})
+
+    @classmethod
+    def parse(cls, text: str) -> "Best":
+        """壊れていたり空だったりしたら 0 から。"""
+        try:
+            data = json.loads(text)
+            return cls(int(data["score"]), int(data["combo"]), int(data["passed"]))
+        except (ValueError, KeyError, TypeError):
+            return cls()
+
+    def take(self, world: "World") -> bool:
+        """終わった世界の成績を取り込む。点のベストを更新したら True。"""
+        improved = world.score > self.score
+        self.score = max(self.score, world.score)
+        self.combo = max(self.combo, world.combo_max)
+        self.passed = max(self.passed, world.passed)
+        return improved
+
+
+@dataclass
 class World:
     seed: int = 0
     luck: random.Random = field(default_factory=random.Random)
@@ -391,6 +423,7 @@ class World:
     score: int = 0                                  # 点。スレスレ +3、近い +2、それ以外 +1 に、コンボの倍率をかける
     passed: int = 0                                 # よけた数（速さはこれで決まる）
     combo: int = 0                                  # スレスレ・近いが続いた数。ぶつかるか、遠くをよけると 0 に戻る
+    combo_max: int = 0
     lives: int = 3
     hurt: float = 0.0                               # ぶつかった直後（点滅）
     shake: float = 0.0                              # 揺れの残り秒数
@@ -429,6 +462,7 @@ class World:
         """よけた点。スレスレ・近いはコンボを伸ばし、点にコンボの倍率がかかる。遠くをよけると +1 でコンボは途切れる。"""
         if event in ("graze", "near"):
             self.combo += 1
+            self.combo_max = max(self.combo_max, self.combo)
             points = {"graze": 3, "near": 2}[event] * min(self.combo, COMBO_MAX)
         else:
             self.combo = 0
@@ -572,6 +606,8 @@ score_label = document.querySelector("#score")
 passed_label = document.querySelector("#passed")
 combo_label = document.querySelector("#combo")
 note_label = document.querySelector("#note")
+best_label = document.querySelector("#best")
+SAVED = "g78-best"                                  # localStorage の鍵。CLI 版の records.json にあたる
 lives_label = document.querySelector("#lives")
 speed_label = document.querySelector("#speed")
 fps_label = document.querySelector("#fps")
@@ -617,6 +653,8 @@ class Speaker:
 screen = CanvasScreen(WIDTH * SCALE, HEIGHT * SCALE)
 speaker = Speaker()
 world = World(seed=int(window.performance.now()))
+best = Best.parse(window.localStorage.getItem(SAVED) or "")
+improved = False
 frames = []
 
 
@@ -630,12 +668,18 @@ def refresh() -> None:
     note_label.style.color = "#c0392b" if world.note.startswith("ぶつかった") else "#b8860b"
     lives_label.textContent = "♥" * world.lives + "♡" * (3 - world.lives)
     speed_label.textContent = f"{world.speed:.1f}"
-    message.textContent = "おしまい。「もう一度」で最初から" if world.over else ""
+    best_label.textContent = str(best.score)
+    if world.over:
+        message.textContent = (f"おしまい。点 {world.score}" + ("  ベスト更新！" if improved else f"（ベスト {best.score}）")
+                               + "  「もう一度」で最初から")
+    else:
+        message.textContent = ""
     again_button.hidden = not world.over
 
 
 async def loop():
     """刻み幅は CLI 版と同じ STEP に固定する（g64 で入れた）。"""
+    global improved
     lag = 0.0
     last = window.performance.now() / 1000
     while True:
@@ -643,7 +687,12 @@ async def loop():
         lag = min(lag + now - last, 0.25)           # ためすぎない（重い端末で追いつけなくなる）
         last = now
         while lag >= STEP:
-            speaker.say(world.update(STEP))
+            event = world.update(STEP)
+            if event == "over":                     # 終わった瞬間にベストへ取り込んで保存（CLI 版の run と同じ）
+                improved = best.take(world)
+                window.localStorage.setItem(SAVED, best.dump())
+                event = "best" if improved else event
+            speaker.say(event)
             lag -= STEP
         refresh()
         frames.append(window.performance.now() / 1000)
@@ -690,8 +739,9 @@ def pad_leave(event):
 
 @when("click", "#again")
 def again(event):
-    global world
+    global world, improved
     world = World(seed=int(window.performance.now()))
+    improved = False
     refresh()
 
 

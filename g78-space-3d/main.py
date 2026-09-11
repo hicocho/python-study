@@ -15,6 +15,7 @@
 """
 
 import io
+import json
 import math
 import os
 import random
@@ -80,11 +81,13 @@ def tone(hz: float, seconds: float, volume: float = VOLUME) -> array:
 
 def sound_bytes(kind: str) -> bytes:
     """出来事の音。pass はよけた（小さく高く）、graze はスレスレ（キラッと 2 音）、
-    hit はぶつかった（低く長く）、over はおしまい。"near" は pass と同じ音。"""
+    hit はぶつかった（低く長く）、over はおしまい、best はベスト更新（上がっていく 4 音）。"near" は pass と同じ音。"""
     if kind in ("pass", "near"):
         samples = tone(1320, 0.05)
     elif kind == "graze":
         samples = tone(1760, 0.04) + tone(2640, 0.08)
+    elif kind == "best":
+        samples = tone(523, 0.1) + tone(659, 0.1) + tone(784, 0.1) + tone(1047, 0.3)
     elif kind == "hit":
         samples = tone(110, 0.28, VOLUME * 1.8)
     else:
@@ -99,7 +102,7 @@ def sound_bytes(kind: str) -> bytes:
 
 
 EVENTS = ("pass", "near", "graze", "hit", "over")   # update() が返す出来事。目立つ順
-SOUNDS = EVENTS                                     # 出来事ごとに音を 1 つ（near は pass と同じ音）
+SOUNDS = EVENTS + ("best",)                         # 出来事ごとに音を 1 つ（near は pass と同じ音）＋ ベスト更新
 
 
 # ── 3D の点 ─────────────────────────────────────────────────────────────
@@ -331,6 +334,35 @@ class Rock:
 
 
 @dataclass
+class Best:
+    """これまでのベスト。端末は records.json、ブラウザは localStorage に置くが、中身の形（dump）は同じ。"""
+
+    score: int = 0
+    combo: int = 0                                  # 最高コンボ
+    passed: int = 0                                 # 最多よけた数
+
+    def dump(self) -> str:
+        return json.dumps({"score": self.score, "combo": self.combo, "passed": self.passed})
+
+    @classmethod
+    def parse(cls, text: str) -> "Best":
+        """壊れていたり空だったりしたら 0 から。"""
+        try:
+            data = json.loads(text)
+            return cls(int(data["score"]), int(data["combo"]), int(data["passed"]))
+        except (ValueError, KeyError, TypeError):
+            return cls()
+
+    def take(self, world: "World") -> bool:
+        """終わった世界の成績を取り込む。点のベストを更新したら True。"""
+        improved = world.score > self.score
+        self.score = max(self.score, world.score)
+        self.combo = max(self.combo, world.combo_max)
+        self.passed = max(self.passed, world.passed)
+        return improved
+
+
+@dataclass
 class World:
     seed: int = 0
     luck: random.Random = field(default_factory=random.Random)
@@ -346,6 +378,7 @@ class World:
     score: int = 0                                  # 点。スレスレ +3、近い +2、それ以外 +1 に、コンボの倍率をかける
     passed: int = 0                                 # よけた数（速さはこれで決まる）
     combo: int = 0                                  # スレスレ・近いが続いた数。ぶつかるか、遠くをよけると 0 に戻る
+    combo_max: int = 0
     lives: int = 3
     hurt: float = 0.0                               # ぶつかった直後（点滅）
     shake: float = 0.0                              # 揺れの残り秒数
@@ -384,6 +417,7 @@ class World:
         """よけた点。スレスレ・近いはコンボを伸ばし、点にコンボの倍率がかかる。遠くをよけると +1 でコンボは途切れる。"""
         if event in ("graze", "near"):
             self.combo += 1
+            self.combo_max = max(self.combo_max, self.combo)
             points = {"graze": 3, "near": 2}[event] * min(self.combo, COMBO_MAX)
         else:
             self.combo = 0
@@ -561,12 +595,32 @@ class Speaker:
         shutil.rmtree(self.folder, ignore_errors=True)
 
 
-def status(world: World) -> str:
+RECORDS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "records.json")
+
+
+def load_best() -> Best:
+    try:
+        with open(RECORDS, encoding="utf-8") as src:
+            return Best.parse(src.read())
+    except OSError:
+        return Best()
+
+
+def save_best(best: Best) -> None:
+    with open(RECORDS, "w", encoding="utf-8") as out:
+        out.write(best.dump())
+
+
+def status(world: World, best: Best, improved: bool = False) -> str:
     combo = f"コンボ ×{min(world.combo, COMBO_MAX)}" if world.combo > 1 else "コンボ ―"
     note = world.note if world.time < world.note_until else ""
+    if world.over:
+        tail = (f"★ おしまい。点 {world.score}" + (" ベスト更新！" if improved else f"（ベスト {best.score}）")
+                + " r でもう一度")
+    else:
+        tail = f"ベスト {best.score}  ← → ↑ ↓ / w a s d で動く  q でやめる"
     return (f" 点 {world.score:4d}  よけた {world.passed:3d}  {combo}  残り {'♥' * world.lives}{'♡' * (3 - world.lives)}  "
-            f"速さ {world.speed:4.1f}   {note:<18}"
-            + ("★ おしまい。r でもう一度" if world.over else "← → ↑ ↓ で動く（w a s d でも）  q でやめる"))
+            f"速さ {world.speed:4.1f}  {note:<14} " + tail)
 
 
 def run() -> None:
@@ -574,6 +628,8 @@ def run() -> None:
     import tty
 
     world = World(seed=int(time.time()))
+    best = load_best()
+    improved = False
     screen = Screen()
     speaker = Speaker()
     fd = sys.stdin.fileno()
@@ -589,16 +645,22 @@ def run() -> None:
                     return
                 if key == "reset" and world.over:
                     world = World(seed=int(time.time()))
+                    improved = False
                 obey(world, key)
             now = time.perf_counter()
             lag = min(lag + now - last, 0.25)
             last = now
             while lag >= STEP:                      # 固定の刻み幅（g64 で覚えた）
-                speaker.say(world.update(STEP))
+                event = world.update(STEP)
+                if event == "over":                 # 終わった瞬間にベストへ取り込んで保存
+                    improved = best.take(world)
+                    save_best(best)
+                    event = "best" if improved else event
+                speaker.say(event)
                 lag -= STEP
             world.aim = V(world.aim.x * 0.85, world.aim.y * 0.85, 0)   # 端末はキーの離しが分からないので減らす
             draw(screen, world)
-            sys.stdout.write("\x1b[H" + screen.render() + status(world) + "\x1b[K")
+            sys.stdout.write("\x1b[H" + screen.render() + status(world, best, improved) + "\x1b[K")
             sys.stdout.flush()
             time.sleep(max(0.0, STEP - (time.perf_counter() - now)))
     finally:
@@ -733,9 +795,19 @@ def check() -> None:
     for kind in SOUNDS:
         data = sound_bytes(kind)
         assert data[:4] == b"RIFF"
-    assert len({sound_bytes(k) for k in SOUNDS}) == 4 and sound_bytes("near") == sound_bytes("pass")
+    assert len({sound_bytes(k) for k in SOUNDS}) == 5 and sound_bytes("near") == sound_bytes("pass")
     assert all(k in SOUNDS for k in EVENTS), "update() が返す出来事には全部、音があるはず（near が抜けて KeyError になった）"
-    print("  よけた・スレスレ・ぶつかった・おしまい の 4 つ。全部別の音（近いは、よけたと同じ音）")
+    print("  よけた・スレスレ・ぶつかった・おしまい・ベスト更新 の 5 つ。全部別の音（近いは、よけたと同じ音）")
+    print("● ベスト記録")
+    best = Best.parse("")
+    assert best == Best() and Best.parse("{broken") == Best() and Best.parse('{"score": "x"}') == Best()
+    world = World(seed=1)
+    world.score, world.combo_max, world.passed = 40, 3, 12
+    assert best.take(world) and best == Best(40, 3, 12)
+    world.score, world.combo_max, world.passed = 30, 5, 9
+    assert not best.take(world) and best == Best(40, 5, 12), "点が届かなくてもコンボは伸びる"
+    assert Best.parse(best.dump()) == best
+    print(f"  空でも壊れていても 0 から。点が上がれば更新、コンボとよけた数はそれぞれ最大。dump → parse で戻る: {best.dump()}")
     print("\nぜんぶ通った。")
 
 
