@@ -48,10 +48,10 @@ FAR = 95.0                                          # 道を描く奥行き
 FOG_FROM = 30.0                                     # ここより奥は空の色に溶ける
 
 
-CAM_BACK = 6.5                                      # カメラは車の後ろ何 m か
+CAM_BACK = 5.2                                      # カメラは車の後ろ何 m か
 
 
-CAM_UP = 2.4                                        # カメラの高さ（車の位置から）
+CAM_UP = 2.0                                        # カメラの高さ（車の位置から）
 
 
 TILT = 0.14                                         # カメラの見下ろし（ラジアン）。地平線が真ん中より上に来る
@@ -63,7 +63,16 @@ STEP = 1 / 30
 ROAD_HALF = 4.5                                     # 道の半分の幅
 
 
-SHOULDER = 0.9                                      # 路肩（赤白の縞）の幅
+KERB = 0.55                                         # 縁石（赤白の縞）の幅
+
+
+DIRT = 1.0                                          # 縁石の外の土の幅
+
+
+LINE = 0.18                                         # 白線の幅
+
+
+SHOULDER = KERB + DIRT                              # 道の外（ここまでは減速しない）
 
 
 GRASS_W = 60.0                                      # 道の外の草を描く幅
@@ -76,6 +85,9 @@ DRAW_SEGS = 56                                      # 前方に描く断面の�
 
 
 GRASS_SEGS = 30                                     # 草の縞を描く断面の数（遠くは平らな色）
+
+
+DETAIL_SEGS = 34                                    # 土と白線を描く断面の数
 
 
 TREE_EVERY = 7                                      # 何断面ごとに木を立てるか
@@ -118,34 +130,55 @@ COURSE = [(0, 0, 0), (0, 70, 0), (-12, 130, 4), (30, 170, 9), (85, 160, 7), (105
           (80, 70, 0), (95, 20, -2), (70, -30, -4), (30, -55, -2), (0, -40, 0)]
 
 
-SKY_TOP = (86, 140, 210)
+SKY_TOP = (70, 125, 205)
 
 
-SKY = (150, 190, 235)                               # 地平線の近く。霧もこの色へ溶ける
+SKY = (178, 205, 232)                               # 地平線の近く。霧もこの色へ溶ける
 
 
-GRASS_A = (78, 150, 66)
+CLOUD = (240, 244, 250)
 
 
-GRASS_B = (68, 134, 58)
+MOUNTAIN_FAR = (120, 150, 190)
 
 
-ROAD_A = (96, 96, 102)
+MOUNTAIN_NEAR = (86, 118, 150)
 
 
-ROAD_B = (90, 90, 96)
+GRASS_A = (74, 138, 62)
 
 
-STRIPE_A = (215, 60, 50)
+GRASS_B = (70, 131, 59)
 
 
-STRIPE_B = (235, 235, 230)
+DIRT_COLOR = (150, 128, 90)
 
 
-TRUNK = (96, 68, 40)
+ROAD_A = (84, 84, 90)
 
 
-CROWN = (40, 110, 48)
+ROAD_B = (80, 80, 86)
+
+
+LINE_COLOR = (225, 225, 220)
+
+
+STRIPE_A = (205, 55, 45)
+
+
+STRIPE_B = (232, 232, 226)
+
+
+TRUNK = (92, 64, 38)
+
+
+CROWN = (36, 100, 44)                               # 針葉樹
+
+
+LEAF = (66, 132, 52)                                # 広葉樹
+
+
+BUSH = (52, 112, 46)
 
 
 CAR = (230, 70, 60)                                 # 自分の車
@@ -430,13 +463,77 @@ def outward(points: list[V], faces: list[tuple[int, ...]]) -> list[tuple[int, ..
     return fixed
 
 
-BODY = box(1.9, 0.7, 3.8, 0.35)
-
-
-CABIN = box(1.4, 0.55, 1.7, 0.95, -0.3)
-
-
 LIGHT_DIR = (-0.4, 0.9, -0.5)
+
+
+PROFILE = [(-2.1, 0.32), (-2.1, 0.95), (-1.35, 1.02), (-0.85, 1.36), (0.25, 1.36), (0.85, 0.98), (2.05, 0.78), (2.1, 0.32)]
+
+
+HALF_W = 0.92
+
+
+GLASS_SPANS = ((2, 3), (4, 5))                      # PROFILE のどの区間がガラスか（リアウィンドウ、フロントガラス）
+
+
+WHEEL_R = 0.33
+
+
+WHEEL_AT = ((-0.86, 1.3), (0.86, 1.3), (-0.86, -1.3), (0.86, -1.3))   # (x, z)
+
+
+def car_body() -> tuple[list[V], list[tuple[int, ...]], list[str]]:
+    """車体。横顔を左右に押し出し、上面（区間ごと）・左右の面・前後の面を作る。面ごとに材質の名前を返す。"""
+    n = len(PROFILE)
+    points = [V(sx * HALF_W, y, z) for z, y in PROFILE for sx in (-1, 1)]   # 2k = 左、2k+1 = 右
+    faces: list[tuple[int, ...]] = []
+    kinds: list[str] = []
+    for k in range(n - 1):                          # 上面（後ろから前へ。最初と最後は縦の面＝後ろ・前）
+        faces.append((2 * k, 2 * k + 1, 2 * k + 3, 2 * k + 2))
+        kinds.append("glass" if (k, k + 1) in GLASS_SPANS else "body")
+    faces.append(tuple(range(0, 2 * n, 2)))         # 左の面（横顔そのもの）
+    faces.append(tuple(range(1, 2 * n, 2)))         # 右の面
+    kinds += ["side", "side"]
+    faces.append((0, 2 * n - 2, 2 * n - 1, 1))      # 底
+    kinds.append("under")
+    return points, outward(points, faces), kinds
+
+
+def wheel(x: float, z: float, sides: int = 8) -> tuple[list[V], list[tuple[int, ...]]]:
+    """タイヤ。x 軸に沿った 8 角柱。"""
+    points = []
+    for sx in (-0.17, 0.17):
+        for i in range(sides):
+            a = i * math.tau / sides
+            points.append(V(x + sx, WHEEL_R + WHEEL_R * math.cos(a), z + WHEEL_R * math.sin(a)))
+    faces = [tuple(range(sides)), tuple(range(sides, 2 * sides))]
+    for i in range(sides):
+        j = (i + 1) % sides
+        faces.append((i, j, sides + j, sides + i))
+    return points, outward(points, faces)
+
+
+CAR_BODY = car_body()
+
+
+WHEELS = [wheel(x, z) for x, z in WHEEL_AT]
+
+
+SIDE_WINDOW = [V(0, 1.02, -1.25), V(0, 1.30, -0.8), V(0, 1.30, 0.2), V(0, 1.02, 0.75)]   # 横の窓（x は左右で ±）
+
+
+SHADOW = [V(math.cos(a) * 1.25, 0.02, math.sin(a) * 2.3) for a in (i * math.tau / 8 for i in range(8))]
+
+
+TIRE = (28, 28, 32)
+
+
+HUB = (150, 150, 150)
+
+
+GLASS = (110, 150, 190)
+
+
+SHADOW_COLOR = (40, 90, 40)
 
 
 @dataclass
@@ -674,13 +771,15 @@ def shade(base: tuple[int, int, int], normal: V, z: float = 0.0) -> tuple[int, i
     return fog(tuple(min(255, int(c * bright)) for c in base), z)
 
 
-def draw_solid(screen: Screen, points: list[V], faces: list[tuple[int, ...]], color: tuple[int, int, int]) -> None:
-    """立体をひとつ描く。こちらを向いた面だけを、奥から順に塗る。NEAR をまたぐ面は切る。"""
+def draw_solid(screen: Screen, points: list[V], faces: list[tuple[int, ...]], color: tuple[int, int, int],
+               colors: list[tuple[int, int, int]] | None = None) -> None:
+    """立体をひとつ描く。こちらを向いた面だけを、奥から順に塗る。NEAR をまたぐ面は切る。
+    colors を渡せば面ごとに色を変えられる（車の窓など）。"""
     if max(p.z for p in points) < NEAR:
         return
     scale = screen.width / WIDTH
     drawn = []
-    for face in faces:
+    for k, face in enumerate(faces):
         a, b, c = points[face[0]], points[face[1]], points[face[2]]
         normal = (b - a).cross(c - a).unit()
         if normal.dot(a) >= 0:
@@ -689,7 +788,7 @@ def draw_solid(screen: Screen, points: list[V], faces: list[tuple[int, ...]], co
         if len(poly) < 3:
             continue
         depth = sum(p.z for p in poly) / len(poly)
-        drawn.append((depth, [project(p, scale) for p in poly], shade(color, normal, depth)))
+        drawn.append((depth, [project(p, scale) for p in poly], shade(colors[k] if colors else color, normal, depth)))
     for _, flat, painted in sorted(drawn, key=lambda item: -item[0]):
         screen.fill(flat, painted)
 
@@ -704,66 +803,159 @@ def draw_quad(screen: Screen, quad: list[V], color: tuple[int, int, int], scale:
 
 
 def draw_car(screen: Screen, car: Car, cam: Camera, roll: float = 0.0) -> None:
-    for (points, faces), color in ((BODY, car.color), (CABIN, CAR_GLASS)):
-        placed = [view(rotate(p, 0.0, car.yaw, roll) + car.pos, cam) for p in points]
-        draw_solid(screen, placed, faces, color)
+    """車。影 → 車体（面ごとに 車体色／ガラス／下回り）→ タイヤ → 横の窓 → ライト。"""
+    scale = screen.width / WIDTH
+    place = lambda p: view(rotate(p, 0.0, car.yaw, roll) + car.pos, cam)   # noqa: E731
+    draw_quad(screen, [place(p) for p in SHADOW], SHADOW_COLOR, scale)
+    points, faces, kinds = CAR_BODY
+    dark = tuple(int(c * 0.55) for c in car.color)
+    palette = {"body": car.color, "glass": GLASS, "side": car.color, "under": dark}
+    draw_solid(screen, [place(p) for p in points], faces, car.color, [palette[k] for k in kinds])
+    for w_points, w_faces in WHEELS:
+        draw_solid(screen, [place(p) for p in w_points], w_faces, TIRE, [HUB, HUB] + [TIRE] * (len(w_faces) - 2))
+    for sx in (-1, 1):                              # 横の窓は車体の面のすぐ外側に貼る
+        quad = [place(V(sx * (HALF_W + 0.01), p.y, p.z)) for p in SIDE_WINDOW]
+        if min(q.z for q in quad) > NEAR:
+            a, b, c = quad[0], quad[1], quad[2]
+            if (b - a).cross(c - a).dot(a) < 0:
+                depth = sum(q.z for q in quad) / 4
+                screen.fill([project(q, scale) for q in quad], fog(GLASS, depth))
+    for z, y, color in ((2.11, 0.62, (255, 245, 200)), (-2.11, 0.62, (220, 40, 30))):   # ヘッドライトとテールランプ
+        for sx in (-0.6, 0.6):
+            quad = [place(V(sx + dx, y + dy, z)) for dx, dy in ((-0.2, -0.08), (0.2, -0.08), (0.2, 0.08), (-0.2, 0.08))]
+            if min(q.z for q in quad) > NEAR:
+                a, b, c = quad[0], quad[1], quad[2]
+                if (b - a).cross(c - a).dot(a) < 0:
+                    screen.fill([project(q, scale) for q in quad], fog(color, quad[0].z))
 
 
-def draw_tree(screen: Screen, base: V, scale: float) -> None:
-    """木。幹は細い四角、葉は三角。どちらもカメラに正対した板（ビルボード）。"""
-    if base.z < NEAR + 0.5:
-        return
-    trunk = [V(base.x - 0.25, base.y, base.z), V(base.x + 0.25, base.y, base.z),
-             V(base.x + 0.25, base.y + 2.0, base.z), V(base.x - 0.25, base.y + 2.0, base.z)]
-    crown = [V(base.x - 1.8, base.y + 1.6, base.z), V(base.x + 1.8, base.y + 1.6, base.z), V(base.x, base.y + 5.5, base.z)]
-    screen.fill([project(p, scale) for p in trunk], fog(TRUNK, base.z))
-    screen.fill([project(p, scale) for p in crown], fog(CROWN, base.z))
+def draw_conifer(screen: Screen, base: V, scale: float, size: float = 1.0) -> None:
+    """針葉樹。幹と、3 段の三角（下ほど広く暗い）。カメラに正対した板。"""
+    z = base.z
+    trunk = [V(base.x - 0.22, base.y, z), V(base.x + 0.22, base.y, z), V(base.x + 0.22, base.y + 1.6, z), V(base.x - 0.22, base.y + 1.6, z)]
+    screen.fill([project(p, scale) for p in trunk], fog(TRUNK, z))
+    for k, (w, y0, y1, tone_) in enumerate(((2.2, 1.2, 3.4, 0.7), (1.7, 2.4, 4.6, 0.85), (1.2, 3.6, 6.0, 1.0))):
+        w, y0, y1 = w * size, y0 * size, y1 * size
+        tri = [V(base.x - w, base.y + y0, z), V(base.x + w, base.y + y0, z), V(base.x, base.y + y1, z)]
+        color = tuple(int(c * tone_) for c in CROWN)
+        screen.fill([project(p, scale) for p in tri], fog(color, z))
+
+
+def draw_broadleaf(screen: Screen, base: V, scale: float, size: float = 1.0) -> None:
+    """広葉樹。幹と、丸い葉（暗い丸の上に明るい丸を少しずらして重ね、立体感）。"""
+    z = base.z
+    trunk = [V(base.x - 0.28, base.y, z), V(base.x + 0.28, base.y, z), V(base.x + 0.28, base.y + 2.4, z), V(base.x - 0.28, base.y + 2.4, z)]
+    screen.fill([project(p, scale) for p in trunk], fog(TRUNK, z))
+    for dx, dy, r, tone_ in ((0.0, 3.9, 2.4, 0.72), (-0.5, 4.3, 1.8, 1.0)):
+        r *= size
+        ring = [V(base.x + dx + r * math.cos(a), base.y + dy * size + r * 0.85 * math.sin(a), z)
+                for a in (i * math.tau / 10 for i in range(10))]
+        color = tuple(int(c * tone_) for c in LEAF)
+        screen.fill([project(p, scale) for p in ring], fog(color, z))
+
+
+def draw_bush(screen: Screen, base: V, scale: float) -> None:
+    z = base.z
+    ring = [V(base.x + 1.1 * math.cos(a), base.y + 0.9 + 0.75 * math.sin(a), z) for a in (i * math.tau / 8 for i in range(8))]
+    screen.fill([project(p, scale) for p in ring], fog(BUSH, z))
+
+
+def ridge(angle: float, layer: int) -> float:
+    """地平線の山なみ。向き angle（ラジアン）での高さ。sin を何個か足しただけの決まった形（乱数なし）。"""
+    if layer == 0:
+        return 5.0 + 3.6 * math.sin(angle * 3 + 0.4) + 2.4 * math.sin(angle * 7 + 2.0) + 1.2 * math.sin(angle * 13)
+    return 2.0 + 2.0 * math.sin(angle * 4 + 1.1) + 1.4 * math.sin(angle * 9 + 0.3) + 0.8 * math.sin(angle * 17 + 2.5)
+
+
+def draw_backdrop(screen: Screen, cam: Camera) -> None:
+    """空のグラデーション → 雲 → 遠い山 → 近い山。全部「向き」だけで決まる（車が曲がると横に流れる）。"""
+    scale = screen.width / WIDTH
+    horizon = int(HORIZON * scale)
+    for y in range(horizon):                        # 空：上から地平線へ色を変える
+        t = y / max(1, horizon)
+        screen.band(y, y + 1, tuple(int(a + (b - a) * t) for a, b in zip(SKY_TOP, SKY)))
+    screen.band(horizon, screen.height, GRASS_A)
+    for k in range(9):                              # 雲：決まった向きに浮かぶ楕円
+        angle = k * math.tau / 9 + 0.3
+        dx = math.remainder(angle - cam.yaw, math.tau)
+        if abs(dx) > 0.9:
+            continue
+        cx = (CX + FOCUS * math.tan(dx)) * scale
+        cy = (HORIZON - 14 - 5 * math.sin(k * 2.1)) * scale
+        rx, ry = (8 + 3 * math.sin(k * 1.7)) * scale, 2.6 * scale
+        ring = [(cx + rx * math.cos(a), cy + ry * math.sin(a)) for a in (i * math.tau / 10 for i in range(10))]
+        screen.fill(ring, CLOUD)
+    step = int(6 * scale)                           # 山：列ごとの高さをつないだ台形の並び
+    for layer, color in ((0, MOUNTAIN_FAR), (1, MOUNTAIN_NEAR)):
+        xs = list(range(0, screen.width + step, step))
+        heights = [ridge(cam.yaw + math.atan((x / scale - CX) / FOCUS), layer) * scale for x in xs]
+        for x0, x1, h0, h1 in zip(xs, xs[1:], heights, heights[1:]):
+            screen.fill([(x0, horizon - h0), (x1, horizon - h1), (x1, horizon + 1), (x0, horizon + 1)], color)
 
 
 def draw(screen: Screen, world: World) -> None:
-    """空と地面 → 道（奥から）→ 木と CPU カー（奥から）→ 自分の車。"""
+    """背景（空・雲・山）→ 道（奥から）→ 木・茂み・CPU カー（奥から）→ 自分の車。"""
     scale = screen.width / WIDTH
-    horizon = int(HORIZON * scale)
-    screen.band(0, horizon // 2, SKY_TOP)
-    screen.band(horizon // 2, horizon, SKY)
-    screen.band(horizon, screen.height, GRASS_A)
     track, cam = world.track, world.cam
+    draw_backdrop(screen, cam)
     start = world.player.hint - 3
     # 断面ごとの左右の点をカメラ座標に（隣の断面と共有するので 1 回ずつ）
+    offsets = (-ROAD_HALF - KERB - DIRT - GRASS_W, -ROAD_HALF - KERB - DIRT, -ROAD_HALF - KERB, -ROAD_HALF, -ROAD_HALF + LINE,
+               -LINE / 2, LINE / 2, ROAD_HALF - LINE, ROAD_HALF, ROAD_HALF + KERB, ROAD_HALF + KERB + DIRT, ROAD_HALF + KERB + DIRT + GRASS_W)
     edges = {}
-    for k in range(start, start + DRAW_SEGS + 1):
-        edges[k] = (view(track.edge(k, -ROAD_HALF - SHOULDER - GRASS_W), cam), view(track.edge(k, -ROAD_HALF - SHOULDER), cam),
-                    view(track.edge(k, -ROAD_HALF), cam), view(track.edge(k, ROAD_HALF), cam),
-                    view(track.edge(k, ROAD_HALF + SHOULDER), cam), view(track.edge(k, ROAD_HALF + SHOULDER + GRASS_W), cam))
-    things = []                                     # (奥行き, 何を) 木と CPU カー
+    for k in range(start, start + DRAW_SEGS + 1):    # view は回して足すだけなので、中心と右手を 1 回ずつ変換して足す
+        center = view(track.centers[k % len(track)], cam)
+        right = rotate(rotate(track.rights[k % len(track)], 0.0, -cam.yaw, 0.0), -TILT, 0.0, 0.0)
+        edges[k] = [center + right.scale(o) for o in offsets]
+    things = []                                     # (奥行き, 種類, 何を) 木・茂み・CPU カー
     for k in range(start + DRAW_SEGS - 1, start - 1, -1):   # 奥から
         a, b = edges[k], edges[k + 1]
-        depth = (a[2].z + a[3].z) / 2
+        depth = (a[3].z + a[8].z) / 2
         if depth > FAR:
             continue
         stripe = (k // 3) % 2
         if k - start < GRASS_SEGS:
-            grass = fog(GRASS_A if (k // 6) % 2 else GRASS_B, depth)
+            grass = fog(GRASS_A if (k // 5) % 2 else GRASS_B, depth)
             draw_quad(screen, [a[0], a[1], b[1], b[0]], grass, scale)
-            draw_quad(screen, [a[4], a[5], b[5], b[4]], grass, scale)
-        edge_color = fog(STRIPE_A if stripe else STRIPE_B, depth)
-        draw_quad(screen, [a[1], a[2], b[2], b[1]], edge_color, scale)
-        draw_quad(screen, [a[3], a[4], b[4], b[3]], edge_color, scale)
-        draw_quad(screen, [a[2], a[3], b[3], b[2]], fog(ROAD_A if stripe else ROAD_B, depth), scale)
+            draw_quad(screen, [a[10], a[11], b[11], b[10]], grass, scale)
+        near_by = k - start < DETAIL_SEGS               # 近くだけ土と白線を描く（遠くは 1 ドットにもならない）
+        if near_by:
+            dirt = fog(DIRT_COLOR, depth)
+            draw_quad(screen, [a[1], a[2], b[2], b[1]], dirt, scale)
+            draw_quad(screen, [a[9], a[10], b[10], b[9]], dirt, scale)
+        kerb = fog(STRIPE_A if stripe else STRIPE_B, depth)
+        draw_quad(screen, [a[2], a[3], b[3], b[2]], kerb, scale)
+        draw_quad(screen, [a[8], a[9], b[9], b[8]], kerb, scale)
+        draw_quad(screen, [a[3], a[8], b[8], b[3]], fog(ROAD_A if stripe else ROAD_B, depth), scale)
+        if near_by:
+            line = fog(LINE_COLOR, depth)
+            draw_quad(screen, [a[3], a[4], b[4], b[3]], line, scale)   # 道の端の白線
+            draw_quad(screen, [a[7], a[8], b[8], b[7]], line, scale)
+            if (k // 2) % 2:                                            # 真ん中の破線
+                draw_quad(screen, [a[5], a[6], b[6], b[5]], line, scale)
         if k % TREE_EVERY == 0:
             side = -1 if (k // TREE_EVERY) % 2 else 1
-            base = view(track.edge(k, side * (ROAD_HALF + SHOULDER + 3.0)), cam)
-            things.append((base.z, "tree", base))
+            kind = ("conifer", "broadleaf", "conifer", "bush")[(k // TREE_EVERY) % 4]
+            base = view(track.edge(k, side * (ROAD_HALF + KERB + DIRT + 2.5 + (k % 5))), cam)
+            things.append((base.z, kind, base))
+        if k % TREE_EVERY == 3 and (k // TREE_EVERY) % 3 == 0:
+            base = view(track.edge(k, (ROAD_HALF + KERB + DIRT + 1.2) * (1 if (k // 3) % 2 else -1)), cam)
+            things.append((base.z, "bush", base))
     for rival in world.rivals:
         z = view(rival.car.pos, cam).z
         if NEAR < z < FAR:
             things.append((z, "car", rival.car))
     for z, kind, thing in sorted(things, key=lambda t: -t[0]):
-        if kind == "tree":
-            draw_tree(screen, thing, scale)
-        else:
+        if kind == "car":
             draw_car(screen, thing, cam)
-    draw_car(screen, world.player, cam, roll=-world.steer * 0.08)
+        elif z > NEAR + 0.5:
+            if kind == "conifer":
+                draw_conifer(screen, thing, scale)
+            elif kind == "broadleaf":
+                draw_broadleaf(screen, thing, scale)
+            else:
+                draw_bush(screen, thing, scale)
+    draw_car(screen, world.player, cam, roll=-world.steer * 0.06)
 
 
 def obey(world: World, key: str, down: bool = True) -> None:
@@ -782,7 +974,7 @@ def obey(world: World, key: str, down: bool = True) -> None:
 
 # --- ここから下はブラウザ版だけ。CLI 版の run() / Screen.render() / Speaker / status() にあたる ---
 
-SCALE = 2                                           # ブラウザは 2 倍の板（256 × 160）に描く
+SCALE = 3                                           # ブラウザは 3 倍の板（384 × 240）に描く
 canvas = document.querySelector("#screen")
 ctx = canvas.getContext("2d")
 ctx.imageSmoothingEnabled = False
