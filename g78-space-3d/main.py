@@ -35,8 +35,14 @@ NEAR = 0.6                                          # これより手前は描�
 FAR = 48.0                                          # 小惑星と星が生まれる奥行き
 EYE = 1.5                                           # 視点の高さ。自機を見下ろすので画面の下寄りに映る
 SHIP_Z = 4.0                                        # 自機の奥行き
-REACH_X = 3.2                                       # 自機が動ける範囲（画面に収まる幅。z=4 で測った）
-REACH_Y = (-0.8, 2.6)
+REACH_X = 4.2                                       # 自機が動ける範囲（カメラが追うので画面より広くてよい）
+REACH_Y = (-0.4, 2.6)
+FOLLOW = 0.55                                       # カメラが自機の横の動きを追う割合（1 なら真後ろに固定）
+BANK = 0.32                                         # 曲がるときにカメラが傾く角度（ラジアン）
+RING_GAP = 7.0                                      # トンネルの輪の間隔
+RING_R = 6.5                                        # 輪の半径
+RING_Y = 1.0                                        # 輪の中心の高さ
+FOG_FROM = 8.0                                      # ここより奥は背景の色に溶けていく
 STEP = 1 / 30                                       # 1 コマの時間（固定）
 
 LIGHT_DIR = (-0.5, 0.8, -0.6)                       # 光の向き（左上・手前から）
@@ -46,6 +52,7 @@ SHIP = (120, 200, 235)                              # 自機
 FLAME = (255, 160, 60)                              # 自機の噴射
 STAR_NEAR = (240, 240, 250)
 STAR_FAR = (90, 95, 120)
+RING = (70, 120, 160)                               # トンネルの輪
 RATE = 22050                                        # 音の標本の数（1 秒あたり）
 VOLUME = 0.14
 
@@ -126,12 +133,29 @@ def rotate(p: V, ax: float, ay: float, az: float) -> V:
     return V(x, y, z)
 
 
+class Camera(NamedTuple):
+    """視点。横の位置と、傾き（ロール）。自機を追いかけ、曲がると傾く。"""
+
+    x: float = 0.0
+    roll: float = 0.0
+
+
+def view(p: V, cam: Camera = Camera()) -> V:
+    """世界の点を「カメラから見た点」にする。
+
+    カメラの位置を引いてから、カメラの傾きのぶん逆に回す。カメラが右に傾けば
+    世界は左に傾いて見える。視点は EYE の高さで、まっすぐ前を見ている。
+    """
+    q = V(p.x - cam.x, p.y - EYE, p.z)
+    return rotate(q, 0, 0, -cam.roll)
+
+
 def project(p: V) -> tuple[float, float]:
     """透視投影。遠い（z が大きい）ほど真ん中に寄って小さくなる。ここが 3D の心臓。
 
-    視点は原点より EYE だけ高い所にあって、まっすぐ前を見ている。
+    受け取るのは「カメラから見た点」（view を通したもの）。
     """
-    return CX + FOCUS * p.x / p.z, CY - FOCUS * (p.y - EYE) / p.z
+    return CX + FOCUS * p.x / p.z, CY - FOCUS * p.y / p.z
 
 
 # ── 画面 ────────────────────────────────────────────────────────────────
@@ -166,6 +190,14 @@ class Screen:
                 row = self.pixels[y]
                 for x in range(left, right + 1):
                     row[x] = color
+
+    def line(self, a: tuple[float, float], b: tuple[float, float], color: tuple[int, int, int]) -> None:
+        """2 点を結ぶ線。長い方の軸に沿って 1 ドットずつ置く。"""
+        (x1, y1), (x2, y2) = a, b
+        steps = int(max(abs(x2 - x1), abs(y2 - y1))) + 1
+        for i in range(steps + 1):
+            t = i / steps
+            self.plot(int(x1 + (x2 - x1) * t), int(y1 + (y2 - y1) * t), color)
 
     def render(self) -> str:
         """端末用の文字列。1 行に 2 ドット分の行を詰める（上が前景 ▀、下が背景）。"""
@@ -226,11 +258,17 @@ SHIP_POINTS = [V(0, 0, 1.3), V(-1.0, -0.05, -0.6), V(1.0, -0.05, -0.6), V(0, 0.4
 SHIP_FACES = outward(SHIP_POINTS, [(0, 1, 3), (0, 3, 2), (0, 2, 4), (0, 4, 1), (1, 2, 3), (2, 1, 4)])
 
 
-def shade(base: tuple[int, int, int], normal: V) -> tuple[int, int, int]:
-    """面の向きと光の向きの内積で明るさを決める。光に向いた面ほど明るい。"""
+def fog(color: tuple[int, int, int], z: float) -> tuple[int, int, int]:
+    """遠いほど背景の色に溶かす（空気遠近法）。奥に消えていく感じが出る。"""
+    amount = max(0.0, min(0.85, (z - FOG_FROM) / (FAR - FOG_FROM)))
+    return tuple(int(c + (b - c) * amount) for c, b in zip(color, SPACE))
+
+
+def shade(base: tuple[int, int, int], normal: V, z: float = 0.0) -> tuple[int, int, int]:
+    """面の向きと光の向きの内積で明るさを決める。光に向いた面ほど明るい。遠ければ霧。"""
     light = V(*LIGHT_DIR).unit()
     bright = 0.28 + 0.72 * max(0.0, normal.dot(light))
-    return tuple(min(255, int(c * bright)) for c in base)
+    return fog(tuple(min(255, int(c * bright)) for c in base), z)
 
 
 def draw_solid(screen: Screen, points: list[V], faces: list[tuple[int, ...]],
@@ -245,7 +283,7 @@ def draw_solid(screen: Screen, points: list[V], faces: list[tuple[int, ...]],
         if normal.dot(a) >= 0:                      # 面の向きが視線と同じ＝裏側。描かない
             continue
         depth = sum(points[i].z for i in face) / len(face)
-        drawn.append((depth, [project(points[i]) for i in face], shade(color, normal)))
+        drawn.append((depth, [project(points[i]) for i in face], shade(color, normal, depth)))
     for _, flat, painted in sorted(drawn, key=lambda item: -item[0]):   # 奥から
         screen.fill(flat, painted)
 
@@ -270,6 +308,8 @@ class World:
     stars: list[V] = field(default_factory=list)
     ship: V = V(0.0, 0.6, SHIP_Z)                   # 自機は視点の少し先、少し下
     aim: V = V(0.0, 0.0, 0.0)                       # 動く向き（キー）
+    cam: Camera = Camera()                          # 視点。自機を追いかけ、曲がると傾く
+    rings: list[float] = field(default_factory=list)   # トンネルの輪の奥行き
     speed: float = 10.0                             # 前へ進む速さ
     time: float = 0.0
     spawn_at: float = 0.0
@@ -281,6 +321,7 @@ class World:
     def __post_init__(self):
         self.luck = random.Random(self.seed)
         self.stars = [self.new_star(self.luck.uniform(NEAR + 1, FAR)) for _ in range(90)]
+        self.rings = [float(z) for z in range(int(RING_GAP), int(FAR), int(RING_GAP))]
 
     def new_star(self, z: float) -> V:
         return V(self.luck.uniform(-24, 24), self.luck.uniform(-16, 16), z)
@@ -300,6 +341,13 @@ class World:
         x = max(-REACH_X, min(REACH_X, self.ship.x + self.aim.x * 7 * dt))
         y = max(REACH_Y[0], min(REACH_Y[1], self.ship.y + self.aim.y * 5 * dt))
         self.ship = V(x, y, self.ship.z)
+        # カメラ：自機の横の動きを少し遅れて追う。曲がる向きに傾く（ゆっくり戻る）
+        ease = min(1.0, 6 * dt)
+        self.cam = Camera(self.cam.x + (self.ship.x * FOLLOW - self.cam.x) * ease,
+                          self.cam.roll + (-self.aim.x * BANK - self.cam.roll) * ease)
+        # トンネルの輪
+        self.rings = [z - self.speed * dt for z in self.rings]
+        self.rings = [z if z > NEAR else z + RING_GAP * len(self.rings) for z in self.rings]
         # 星（視差：近いほど速く流れて見える。動く速さは同じ）
         self.stars = [V(s.x, s.y, s.z - self.speed * dt) if s.z - self.speed * dt > NEAR
                       else self.new_star(FAR) for s in self.stars]
@@ -335,20 +383,27 @@ class World:
 def draw(screen: Screen, world: World) -> None:
     """場面を描く。星 → 小惑星（奥から）→ 自機。"""
     screen.clear(SPACE)
+    cam = world.cam
     for star in world.stars:
-        sx, sy = project(star)
+        sx, sy = project(view(star, cam))
         near = 1 - star.z / FAR
         color = tuple(int(f + (n - f) * near) for f, n in zip(STAR_FAR, STAR_NEAR))
         screen.plot(int(sx), int(sy), color)
+    for z in sorted(world.rings, reverse=True):     # 輪。奥から。16 角形の線
+        color = fog(RING, z)
+        corners = [project(view(V(RING_R * math.cos(a), RING_Y + RING_R * math.sin(a), z), cam))
+                   for a in (i * math.tau / 16 for i in range(16))]
+        for i in range(16):
+            screen.line(corners[i], corners[(i + 1) % 16], color)
     for rock in sorted(world.rocks, key=lambda r: -r.pos.z):
         points, faces = rock_shape(rock.seed)
-        placed = [rotate(p, *rock.angle).scale(rock.radius) + rock.pos for p in points]
+        placed = [view(rotate(p, *rock.angle).scale(rock.radius) + rock.pos, cam) for p in points]
         draw_solid(screen, placed, faces, ROCK)
     if world.over or int(world.hurt * 12) % 2 == 0:  # ぶつかった直後は点滅
         tilt = -world.aim.x * 0.5                   # 曲がる向きに機体を傾ける
-        placed = [rotate(p, 0.1, 0, tilt).scale(0.9) + world.ship for p in SHIP_POINTS]
+        placed = [view(rotate(p, 0.1, 0, tilt).scale(0.9) + world.ship, cam) for p in SHIP_POINTS]
         draw_solid(screen, placed, SHIP_FACES, SHIP)
-        tail = rotate(V(0, 0, -0.8), 0.1, 0, tilt).scale(0.9) + world.ship
+        tail = view(rotate(V(0, 0, -0.8), 0.1, 0, tilt).scale(0.9) + world.ship, cam)
         fx, fy = project(tail)
         screen.plot(int(fx), int(fy), FLAME)
         screen.plot(int(fx), int(fy) + 1, FLAME)
@@ -462,13 +517,23 @@ def check() -> None:
     print("● 透視投影")
     near, far = project(V(2, 1, 4)), project(V(2, 1, 40))
     assert abs(near[0] - CX) > abs(far[0] - CX), "遠い点の方が真ん中に寄るはず"
-    assert project(V(0, EYE, 10)) == (CX, CY)
+    assert project(view(V(0, EYE, 10))) == (CX, CY)
     print(f"  同じ (2, 1) でも z=4 なら中心から {near[0] - CX:.0f} ドット、z=40 なら {far[0] - CX:.1f} ドット")
     for x in (-REACH_X, REACH_X):
         for y in REACH_Y:
-            sx, sy = project(V(x, y, SHIP_Z))
+            cam = Camera(x * FOLLOW, 0.0)           # カメラが追いついた状態で
+            sx, sy = project(view(V(x, y, SHIP_Z), cam))
             assert 8 <= sx <= WIDTH - 8 and 4 <= sy <= HEIGHT - 4, (x, y, sx, sy)
-    print(f"  自機の動ける範囲（x ±{REACH_X}、y {REACH_Y}）は画面に収まる")
+    print(f"  自機の動ける範囲（x ±{REACH_X}、y {REACH_Y}）は、カメラが追えば画面に収まる")
+    print("● カメラ")
+    assert project(view(V(2, EYE, 10), Camera(2.0, 0.0))) == (CX, CY), "カメラが自機の真上に来れば真ん中に映るはず"
+    banked = project(view(V(0, EYE + 1, 10), Camera(0, -BANK)))   # 右へ曲がる＝右へ傾く
+    assert banked[0] < CX, "右へ傾くと、上の点は左へずれて映るはず（世界が反対に傾く）"
+    print("  自機を追うと真ん中に、右へ傾くと世界の上が左へ流れる")
+    print("● 霧")
+    assert fog(ROCK, 2.0) == ROCK and fog(ROCK, FAR) != ROCK
+    assert sum(fog(ROCK, 20)) > sum(fog(ROCK, 40)) > sum(SPACE), "遠いほど背景に近づくはず"
+    print(f"  {FOG_FROM} より手前は元の色、奥ほど背景（{SPACE}）へ溶ける")
     print("● 回転")
     p = rotate(V(1, 0, 0), 0, math.pi / 2, 0)
     assert abs(p.z + 1) < 1e-9 and abs(p.x) < 1e-9, p
@@ -493,6 +558,14 @@ def check() -> None:
     assert len(points) == 12 and len(faces) == 20
     assert rock_shape(1) == rock_shape(1) and rock_shape(1) != rock_shape(2)
     print("  頂点 12・面 20。同じ種なら同じ形、違う種なら違う形")
+    print("● トンネルの輪")
+    world = World(seed=1)
+    count = len(world.rings)
+    assert count == (int(FAR) - 1) // int(RING_GAP) and all(NEAR < z < FAR for z in world.rings)
+    for _ in range(60):
+        world.update(STEP)
+    assert all(z > NEAR for z in world.rings) and len(world.rings) == count
+    print(f"  輪 {count} 本が {RING_GAP} おきに流れ、手前に来たら奥に戻る")
     print("● 世界")
     world = World(seed=1)
     events = []
