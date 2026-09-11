@@ -94,6 +94,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g76 | [タイピング2（ローマ字で日本語）](g76-type-kana/) | 「さくら」を sakura と打つ。shi/si、n/nn、っ のような綴りのゆれを「いま居られる状態」の集合で全部受ける（タイピング 3 段階の 2 つ目） | 状態の集合で判定（NFA）/ `re.sub` に関数を渡す / `str.removeprefix` / `itertools.product` で全綴りを作って検査 |
 | g77 | [タイピング3（記録と苦手キー）](g77-type-record/) | 記録を残し、自己ベストといつもの速さを添える。ミスを押すべきだったキーごとに数え、苦手キーを含むことばを多めに出す（タイピング 3 段階の完成形） | `dataclasses.asdict` と `json` で記録の形を 1 つに / `random.choices(weights=)` / `heapq.nlargest` / `datetime.fromisoformat` / 中央値 |
 | g78 | [小惑星をよける（3D）](g78-space-3d/) | 宇宙船の後ろ視点で迫る小惑星をよける。3D（回転・透視投影・隠面消去・陰影）を標準ライブラリだけで書く | `NamedTuple` にベクトル演算 / 透視投影 `x/z` / 外積で法線 / 画家のアルゴリズム / スキャンラインで塗る |
+| g79 | [3D レース](g79-race-3d/) | 曲がって上下する周回コースを CPU カー 3 台と 3 周で競う。車の向きで回るカメラ、ニアクリッピング、Catmull-Rom の曲線から道の帯を作る | カメラの回転（yaw） / `clip_near`（Sutherland–Hodgman） / Catmull-Rom / `bisect_right` で道のり→断面 / `math.remainder` で角度の差 |
 
 ## 動かし方
 
