@@ -147,6 +147,7 @@
   .cross .r { grid-column: 3; grid-row: 2; } .cross .d { grid-column: 2; grid-row: 3; }
   #again { width: 100%; margin-top: .6rem; }
   #message { min-height: 1.6em; text-align: center; font-family: inherit; white-space: normal; color: var(--ink); }
+  .engine-toggle { display: block; text-align: center; font-size: .8125rem; color: var(--muted); margin: .5rem 0 0; }
   .note-line { margin: .3rem 0 0; min-height: 1.4em; text-align: center; font-weight: 700; color: #b8860b; font-size: .95rem; }
   .cues { display: grid; grid-template-columns: 1fr 1fr; gap: .3rem .9rem; margin: .6rem 0 0; font-size: .8125rem;
     color: var(--muted); }
@@ -162,7 +163,7 @@
   <div class="card">
     <div class="status">
       <span>LAP <b id="lap">1/3</b> ・ <b id="time">0:00.00</b> ・ 前のラップ <b id="last">--.--</b></span>
-      <span><b id="rank">4 位</b> ・ <b id="speed">0</b> km/h</span>
+      <span><b id="rank">4 位</b> ・ <b id="speed">0</b> km/h ・ <b id="gear">1</b> 速</span>
       <span>ベスト <b id="best">--:--.--</b> ・ <b id="fps">–</b> コマ/秒</span>
     </div>
 
@@ -180,6 +181,7 @@
       <button type="button" id="go" class="go">▶ スタート</button>
       <button type="button" id="again" hidden>もう一度</button>
     </div>
+    <label class="engine-toggle"><input type="checkbox" id="engine" checked> エンジン音（速さで高さが変わる。4 速）</label>
 
     <div class="howto">
       <b>やること</b>：「スタート」で 3・2・1 のあと出走。← → で曲がり、▲ でアクセル、▼ でブレーキ（w a s d でも）。CPU カー 3 台と 3 周を競い、順位とタイムを出します。
@@ -187,6 +189,7 @@
         <li><b>速いほど曲がりにくい</b>。カーブの前にブレーキ。道の外（草）に出ると大きく減速します。</li>
         <li>CPU カーにぶつかると<b>減速して押し出されます</b>。壁はありません。</li>
         <li>3 周のタイムと最速ラップの<b>ベスト</b>がこのブラウザに残ります。</li>
+        <li><b>エンジン音</b>は 0.5 秒の輪を Python で作り、速さで再生の速さを変えています（ギアが上がると下がる）。端末版には無い、ブラウザだけの音です。</li>
       </ol>
       <div class="cues">
         <span><b>カメラを回す</b>：車の向き（yaw）で世界を回す</span>
@@ -213,6 +216,6 @@
   </footer>
 </main>
 
-<script type="py" src="./game.py?v=eaa79487"></script>
+<script type="py" src="./game.py?v=5dc57ad9"></script>
 </body>
 </html>

@@ -68,6 +68,8 @@ COUNTDOWN = 3.0                                     # 3・2・1 の秒数
 HIT_DIST = 2.6                                      # 車どうしがぶつかる距離
 RIVAL_PACE = (33.0, 36.5, 39.5)                     # CPU カーの直線での速さ
 RIVAL_LANES = (-2.2, 0.6, 2.4)                      # CPU カーの走る位置（中心からの横ずれ）
+GEARS = (0.0, 9.0, 18.0, 28.0, 44.5)                # ギアの切り替わる速さ（m/s）。4 速
+ENGINE_HZ = 60.0                                    # エンジン音の輪（0.5 秒）の基本の高さ。速さで再生の速さを変える
 
 # 制御点 (x, z, y)。z が前、y が高さ。閉じたコースなので最後は最初につながる
 COURSE = [(0, 0, 0), (0, 70, 0), (-12, 130, 4), (30, 170, 9), (85, 160, 7), (105, 110, 2),
@@ -144,6 +146,32 @@ def sound_bytes(kind: str) -> bytes:
         out.setframerate(RATE)
         out.writeframes(samples.tobytes())
     return buffer.getvalue()
+
+
+def engine_bytes() -> bytes:
+    """エンジン音の輪。ノコギリ波に近い倍音の和（1/n）を 0.5 秒。ちょうど 30 周期なので、つないでも切れ目が無い。
+    ブラウザはこれを loop で回し、playbackRate を速さで変えて音の高さにする。"""
+    count = int(RATE * 0.5)
+    samples = array("h")
+    for i in range(count):
+        t = i / RATE
+        wave_ = sum(math.sin(math.tau * ENGINE_HZ * n * t) / n for n in range(1, 7))
+        samples.append(int(32767 * VOLUME * 0.55 * wave_))
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(RATE)
+        out.writeframes(samples.tobytes())
+    return buffer.getvalue()
+
+
+def engine(speed: float) -> tuple[int, float]:
+    """速さから (ギア, 再生の速さ) を決める。ギアの中では速いほど高く、ギアが変わると下がる。"""
+    gear = max(1, min(len(GEARS) - 1, bisect_right(GEARS, speed)))
+    lo, hi = GEARS[gear - 1], GEARS[gear]
+    frac = max(0.0, min(1.0, (speed - lo) / (hi - lo)))
+    return gear, 0.6 + 1.3 * frac
 
 
 EVENTS = ("count", "go", "lap", "hit", "finish")    # update() が返す出来事
@@ -1096,8 +1124,9 @@ def status(world: World, best: Best, improved: tuple[bool, bool] = (False, False
                 + ("  ベスト更新！" if improved[0] else "") + ("  最速ラップ！" if improved[1] else "") + "  r でもう一度")
     else:
         tail = f"ベスト {clock_text(best.total) if best.total else '--:--.--'}  q でやめる"
+    gear, _ = engine(p.speed)
     return (f" LAP {lap}/{LAPS}  {clock_text(world.time)}  前 {last:5.2f}  {world.position()}位  "
-            f"速さ {p.speed * 3.6:4.0f}km/h  {note:<10} " + tail)
+            f"{p.speed * 3.6:4.0f}km/h {gear}速  {note:<10} " + tail)
 
 
 def run() -> None:
@@ -1323,6 +1352,19 @@ def check() -> None:
     print("● 音")
     assert len({sound_bytes(k) for k in SOUNDS}) == len(SOUNDS) and all(k in SOUNDS for k in EVENTS)
     print(f"  {len(SOUNDS)} つ全部別の音。返す出来事には全部音がある")
+    print("● エンジン")
+    loop_ = engine_bytes()
+    body = loop_[44:]
+    assert loop_[:4] == b"RIFF" and len(body) == RATE
+    first, last = int.from_bytes(body[:2], "little", signed=True), int.from_bytes(body[-2:], "little", signed=True)
+    assert abs(first) < 400 and abs(last) < 1200, (first, last)
+    rates = [engine(v)[1] for v in range(0, 45)]
+    gears = [engine(v)[0] for v in range(0, 45)]
+    assert gears[0] == 1 and gears[44] == 4 and gears == sorted(gears)
+    drops = [v for v in range(1, 45) if rates[v] < rates[v - 1]]
+    assert drops == [9, 18, 28], drops
+    assert all(rates[v] >= rates[v - 1] for v in range(1, 45) if v not in drops)
+    print(f"  輪は 0.5 秒（{RATE // 2} 標本）で切れ目なし。ギアの中では速いほど高く、{drops} m/s で 2・3・4 速に上がって下がる")
     print("\nぜんぶ通った。")
 
 

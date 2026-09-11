@@ -141,6 +141,12 @@ RIVAL_PACE = (33.0, 36.5, 39.5)                     # CPU カーの直線での�
 RIVAL_LANES = (-2.2, 0.6, 2.4)                      # CPU カーの走る位置（中心からの横ずれ）
 
 
+GEARS = (0.0, 9.0, 18.0, 28.0, 44.5)                # ギアの切り替わる速さ（m/s）。4 速
+
+
+ENGINE_HZ = 60.0                                    # エンジン音の輪（0.5 秒）の基本の高さ。速さで再生の速さを変える
+
+
 COURSE = [(0, 0, 0), (0, 70, 0), (-12, 130, 4), (30, 170, 9), (85, 160, 7), (105, 110, 2),
           (80, 70, 0), (95, 20, -2), (70, -30, -4), (30, -55, -2), (0, -40, 0)]
 
@@ -282,6 +288,32 @@ def sound_bytes(kind: str) -> bytes:
         out.setframerate(RATE)
         out.writeframes(samples.tobytes())
     return buffer.getvalue()
+
+
+def engine_bytes() -> bytes:
+    """エンジン音の輪。ノコギリ波に近い倍音の和（1/n）を 0.5 秒。ちょうど 30 周期なので、つないでも切れ目が無い。
+    ブラウザはこれを loop で回し、playbackRate を速さで変えて音の高さにする。"""
+    count = int(RATE * 0.5)
+    samples = array("h")
+    for i in range(count):
+        t = i / RATE
+        wave_ = sum(math.sin(math.tau * ENGINE_HZ * n * t) / n for n in range(1, 7))
+        samples.append(int(32767 * VOLUME * 0.55 * wave_))
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(RATE)
+        out.writeframes(samples.tobytes())
+    return buffer.getvalue()
+
+
+def engine(speed: float) -> tuple[int, float]:
+    """速さから (ギア, 再生の速さ) を決める。ギアの中では速いほど高く、ギアが変わると下がる。"""
+    gear = max(1, min(len(GEARS) - 1, bisect_right(GEARS, speed)))
+    lo, hi = GEARS[gear - 1], GEARS[gear]
+    frac = max(0.0, min(1.0, (speed - lo) / (hi - lo)))
+    return gear, 0.6 + 1.3 * frac
 
 
 EVENTS = ("count", "go", "lap", "hit", "finish")    # update() が返す出来事
@@ -1168,6 +1200,8 @@ note_label = document.querySelector("#note")
 message = document.querySelector("#message")
 again_button = document.querySelector("#again")
 go_button = document.querySelector("#go")
+sound_on = document.querySelector("#engine")
+gear_label = document.querySelector("#gear")
 SAVED = "g79-best"                                  # localStorage の鍵。CLI 版の records.json にあたる
 
 
@@ -1187,13 +1221,20 @@ class CanvasScreen(Screen):
 
 
 class Speaker:
-    """ブラウザで音を出す係。出来事ごとの wav を data URI にして Audio に持たせておく。"""
+    """ブラウザで音を出す係。出来事ごとの wav を data URI にして Audio に持たせておく。
+    エンジン音は 0.5 秒の輪を loop で回し、playbackRate（再生の速さ＝音の高さ）を速さで変える。
+    端末（afplay）は再生の速さを変えられないので、エンジン音はブラウザだけ。"""
 
     def __init__(self):
         self.made = {}
         for kind in SOUNDS:
             uri = "data:audio/wav;base64," + base64.b64encode(sound_bytes(kind)).decode()
             self.made[kind] = window.Audio.new(uri)
+        self.engine = window.Audio.new("data:audio/wav;base64," + base64.b64encode(engine_bytes()).decode())
+        self.engine.loop = True
+        self.engine.preservesPitch = False          # 速く再生したら高く聞こえるように（既定は高さを保ってしまう）
+        self.engine.volume = 0.5
+        self.running = False
 
     def say(self, kind: str | None) -> None:
         if kind is None:
@@ -1201,6 +1242,18 @@ class Speaker:
         sound = self.made[kind]
         sound.currentTime = 0
         sound.play()
+
+    def rev(self, speed: float, on: bool) -> None:
+        """エンジンの回転。on が False なら止める。"""
+        if on and not self.running:
+            self.engine.play()
+            self.running = True
+        elif not on and self.running:
+            self.engine.pause()
+            self.running = False
+        if self.running:
+            _, rate = engine(speed)
+            self.engine.playbackRate = rate
 
 
 def clock_text(seconds: float) -> str:
@@ -1224,6 +1277,7 @@ def refresh() -> None:
     last_label.textContent = f"{p.lap_times[-1]:.2f}" if p.lap_times else "--.--"
     rank_label.textContent = f"{world.position()} 位"
     speed_label.textContent = f"{p.speed * 3.6:.0f}"
+    gear_label.textContent = str(engine(p.speed)[0])
     best_label.textContent = clock_text(best.total) if best.total else "--:--.--"
     if not world.started:
         note = ""
@@ -1260,6 +1314,7 @@ async def loop():
                 event = "best" if any(improved) else event
             speaker.say(event)
             lag -= STEP
+        speaker.rev(world.player.speed, world.started and sound_on.checked)
         refresh()
         frames.append(window.performance.now() / 1000)
         del frames[:-30]
