@@ -93,6 +93,21 @@ DETAIL_SEGS = 34                                    # 土と白線を描く断�
 TREE_EVERY = 7                                      # 何断面ごとに木を立てるか
 
 
+TUNNEL = (118, 146)                                 # トンネルの断面（この範囲は暗い）
+
+
+TUNNEL_H = 5.0                                      # トンネルの高さ
+
+
+RAIL_TURN = 0.12                                    # これより曲がる断面には、外側にガードレール
+
+
+SIGN_TURN = 0.3                                     # これより曲がるカーブの前には、矢印の看板
+
+
+SUN_ANGLE = 0.9                                     # 太陽の向き（ラジアン）
+
+
 ACCEL = 16.0                                        # アクセル（m/s²）
 
 
@@ -179,6 +194,45 @@ LEAF = (66, 132, 52)                                # 広葉樹
 
 
 BUSH = (52, 112, 46)
+
+
+SHADE = (46, 92, 40)                                # 木の影
+
+
+RAIL = (205, 205, 200)
+
+
+POST = (120, 120, 118)
+
+
+TUNNEL_WALL = (70, 66, 62)
+
+
+TUNNEL_MOUTH = (150, 146, 138)
+
+
+HILL = (58, 118, 54)
+
+
+TUNNEL_LAMP = (255, 240, 180)
+
+
+SIGN_BOARD = (245, 200, 40)
+
+
+SIGN_MARK = (20, 20, 20)
+
+
+SUN = (255, 246, 210)
+
+
+SUN_HALO = (232, 226, 205)
+
+
+BANNER = (240, 240, 235)
+
+
+BANNER_DARK = (25, 25, 25)
 
 
 CAR = (230, 70, 60)                                 # 自分の車
@@ -403,8 +457,25 @@ class Track:
             self.dist.append(self.dist[-1] + math.dist(self.centers[i - 1], self.centers[i]))
         self.length = self.dist[-1] + math.dist(self.centers[-1], self.centers[0])
         # 曲がりのきつさ：少し前と少し後ろの向きの差（CPU カーが減速する目安）
-        self.bend = [abs(math.atan2(self.dirs[(i + 3) % m].cross(self.dirs[i - 3]).y,
-                                    self.dirs[(i + 3) % m].dot(self.dirs[i - 3]))) for i in range(m)]
+        # 曲がり：少し前と少し後ろの向きの差。符号つき（右カーブが正）と、大きさ
+        self.turn = [math.atan2(self.dirs[i - 3].cross(self.dirs[(i + 3) % m]).y,
+                                self.dirs[(i + 3) % m].dot(self.dirs[i - 3])) for i in range(m)]
+        self.bend = [abs(t) for t in self.turn]
+        # ガードレールはカーブの外側（右カーブなら左）。少し手前から少し先まで
+        self.rail = [0] * m
+        for i in range(m):
+            wide = max(range(i - 4, i + 5), key=lambda k: self.bend[k % m])
+            if self.bend[wide % m] > RAIL_TURN:
+                self.rail[i] = -1 if self.turn[wide % m] > 0 else 1
+        # 暗さ：トンネルの中は暗い。出入り口は 4 断面で変わる
+        self.dark = [1.0] * m
+        for i in range(m):
+            inside = min(i - TUNNEL[0], TUNNEL[1] - i)
+            if inside >= 0:
+                self.dark[i] = 0.42 + 0.58 * max(0.0, 1 - inside / 4)
+
+    def in_tunnel(self, i: int) -> bool:
+        return TUNNEL[0] <= i % len(self.centers) <= TUNNEL[1]
 
     def __len__(self) -> int:
         return len(self.centers)
@@ -533,7 +604,7 @@ HUB = (150, 150, 150)
 GLASS = (110, 150, 190)
 
 
-SHADOW_COLOR = (40, 90, 40)
+SHADOW_COLOR = (36, 36, 40)
 
 
 @dataclass
@@ -765,6 +836,11 @@ def fog(color: tuple[int, int, int], z: float) -> tuple[int, int, int]:
     return tuple(int(c + (b - c) * amount) for c, b in zip(color, SKY))
 
 
+def dim(color: tuple[int, int, int], k: float) -> tuple[int, int, int]:
+    """暗くする（トンネルの中）。"""
+    return color if k >= 1.0 else tuple(int(c * k) for c in color)
+
+
 def shade(base: tuple[int, int, int], normal: V, z: float = 0.0) -> tuple[int, int, int]:
     light = V(*LIGHT_DIR).unit()
     bright = 0.35 + 0.65 * max(0.0, normal.dot(light))
@@ -802,24 +878,26 @@ def draw_quad(screen: Screen, quad: list[V], color: tuple[int, int, int], scale:
         screen.fill([project(p, scale) for p in poly], color)
 
 
-def draw_car(screen: Screen, car: Car, cam: Camera, roll: float = 0.0) -> None:
-    """車。影 → 車体（面ごとに 車体色／ガラス／下回り）→ タイヤ → 横の窓 → ライト。"""
+def draw_car(screen: Screen, car: Car, cam: Camera, roll: float = 0.0, dark: float = 1.0) -> None:
+    """車。影 → 車体（面ごとに 車体色／ガラス／下回り）→ タイヤ → 横の窓 → ライト。dark はトンネルの暗さ。"""
     scale = screen.width / WIDTH
     place = lambda p: view(rotate(p, 0.0, car.yaw, roll) + car.pos, cam)   # noqa: E731
-    draw_quad(screen, [place(p) for p in SHADOW], SHADOW_COLOR, scale)
+    draw_quad(screen, [place(p) for p in SHADOW], dim(SHADOW_COLOR, dark), scale)
     points, faces, kinds = CAR_BODY
-    dark = tuple(int(c * 0.55) for c in car.color)
-    palette = {"body": car.color, "glass": GLASS, "side": car.color, "under": dark}
-    draw_solid(screen, [place(p) for p in points], faces, car.color, [palette[k] for k in kinds])
+    body = dim(car.color, dark)
+    under = tuple(int(c * 0.55) for c in body)
+    palette = {"body": body, "glass": dim(GLASS, dark), "side": body, "under": under}
+    draw_solid(screen, [place(p) for p in points], faces, body, [palette[k] for k in kinds])
+    hub = dim(HUB, dark)
     for w_points, w_faces in WHEELS:
-        draw_solid(screen, [place(p) for p in w_points], w_faces, TIRE, [HUB, HUB] + [TIRE] * (len(w_faces) - 2))
+        draw_solid(screen, [place(p) for p in w_points], w_faces, TIRE, [hub, hub] + [TIRE] * (len(w_faces) - 2))
     for sx in (-1, 1):                              # 横の窓は車体の面のすぐ外側に貼る
         quad = [place(V(sx * (HALF_W + 0.01), p.y, p.z)) for p in SIDE_WINDOW]
         if min(q.z for q in quad) > NEAR:
             a, b, c = quad[0], quad[1], quad[2]
             if (b - a).cross(c - a).dot(a) < 0:
                 depth = sum(q.z for q in quad) / 4
-                screen.fill([project(q, scale) for q in quad], fog(GLASS, depth))
+                screen.fill([project(q, scale) for q in quad], dim(fog(GLASS, depth), dark))
     for z, y, color in ((2.11, 0.62, (255, 245, 200)), (-2.11, 0.62, (220, 40, 30))):   # ヘッドライトとテールランプ
         for sx in (-0.6, 0.6):
             quad = [place(V(sx + dx, y + dy, z)) for dx, dy in ((-0.2, -0.08), (0.2, -0.08), (0.2, 0.08), (-0.2, 0.08))]
@@ -829,9 +907,17 @@ def draw_car(screen: Screen, car: Car, cam: Camera, roll: float = 0.0) -> None:
                     screen.fill([project(q, scale) for q in quad], fog(color, quad[0].z))
 
 
+def draw_shadow(screen: Screen, base: V, scale: float, size: float) -> None:
+    """木の影。地面に寝た楕円を、光と反対の側（右奥）へずらして置く。"""
+    ring = [V(base.x + 1.3 * size + 1.6 * size * math.cos(a), base.y, base.z + 0.8 + 0.7 * size * math.sin(a))
+            for a in (i * math.tau / 8 for i in range(8))]
+    draw_quad(screen, ring, fog(SHADE, base.z), scale)
+
+
 def draw_conifer(screen: Screen, base: V, scale: float, size: float = 1.0) -> None:
     """針葉樹。幹と、3 段の三角（下ほど広く暗い）。カメラに正対した板。"""
     z = base.z
+    draw_shadow(screen, base, scale, 1.4 * size)
     trunk = [V(base.x - 0.22, base.y, z), V(base.x + 0.22, base.y, z), V(base.x + 0.22, base.y + 1.6, z), V(base.x - 0.22, base.y + 1.6, z)]
     screen.fill([project(p, scale) for p in trunk], fog(TRUNK, z))
     for k, (w, y0, y1, tone_) in enumerate(((2.2, 1.2, 3.4, 0.7), (1.7, 2.4, 4.6, 0.85), (1.2, 3.6, 6.0, 1.0))):
@@ -844,6 +930,7 @@ def draw_conifer(screen: Screen, base: V, scale: float, size: float = 1.0) -> No
 def draw_broadleaf(screen: Screen, base: V, scale: float, size: float = 1.0) -> None:
     """広葉樹。幹と、丸い葉（暗い丸の上に明るい丸を少しずらして重ね、立体感）。"""
     z = base.z
+    draw_shadow(screen, base, scale, 1.6 * size)
     trunk = [V(base.x - 0.28, base.y, z), V(base.x + 0.28, base.y, z), V(base.x + 0.28, base.y + 2.4, z), V(base.x - 0.28, base.y + 2.4, z)]
     screen.fill([project(p, scale) for p in trunk], fog(TRUNK, z))
     for dx, dy, r, tone_ in ((0.0, 3.9, 2.4, 0.72), (-0.5, 4.3, 1.8, 1.0)):
@@ -867,14 +954,14 @@ def ridge(angle: float, layer: int) -> float:
     return 2.0 + 2.0 * math.sin(angle * 4 + 1.1) + 1.4 * math.sin(angle * 9 + 0.3) + 0.8 * math.sin(angle * 17 + 2.5)
 
 
-def draw_backdrop(screen: Screen, cam: Camera) -> None:
-    """空のグラデーション → 雲 → 遠い山 → 近い山。全部「向き」だけで決まる（車が曲がると横に流れる）。"""
+def draw_backdrop(screen: Screen, cam: Camera, dark: float = 1.0) -> None:
+    """空のグラデーション → 雲 → 太陽 → 遠い山 → 近い山。全部「向き」だけで決まる（車が曲がると横に流れる）。"""
     scale = screen.width / WIDTH
     horizon = int(HORIZON * scale)
     for y in range(horizon):                        # 空：上から地平線へ色を変える
         t = y / max(1, horizon)
         screen.band(y, y + 1, tuple(int(a + (b - a) * t) for a, b in zip(SKY_TOP, SKY)))
-    screen.band(horizon, screen.height, GRASS_A)
+    screen.band(horizon, screen.height, dim(GRASS_A, dark))
     for k in range(9):                              # 雲：決まった向きに浮かぶ楕円
         angle = k * math.tau / 9 + 0.3
         dx = math.remainder(angle - cam.yaw, math.tau)
@@ -885,6 +972,12 @@ def draw_backdrop(screen: Screen, cam: Camera) -> None:
         rx, ry = (8 + 3 * math.sin(k * 1.7)) * scale, 2.6 * scale
         ring = [(cx + rx * math.cos(a), cy + ry * math.sin(a)) for a in (i * math.tau / 10 for i in range(10))]
         screen.fill(ring, CLOUD)
+    dx = math.remainder(SUN_ANGLE - cam.yaw, math.tau)   # 太陽：決まった向きに 1 つ
+    if abs(dx) < 0.9:
+        cx, cy = (CX + FOCUS * math.tan(dx)) * scale, (HORIZON - 24) * scale
+        for r, color in ((7.5 * scale, SUN_HALO), (5.0 * scale, SUN)):
+            ring = [(cx + r * math.cos(a), cy + r * math.sin(a)) for a in (i * math.tau / 12 for i in range(12))]
+            screen.fill(ring, color)
     step = int(6 * scale)                           # 山：列ごとの高さをつないだ台形の並び
     for layer, color in ((0, MOUNTAIN_FAR), (1, MOUNTAIN_NEAR)):
         xs = list(range(0, screen.width + step, step))
@@ -893,69 +986,154 @@ def draw_backdrop(screen: Screen, cam: Camera) -> None:
             screen.fill([(x0, horizon - h0), (x1, horizon - h1), (x1, horizon + 1), (x0, horizon + 1)], color)
 
 
+def draw_sign(screen: Screen, base: V, right_turn: bool, scale: float) -> None:
+    """カーブの矢印看板。黄色い板に黒い三角（曲がる向き）。柱 2 本。カメラに正対した板。"""
+    z = base.z
+    for dx in (-0.9, 0.9):
+        post = [V(base.x + dx - 0.07, base.y, z), V(base.x + dx + 0.07, base.y, z), V(base.x + dx + 0.07, base.y + 1.2, z), V(base.x + dx - 0.07, base.y + 1.2, z)]
+        screen.fill([project(p, scale) for p in post], fog(POST, z))
+    board = [V(base.x - 1.3, base.y + 1.0, z), V(base.x + 1.3, base.y + 1.0, z), V(base.x + 1.3, base.y + 2.3, z), V(base.x - 1.3, base.y + 2.3, z)]
+    screen.fill([project(p, scale) for p in board], fog(SIGN_BOARD, z))
+    tip = 0.8 if right_turn else -0.8
+    mark = [V(base.x - tip, base.y + 1.2, z), V(base.x + tip, base.y + 1.65, z), V(base.x - tip, base.y + 2.1, z)]
+    screen.fill([project(p, scale) for p in mark], fog(SIGN_MARK, z))
+
+
+def draw_gantry(screen: Screen, a: list[V], up: V, scale: float, dark: float) -> None:
+    """スタートラインの門。柱 2 本と、白黒の横断幕。"""
+    lo, hi = up.scale(4.6), up.scale(6.0)
+    left, right = a[1], a[10]
+    for foot in (left, right):
+        post = [foot, foot + V(0.18, 0, 0), foot + V(0.18, 0, 0) + hi, foot + hi]
+        draw_quad(screen, post, dim(fog(POST, foot.z), dark), scale)
+    span = right - left
+    for i in range(8):                              # 8 マスの市松
+        p0, p1 = left + span.scale(i / 8), left + span.scale((i + 1) / 8)
+        quad = [p0 + lo, p1 + lo, p1 + hi, p0 + hi]
+        draw_quad(screen, quad, dim(fog(BANNER if i % 2 else BANNER_DARK, quad[0].z), dark), scale)
+        mid = up.scale(5.3)
+        quad = [p0 + lo, p1 + lo, p1 + mid, p0 + mid]
+        draw_quad(screen, quad, dim(fog(BANNER_DARK if i % 2 else BANNER, quad[0].z), dark), scale)
+
+
+def draw_portal(screen: Screen, a: list[V], up: V, right: V, scale: float, dark: float) -> None:
+    """トンネルの出入り口。道を通す丘（緑の山形）と、コンクリートの口（穴の左右と上の 3 枚）。"""
+    z = a[3].z
+    top = up.scale(TUNNEL_H)
+    lid = up.scale(TUNNEL_H + 1.2)
+    peak = up.scale(TUNNEL_H + 7.0)
+    green = dim(fog(HILL, z), dark)                 # 丘は穴を避けて 3 枚（左・右・上）。穴の奥はそのまま見える
+    draw_quad(screen, [a[1] + right.scale(-26.0), a[1] + right.scale(-10.0) + up.scale(TUNNEL_H + 3.0), a[1] + peak, a[1]], green, scale)
+    draw_quad(screen, [a[10], a[10] + peak, a[10] + right.scale(10.0) + up.scale(TUNNEL_H + 3.0), a[10] + right.scale(26.0)], green, scale)
+    draw_quad(screen, [a[1] + lid, a[10] + lid, a[10] + peak, a[1] + peak], green, scale)
+    color = dim(fog(TUNNEL_MOUTH, z), dark)
+    far_l, far_r = a[1] + right.scale(-2.5), a[10] + right.scale(2.5)
+    draw_quad(screen, [far_l, a[1], a[1] + lid, far_l + lid], color, scale)
+    draw_quad(screen, [a[10], far_r, far_r + lid, a[10] + lid], color, scale)
+    draw_quad(screen, [a[1] + top, a[10] + top, a[10] + lid, a[1] + lid], color, scale)
+
+
 def draw(screen: Screen, world: World) -> None:
     """背景（空・雲・山）→ 道（奥から）→ 木・茂み・CPU カー（奥から）→ 自分の車。"""
     scale = screen.width / WIDTH
     track, cam = world.track, world.cam
-    draw_backdrop(screen, cam)
+    draw_backdrop(screen, cam, track.dark[world.player.hint])
     start = world.player.hint - 3
     # 断面ごとの左右の点をカメラ座標に（隣の断面と共有するので 1 回ずつ）
     offsets = (-ROAD_HALF - KERB - DIRT - GRASS_W, -ROAD_HALF - KERB - DIRT, -ROAD_HALF - KERB, -ROAD_HALF, -ROAD_HALF + LINE,
                -LINE / 2, LINE / 2, ROAD_HALF - LINE, ROAD_HALF, ROAD_HALF + KERB, ROAD_HALF + KERB + DIRT, ROAD_HALF + KERB + DIRT + GRASS_W)
     edges = {}
+    rights = {}
+    up = rotate(V(0.0, 1.0, 0.0), -TILT, 0.0, 0.0)  # カメラから見た「上」（yaw で回しても y 軸は変わらない）
     for k in range(start, start + DRAW_SEGS + 1):    # view は回して足すだけなので、中心と右手を 1 回ずつ変換して足す
         center = view(track.centers[k % len(track)], cam)
         right = rotate(rotate(track.rights[k % len(track)], 0.0, -cam.yaw, 0.0), -TILT, 0.0, 0.0)
         edges[k] = [center + right.scale(o) for o in offsets]
-    things = []                                     # (奥行き, 種類, 何を) 木・茂み・CPU カー
+        rights[k] = right
+    things: dict[int, list] = {}                    # 断面 k → [(奥行き, 種類, 何を)] 木・茂み・看板・CPU カー。
+    m = len(track)                                  # その断面の道を描いた直後に描く（奥の物が手前の壁に隠れる）
+    for rival in world.rivals:
+        k = start + (rival.car.hint - start) % m
+        if k < start + DRAW_SEGS:
+            z = view(rival.car.pos, cam).z
+            if NEAR < z < FAR:
+                things.setdefault(k, []).append((z, "car", rival.car))
     for k in range(start + DRAW_SEGS - 1, start - 1, -1):   # 奥から
         a, b = edges[k], edges[k + 1]
         depth = (a[3].z + a[8].z) / 2
         if depth > FAR:
             continue
+        i = k % m
+        dark = track.dark[i]
         stripe = (k // 3) % 2
         if k - start < GRASS_SEGS:
-            grass = fog(GRASS_A if (k // 5) % 2 else GRASS_B, depth)
+            grass = dim(fog(GRASS_A if (k // 5) % 2 else GRASS_B, depth), dark)
             draw_quad(screen, [a[0], a[1], b[1], b[0]], grass, scale)
             draw_quad(screen, [a[10], a[11], b[11], b[10]], grass, scale)
         near_by = k - start < DETAIL_SEGS               # 近くだけ土と白線を描く（遠くは 1 ドットにもならない）
         if near_by:
-            dirt = fog(DIRT_COLOR, depth)
+            dirt = dim(fog(DIRT_COLOR, depth), dark)
             draw_quad(screen, [a[1], a[2], b[2], b[1]], dirt, scale)
             draw_quad(screen, [a[9], a[10], b[10], b[9]], dirt, scale)
-        kerb = fog(STRIPE_A if stripe else STRIPE_B, depth)
+        kerb = dim(fog(STRIPE_A if stripe else STRIPE_B, depth), dark)
         draw_quad(screen, [a[2], a[3], b[3], b[2]], kerb, scale)
         draw_quad(screen, [a[8], a[9], b[9], b[8]], kerb, scale)
-        draw_quad(screen, [a[3], a[8], b[8], b[3]], fog(ROAD_A if stripe else ROAD_B, depth), scale)
+        draw_quad(screen, [a[3], a[8], b[8], b[3]], dim(fog(ROAD_A if stripe else ROAD_B, depth), dark), scale)
         if near_by:
-            line = fog(LINE_COLOR, depth)
+            line = dim(fog(LINE_COLOR, depth), dark)
             draw_quad(screen, [a[3], a[4], b[4], b[3]], line, scale)   # 道の端の白線
             draw_quad(screen, [a[7], a[8], b[8], b[7]], line, scale)
             if (k // 2) % 2:                                            # 真ん中の破線
                 draw_quad(screen, [a[5], a[6], b[6], b[5]], line, scale)
-        if k % TREE_EVERY == 0:
-            side = -1 if (k // TREE_EVERY) % 2 else 1
-            kind = ("conifer", "broadleaf", "conifer", "bush")[(k // TREE_EVERY) % 4]
-            base = view(track.edge(k, side * (ROAD_HALF + KERB + DIRT + 2.5 + (k % 5))), cam)
-            things.append((base.z, kind, base))
-        if k % TREE_EVERY == 3 and (k // TREE_EVERY) % 3 == 0:
-            base = view(track.edge(k, (ROAD_HALF + KERB + DIRT + 1.2) * (1 if (k // 3) % 2 else -1)), cam)
-            things.append((base.z, "bush", base))
-    for rival in world.rivals:
-        z = view(rival.car.pos, cam).z
-        if NEAR < z < FAR:
-            things.append((z, "car", rival.car))
-    for z, kind, thing in sorted(things, key=lambda t: -t[0]):
-        if kind == "car":
-            draw_car(screen, thing, cam)
-        elif z > NEAR + 0.5:
-            if kind == "conifer":
-                draw_conifer(screen, thing, scale)
-            elif kind == "broadleaf":
-                draw_broadleaf(screen, thing, scale)
-            else:
-                draw_bush(screen, thing, scale)
-    draw_car(screen, world.player, cam, roll=-world.steer * 0.06)
+        if track.in_tunnel(i):                          # トンネル：左右の壁と天井、天井の灯り
+            wall = dim(fog(TUNNEL_WALL, depth), dark)
+            top_a, top_b = up.scale(TUNNEL_H), up.scale(TUNNEL_H)
+            draw_quad(screen, [a[1], b[1], b[1] + top_b, a[1] + top_a], wall, scale)
+            draw_quad(screen, [b[10], a[10], a[10] + top_a, b[10] + top_b], wall, scale)
+            draw_quad(screen, [a[1] + top_a, a[10] + top_a, b[10] + top_b, b[1] + top_b], wall, scale)
+            if i % 3 == 0:
+                lamp = up.scale(TUNNEL_H - 0.05)
+                draw_quad(screen, [a[5] + lamp, a[6] + lamp, b[6] + lamp, b[5] + lamp], fog(TUNNEL_LAMP, depth), scale)
+            if i in TUNNEL:
+                draw_portal(screen, a, up, rights[k], scale, dark)
+        elif track.rail[i] and near_by:                 # ガードレール：カーブの外側
+            side = track.rail[i]
+            foot_a = a[10] if side > 0 else a[1]
+            foot_b = b[10] if side > 0 else b[1]
+            band = [foot_a + up.scale(0.5), foot_b + up.scale(0.5), foot_b + up.scale(0.72), foot_a + up.scale(0.72)]
+            draw_quad(screen, band, fog(RAIL, depth), scale)
+            if i % 2 == 0:
+                post = [foot_a, foot_a + rights[k].scale(0.12), foot_a + rights[k].scale(0.12) + up.scale(0.78), foot_a + up.scale(0.78)]
+                draw_quad(screen, post, fog(POST, depth), scale)
+        if i == 0:
+            draw_gantry(screen, a, up, scale, dark)
+        here = things.get(k, [])
+        if not (track.in_tunnel(i - 3) or track.in_tunnel(i + 3)):   # トンネルの近くに木は生えない
+            if i % TREE_EVERY == 0:
+                side = -1 if (i // TREE_EVERY) % 2 else 1
+                kind = ("conifer", "broadleaf", "conifer", "bush")[(i // TREE_EVERY) % 4]
+                base = view(track.edge(k, side * (ROAD_HALF + KERB + DIRT + 2.5 + (i % 5))), cam)
+                here.append((base.z, kind, base))
+            if i % TREE_EVERY == 3 and (i // TREE_EVERY) % 3 == 0:
+                base = view(track.edge(k, (ROAD_HALF + KERB + DIRT + 1.2) * (1 if (i // 3) % 2 else -1)), cam)
+                here.append((base.z, "bush", base))
+            if track.bend[i] > SIGN_TURN and i % 6 == 0:    # きついカーブの外側に矢印の看板
+                side = -1 if track.turn[i] > 0 else 1
+                base = view(track.edge(k, side * (ROAD_HALF + KERB + DIRT + 1.6)), cam)
+                here.append((base.z, "sign_r" if track.turn[i] > 0 else "sign_l", base))
+        for z, kind, thing in sorted(here, key=lambda t: -t[0]):
+            if kind == "car":
+                draw_car(screen, thing, cam, dark=dark)
+            elif z > NEAR + 0.5:
+                if kind == "conifer":
+                    draw_conifer(screen, thing, scale)
+                elif kind == "broadleaf":
+                    draw_broadleaf(screen, thing, scale)
+                elif kind.startswith("sign"):
+                    draw_sign(screen, thing, kind == "sign_r", scale)
+                else:
+                    draw_bush(screen, thing, scale)
+    draw_car(screen, world.player, cam, roll=-world.steer * 0.06, dark=track.dark[world.player.hint])
 
 
 def obey(world: World, key: str, down: bool = True) -> None:
