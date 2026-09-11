@@ -194,33 +194,42 @@ def view(p: V, cam: Camera = Camera()) -> V:
     return rotate(q, 0, 0, -cam.roll)
 
 
-def project(p: V) -> tuple[float, float]:
+def project(p: V, scale: float = 1.0) -> tuple[float, float]:
     """透視投影。遠い（z が大きい）ほど真ん中に寄って小さくなる。ここが 3D の心臓。
 
     受け取るのは「カメラから見た点」（view を通したもの）。
+    scale は板の大きさ（ブラウザは 2 倍の板に描くので 2）。式は変わらず、全部が 2 倍になるだけ。
     """
-    return CX + FOCUS * p.x / p.z, CY - FOCUS * p.y / p.z
+    return (CX + FOCUS * p.x / p.z) * scale, (CY - FOCUS * p.y / p.z) * scale
 
 
 class Screen:
-    """WIDTH × HEIGHT のドットの板。1 ドットは RGB か None（黒）。"""
+    """WIDTH × HEIGHT のドットの板。1 行を bytearray（RGB × WIDTH）で持つ。
 
-    def __init__(self):
-        self.pixels: list[list[tuple[int, int, int] | None]] = [[None] * WIDTH for _ in range(HEIGHT)]
+    1 ドットずつ Python で置くと遅い。行ごとに「ここからここまで、この色」を
+    **スライス代入でまとめて書く**と、中は C で走るので何倍も速い。
+    ドットを 4 倍（256 × 160）にしても速さを保つための作り。
+    """
 
-    def clear(self, color: tuple[int, int, int] | None = None) -> None:
-        for row in self.pixels:
-            row[:] = [color] * WIDTH
+    def __init__(self, width: int = WIDTH, height: int = HEIGHT):
+        self.width, self.height = width, height
+        self.rows = [bytearray(width * 3) for _ in range(height)]
+
+    def clear(self, color: tuple[int, int, int]) -> None:
+        line = bytes(color) * self.width
+        for row in self.rows:
+            row[:] = line
 
     def plot(self, x: int, y: int, color: tuple[int, int, int]) -> None:
-        if 0 <= x < WIDTH and 0 <= y < HEIGHT:
-            self.pixels[y][x] = color
+        if 0 <= x < self.width and 0 <= y < self.height:
+            self.rows[y][x * 3:x * 3 + 3] = bytes(color)
 
     def fill(self, points: list[tuple[float, float]], color: tuple[int, int, int]) -> None:
-        """凸多角形を塗る。横 1 行ずつ、辺との交点の間を埋める（スキャンライン）。"""
+        """凸多角形を塗る。横 1 行ずつ、辺との交点の間をまとめて埋める（スキャンライン）。"""
         top = max(0, int(min(y for _, y in points)))
-        bottom = min(HEIGHT - 1, int(max(y for _, y in points)))
+        bottom = min(self.height - 1, int(max(y for _, y in points)))
         count = len(points)
+        paint = bytes(color)
         for y in range(top, bottom + 1):
             xs = []
             for i in range(count):
@@ -228,10 +237,9 @@ class Screen:
                 if (y1 <= y < y2) or (y2 <= y < y1):          # この行をまたぐ辺だけ
                     xs.append(x1 + (y - y1) * (x2 - x1) / (y2 - y1))
             if len(xs) >= 2:
-                left, right = max(0, int(min(xs))), min(WIDTH - 1, int(max(xs)))
-                row = self.pixels[y]
-                for x in range(left, right + 1):
-                    row[x] = color
+                left, right = max(0, int(min(xs))), min(self.width - 1, int(max(xs)))
+                if left <= right:
+                    self.rows[y][left * 3:(right + 1) * 3] = paint * (right - left + 1)
 
     def line(self, a: tuple[float, float], b: tuple[float, float], color: tuple[int, int, int]) -> None:
         """2 点を結ぶ線。長い方の軸に沿って 1 ドットずつ置く。"""
@@ -240,6 +248,9 @@ class Screen:
         for i in range(steps + 1):
             t = i / steps
             self.plot(int(x1 + (x2 - x1) * t), int(y1 + (y2 - y1) * t), color)
+
+    def pixel(self, x: int, y: int) -> tuple[int, int, int]:
+        return tuple(self.rows[y][x * 3:x * 3 + 3])
 
 
 def rock_shape(seed: int) -> tuple[list[V], list[tuple[int, ...]]]:
@@ -296,6 +307,7 @@ def draw_solid(screen: Screen, points: list[V], faces: list[tuple[int, ...]],
     """立体をひとつ描く。こちらを向いた面だけを、奥から順に塗る。"""
     if min(p.z for p in points) < NEAR:
         return
+    scale = screen.width / WIDTH
     drawn = []
     for face in faces:
         a, b, c = points[face[0]], points[face[1]], points[face[2]]
@@ -303,7 +315,7 @@ def draw_solid(screen: Screen, points: list[V], faces: list[tuple[int, ...]],
         if normal.dot(a) >= 0:                      # 面の向きが視線と同じ＝裏側。描かない
             continue
         depth = sum(points[i].z for i in face) / len(face)
-        drawn.append((depth, [project(points[i]) for i in face], shade(color, normal, depth)))
+        drawn.append((depth, [project(points[i], scale) for i in face], shade(color, normal, depth)))
     for _, flat, painted in sorted(drawn, key=lambda item: -item[0]):   # 奥から
         screen.fill(flat, painted)
 
@@ -402,14 +414,15 @@ def draw(screen: Screen, world: World) -> None:
     """場面を描く。星 → 小惑星（奥から）→ 自機。"""
     screen.clear(SPACE)
     cam = world.cam
+    scale = screen.width / WIDTH
     for star in world.stars:
-        sx, sy = project(view(star, cam))
+        sx, sy = project(view(star, cam), scale)
         near = 1 - star.z / FAR
         color = tuple(int(f + (n - f) * near) for f, n in zip(STAR_FAR, STAR_NEAR))
         screen.plot(int(sx), int(sy), color)
     for z in sorted(world.rings, reverse=True):     # 輪。奥から。16 角形の線
         color = fog(RING, z)
-        corners = [project(view(V(RING_R * math.cos(a), RING_Y + RING_R * math.sin(a), z), cam))
+        corners = [project(view(V(RING_R * math.cos(a), RING_Y + RING_R * math.sin(a), z), cam), scale)
                    for a in (i * math.tau / 16 for i in range(16))]
         for i in range(16):
             screen.line(corners[i], corners[(i + 1) % 16], color)
@@ -422,7 +435,7 @@ def draw(screen: Screen, world: World) -> None:
         placed = [view(rotate(p, 0.1, 0, tilt).scale(0.9) + world.ship, cam) for p in SHIP_POINTS]
         draw_solid(screen, placed, SHIP_FACES, SHIP)
         tail = view(rotate(V(0, 0, -0.8), 0.1, 0, tilt).scale(0.9) + world.ship, cam)
-        fx, fy = project(tail)
+        fx, fy = project(tail, scale)
         screen.plot(int(fx), int(fy), FLAME)
         screen.plot(int(fx), int(fy) + 1, FLAME)
 
@@ -444,10 +457,11 @@ def obey(world: World, key: str, down: bool = True) -> None:
 
 # --- ここから下はブラウザ版だけ。CLI 版の run() / Screen.render() / Speaker にあたる ---
 
+SCALE = 2                                           # ブラウザは 2 倍の板（256 × 160）に描く
 canvas = document.querySelector("#screen")
 ctx = canvas.getContext("2d")
 ctx.imageSmoothingEnabled = False
-image = ctx.createImageData(WIDTH, HEIGHT)
+image = ctx.createImageData(WIDTH * SCALE, HEIGHT * SCALE)
 score_label = document.querySelector("#score")
 lives_label = document.querySelector("#lives")
 speed_label = document.querySelector("#speed")
@@ -457,18 +471,20 @@ again_button = document.querySelector("#again")
 
 
 class CanvasScreen(Screen):
-    """CLI 版の Screen をそのまま使い、描き終えた画素をまとめて canvas へ送る。"""
+    """CLI 版の Screen をそのまま使い、描き終えた画素をまとめて canvas へ送る。
+
+    行の RGB を RGBA に組み替えるのもスライス代入（3 つおき → 4 つおき）。1 ドットずつ触らない。
+    """
 
     def flush(self) -> None:
-        buf = bytearray(WIDTH * HEIGHT * 4)
-        i = 0
-        for row in self.pixels:
-            for color in row:
-                if color is not None:
-                    buf[i], buf[i + 1], buf[i + 2] = color
-                buf[i + 3] = 255
-                i += 4
-        image.data.assign(bytes(buf))
+        rgb = b"".join(self.rows)
+        count = len(rgb) // 3
+        rgba = bytearray(count * 4)
+        rgba[0::4] = rgb[0::3]
+        rgba[1::4] = rgb[1::3]
+        rgba[2::4] = rgb[2::3]
+        rgba[3::4] = b"\xff" * count
+        image.data.assign(bytes(rgba))
         ctx.putImageData(image, 0, 0)
 
 
@@ -489,7 +505,7 @@ class Speaker:
         sound.play()
 
 
-screen = CanvasScreen()
+screen = CanvasScreen(WIDTH * SCALE, HEIGHT * SCALE)
 speaker = Speaker()
 world = World(seed=int(window.performance.now()))
 frames = []

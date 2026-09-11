@@ -163,7 +163,7 @@
       <span>速さ <b id="speed">10.0</b> ・ <b id="fps">–</b> コマ/秒</span>
     </div>
 
-    <div class="stage"><canvas id="screen" width="128" height="80"></canvas></div>
+    <div class="stage"><canvas id="screen" width="256" height="160"></canvas></div>
     <pre id="message"></pre>
 
     <div class="pad cross">
@@ -195,7 +195,7 @@
   <p class="note">
     このページは <strong>Python のコードがブラウザの中でそのまま動いています</strong>（PyScript）。
     3D の点・回転・透視投影・面を塗る処理・隠面消去・陰影・世界の動きは
-    CLI 版と 1 文字も違いません。128 × 80 ドットの絵を、端末は ▀ の並び、ここでは canvas にしているだけです。
+    CLI 版と 1 文字も違いません。端末は 128 × 80 ドットを ▀ の並びで、ここでは<strong>同じ式を 2 倍の板（256 × 160）</strong>で回して canvas に出しています。
   </p>
 
   <footer>
@@ -205,6 +205,6 @@
   </footer>
 </main>
 
-<script type="py" src="./game.py?v=930dfeb2"></script>
+<script type="py" src="./game.py?v=e587769d"></script>
 </body>
 </html>
