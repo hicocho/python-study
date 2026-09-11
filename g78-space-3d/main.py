@@ -52,6 +52,10 @@ COMBO_MAX = 5                                       # コンボの倍率の上�
 SHAKE_HIT = 0.45                                    # ぶつかったときに揺れる秒数
 SHAKE_GRAZE = 0.12                                  # スレスレのときに軽く揺れる秒数
 SHAKE_AMP = 0.35                                    # 揺れの大きさ（世界の単位）
+SPEED0 = 10.0                                       # 始めの速さ
+SPEED_MAX = 34.0                                    # 速さの上限
+WIDE = 0.3                                          # 速さが上限のとき、焦点距離をこの割合だけ縮める（広角になる）
+STREAK = 3.0                                        # 星の流線の長さ（何コマぶんの動きを線にするか）
 GATE_EVERY = 10                                     # よけた数がこれに達するたびにゲートが来る
 GATE_R = 2.0                                        # ゲートの半径。中心からこれ以内を通れば通過
 GATE_SPEED = 1.5                                    # ゲートを通ると速さがこれだけ上がる（ステージが 1 つ進む）
@@ -67,6 +71,7 @@ RING = (70, 120, 160)                               # トンネルの輪
 GLOW = (255, 228, 96)                               # スレスレのとき画面の縁が光る色
 BLOOD = (235, 70, 60)                               # ぶつかったときの縁の色
 GATE = (110, 230, 150)                              # ゲートの色
+ROCK_DANGER = (215, 95, 75)                         # いまの位置のままだとぶつかる小惑星の色
 RATE = 22050                                        # 音の標本の数（1 秒あたり）
 VOLUME = 0.14
 
@@ -175,13 +180,14 @@ def view(p: V, cam: Camera = Camera()) -> V:
     return rotate(q, 0, 0, -cam.roll)
 
 
-def project(p: V, scale: float = 1.0) -> tuple[float, float]:
+def project(p: V, scale: float = 1.0, focus: float = FOCUS) -> tuple[float, float]:
     """透視投影。遠い（z が大きい）ほど真ん中に寄って小さくなる。ここが 3D の心臓。
 
     受け取るのは「カメラから見た点」（view を通したもの）。
     scale は板の大きさ（ブラウザは 2 倍の板に描くので 2）。式は変わらず、全部が 2 倍になるだけ。
+    focus は焦点距離。小さいほど広角（同じ点が真ん中寄りに映り、手前のものが流れて見える）。
     """
-    return (CX + FOCUS * p.x / p.z) * scale, (CY - FOCUS * p.y / p.z) * scale
+    return (CX + focus * p.x / p.z) * scale, (CY - focus * p.y / p.z) * scale
 
 
 # ── 画面 ────────────────────────────────────────────────────────────────
@@ -311,7 +317,7 @@ def shade(base: tuple[int, int, int], normal: V, z: float = 0.0) -> tuple[int, i
 
 
 def draw_solid(screen: Screen, points: list[V], faces: list[tuple[int, ...]],
-               color: tuple[int, int, int]) -> None:
+               color: tuple[int, int, int], focus: float = FOCUS) -> None:
     """立体をひとつ描く。こちらを向いた面だけを、奥から順に塗る。"""
     if min(p.z for p in points) < NEAR:
         return
@@ -323,7 +329,7 @@ def draw_solid(screen: Screen, points: list[V], faces: list[tuple[int, ...]],
         if normal.dot(a) >= 0:                      # 面の向きが視線と同じ＝裏側。描かない
             continue
         depth = sum(points[i].z for i in face) / len(face)
-        drawn.append((depth, [project(points[i], scale) for i in face], shade(color, normal, depth)))
+        drawn.append((depth, [project(points[i], scale, focus) for i in face], shade(color, normal, depth)))
     for _, flat, painted in sorted(drawn, key=lambda item: -item[0]):   # 奥から
         screen.fill(flat, painted)
 
@@ -387,7 +393,9 @@ class World:
     aim: V = V(0.0, 0.0, 0.0)                       # 動く向き（キー）
     cam: Camera = Camera()                          # 視点。自機を追いかけ、曲がると傾く
     rings: list[float] = field(default_factory=list)   # トンネルの輪の奥行き
-    speed: float = 10.0                             # 前へ進む速さ
+    speed: float = SPEED0                           # 前へ進む速さ
+    started: bool = False                           # スタート前は宇宙が流れているだけ
+    paused: bool = False
     time: float = 0.0
     spawn_at: float = 0.0
     score: int = 0                                  # 点。スレスレ +3、近い +2、それ以外 +1 に、コンボの倍率をかける
@@ -451,12 +459,21 @@ class World:
         self.score += points
         self.passed += 1
         self.since_gate += 1
-        self.speed = min(34.0, self.speed + 0.35)
+        self.speed = min(SPEED_MAX, self.speed + 0.35)
         return points
 
     def tell(self, text: str) -> None:
         self.note = text
         self.note_until = self.time + 1.2
+
+    @property
+    def focus(self) -> float:
+        """速いほど広角に（焦点距離を縮める）。速さの実感はここから来る。"""
+        return FOCUS * (1 - WIDE * (self.speed - SPEED0) / (SPEED_MAX - SPEED0))
+
+    def dangerous(self, rock: Rock) -> bool:
+        """自機がいまの位置のままだと、この小惑星にぶつかるか。"""
+        return not rock.passed and rock.pos.z > self.ship.z and self.gap(rock) < 0
 
     @property
     def cam_now(self) -> Camera:
@@ -468,10 +485,12 @@ class World:
                                  jolt_y=amp * 0.7 * math.cos(self.time * 53))
 
     def update(self, dt: float) -> str | None:
-        """1 コマ進める。起きたこと（EVENTS のどれか）を返す。"""
-        if self.over:
+        """1 コマ進める。起きたこと（EVENTS のどれか）を返す。
+        スタート前は宇宙（星・輪）だけが流れ、自機は動かせるが小惑星は出ない。一時停止中は何も動かない。"""
+        if self.over or self.paused:
             return None
-        self.time += dt
+        if self.started:                            # 時計はスタートしてから進む（出す間隔が時間で決まるので）
+            self.time += dt
         self.hurt = max(0.0, self.hurt - dt)
         self.shake = max(0.0, self.shake - dt)
         self.flash = max(0.0, self.flash - dt)
@@ -489,6 +508,8 @@ class World:
         # 星（視差：近いほど速く流れて見える。動く速さは同じ）
         self.stars = [V(s.x, s.y, s.z - self.speed * dt) if s.z - self.speed * dt > NEAR
                       else self.new_star(FAR) for s in self.stars]
+        if not self.started:
+            return None
         # 出す：ゲートの番なら ゲート、そうでなければ ステージに応じた並びの小惑星
         happened = None
         if self.time >= self.spawn_at:
@@ -511,7 +532,7 @@ class World:
                 if math.dist((self.gate.pos.x, self.gate.pos.y), (self.ship.x, self.ship.y)) <= GATE_R:
                     self.stage += 1
                     self.lives = min(3, self.lives + 1)
-                    self.speed = min(34.0, self.speed + GATE_SPEED)
+                    self.speed = min(SPEED_MAX, self.speed + GATE_SPEED)
                     self.flash, self.flash_color = 0.4, GATE
                     self.tell(f"ゲート通過！ ステージ {self.stage}")
                     happened = "gate"
@@ -591,11 +612,11 @@ def stage_patterns(stage: int) -> tuple[str, ...]:
     return STAGE_ORDER[:max(1, min(stage, len(STAGE_ORDER)))]
 
 
-def draw_gate(screen: Screen, gate: Gate, cam: Camera, scale: float) -> None:
+def draw_gate(screen: Screen, gate: Gate, cam: Camera, scale: float, focus: float = FOCUS) -> None:
     """ゲート。二重の 24 角形の輪。奥にあるほど霧で薄い。"""
     color = fog(GATE, gate.pos.z * 0.5)             # 目標なので、小惑星より霧に溶けにくくする
     for r in (GATE_R, GATE_R + 0.18):
-        corners = [project(view(V(gate.pos.x + r * math.cos(a), gate.pos.y + r * math.sin(a), gate.pos.z), cam), scale)
+        corners = [project(view(V(gate.pos.x + r * math.cos(a), gate.pos.y + r * math.sin(a), gate.pos.z), cam), scale, focus)
                    for a in (i * math.tau / 24 for i in range(24))]
         for i in range(24):
             screen.line(corners[i], corners[(i + 1) % 24], color)
@@ -606,33 +627,37 @@ def draw(screen: Screen, world: World) -> None:
     screen.clear(SPACE)
     cam = world.cam_now                             # 揺れ込み
     scale = screen.width / WIDTH
-    for star in world.stars:
-        sx, sy = project(view(star, cam), scale)
+    focus = world.focus                             # 速いほど広角
+    for star in world.stars:                        # 星。前のコマの位置から線を引く（流線）。近く・速いほど長い
+        sx, sy = project(view(star, cam), scale, focus)
+        back = star.z + world.speed * STEP * STREAK
+        bx, by = project(view(V(star.x, star.y, back), cam), scale, focus)
         near = 1 - star.z / FAR
         color = tuple(int(f + (n - f) * near) for f, n in zip(STAR_FAR, STAR_NEAR))
+        screen.line((bx, by), (sx, sy), tuple(c // 2 for c in color))
         screen.plot(int(sx), int(sy), color)
     for z in sorted(world.rings, reverse=True):     # 輪。奥から。16 角形の線
         color = fog(RING, z)
-        corners = [project(view(V(RING_R * math.cos(a), RING_Y + RING_R * math.sin(a), z), cam), scale)
+        corners = [project(view(V(RING_R * math.cos(a), RING_Y + RING_R * math.sin(a), z), cam), scale, focus)
                    for a in (i * math.tau / 16 for i in range(16))]
         for i in range(16):
             screen.line(corners[i], corners[(i + 1) % 16], color)
     gate_z = world.gate.pos.z if world.gate is not None else -1.0
     for rock in sorted(world.rocks, key=lambda r: -r.pos.z):
         if world.gate is not None and rock.pos.z < gate_z < FAR:   # ゲートより手前の小惑星の前に、ゲートを描く
-            draw_gate(screen, world.gate, cam, scale)
+            draw_gate(screen, world.gate, cam, scale, focus)
             gate_z = FAR
         points, faces = rock_shape(rock.seed)
         placed = [view(rotate(p, *rock.angle).scale(rock.radius) + rock.pos, cam) for p in points]
-        draw_solid(screen, placed, faces, ROCK)
+        draw_solid(screen, placed, faces, ROCK_DANGER if world.dangerous(rock) else ROCK, focus)   # 危ないのは赤み
     if world.gate is not None and gate_z < FAR:
-        draw_gate(screen, world.gate, cam, scale)
+        draw_gate(screen, world.gate, cam, scale, focus)
     if world.over or int(world.hurt * 12) % 2 == 0:  # ぶつかった直後は点滅
         tilt = -world.aim.x * 0.5                   # 曲がる向きに機体を傾ける
         placed = [view(rotate(p, 0.1, 0, tilt).scale(0.9) + world.ship, cam) for p in SHIP_POINTS]
-        draw_solid(screen, placed, SHIP_FACES, SHIP)
+        draw_solid(screen, placed, SHIP_FACES, SHIP, focus)
         tail = view(rotate(V(0, 0, -0.8), 0.1, 0, tilt).scale(0.9) + world.ship, cam)
-        fx, fy = project(tail, scale)
+        fx, fy = project(tail, scale, focus)
         screen.plot(int(fx), int(fy), FLAME)
         screen.plot(int(fx), int(fy) + 1, FLAME)
     if world.flash > 0:                             # 画面の縁が光る（スレスレは黄、ぶつかったら赤）
@@ -652,6 +677,11 @@ def obey(world: World, key: str, down: bool = True) -> None:
         world.aim = V(world.aim.x, -v, 0)
     elif key == "stop":
         world.aim = V(0.0, 0.0, 0)
+    elif key == "go" and down:                      # 1 つのキーで「始める」と「止める／つづける」
+        if not world.started:
+            world.started = True
+        elif not world.over:
+            world.paused = not world.paused
 
 
 # ── 端末 ────────────────────────────────────────────────────────────────
@@ -662,7 +692,8 @@ def read_keys(fd: int) -> list[str]:
         text = os.read(fd, 64).decode(errors="ignore")
         for token, name in (("\x1b[D", "left"), ("\x1b[C", "right"), ("\x1b[A", "up"), ("\x1b[B", "down"),
                             ("a", "left"), ("d", "right"), ("w", "up"), ("s", "down"),
-                            ("q", "quit"), ("\x1b", "quit"), ("r", "reset")):
+                            ("q", "quit"), ("\x1b", "quit"), ("r", "reset"),
+                            (" ", "go"), ("p", "go"), ("\r", "go"), ("\n", "go")):
             keys.extend([name] * text.count(token))
         if "\x1b[" in text:                         # 矢印の並びに含まれる \x1b を quit に数えない
             keys = [k for k in keys if k != "quit"] if text.count("\x1b") == text.count("\x1b[") else keys
@@ -722,8 +753,12 @@ def status(world: World, best: Best, improved: bool = False) -> str:
     if world.over:                                  # 終わったら出来事の言葉の代わりに結果
         note = "★ おしまい " + ("ベスト更新！" if improved else f"ベスト {best.score}") + "  r でもう一度"
         tail = ""
+    elif not world.started:
+        note, tail = "スペースで始める（矢印で動ける）", ""
+    elif world.paused:
+        note, tail = "一時停止。スペースでつづける", ""
     else:
-        tail = f"ベスト {best.score}  q でやめる"
+        tail = f"ベスト {best.score}  p で一時停止  q でやめる"
     gate = "来た！ " if world.gate is not None and not world.gate.passed else f"あと {GATE_EVERY - world.since_gate:2d}"
     return (f" 点 {world.score:4d} よけた {world.passed:3d} コンボ {combo} {'♥' * world.lives}{'♡' * (3 - world.lives)} "
             f"速さ {world.speed:4.1f} ステージ {world.stage} ゲート {gate} {note:<14} " + tail)
@@ -750,7 +785,7 @@ def run() -> None:
                 if key == "quit":
                     return
                 if key == "reset" and world.over:
-                    world = World(seed=int(time.time()))
+                    world = World(seed=int(time.time()), started=True)
                     improved = False
                 obey(world, key)
             now = time.perf_counter()
@@ -821,7 +856,7 @@ def check() -> None:
     assert rock_shape(1) == rock_shape(1) and rock_shape(1) != rock_shape(2)
     print("  頂点 12・面 20。同じ種なら同じ形、違う種なら違う形")
     print("● トンネルの輪")
-    world = World(seed=1)
+    world = World(started=True, seed=1)
     count = len(world.rings)
     assert count == (int(FAR) - 1) // int(RING_GAP) and all(NEAR < z < FAR for z in world.rings)
     for _ in range(60):
@@ -829,7 +864,7 @@ def check() -> None:
     assert all(z > NEAR for z in world.rings) and len(world.rings) == count
     print(f"  輪 {count} 本が {RING_GAP} おきに流れ、手前に来たら奥に戻る")
     print("● 世界")
-    world = World(seed=1)
+    world = World(started=True, seed=1)
     events = []
     for _ in range(30 * 20):
         got = world.update(STEP)
@@ -840,7 +875,7 @@ def check() -> None:
     assert world.score >= world.passed, "点はよけた数より少なくならないはず"
     print(f"  20 秒動かして、よけた {world.passed}（点 {world.score}）、ぶつかった {3 - world.lives}、速さ {world.speed:.1f}")
     print("● スレスレとコンボ")
-    world = World(seed=1)
+    world = World(started=True, seed=1)
 
     def pass_by(offset: float) -> str | None:
         """自機の右 offset のところを、半径 1 の小惑星が通り過ぎる。"""
@@ -872,7 +907,7 @@ def check() -> None:
     world.time = 0.1
     assert world.cam_now != a, "揺れは時間で変わる（乱数は使わない → 端末とブラウザで同じ）"
     print("● 自動でよけると")
-    world = World(seed=1)
+    world = World(started=True, seed=1)
     for _ in range(30 * 40):
         near_rock = min((r for r in world.rocks if not r.passed), key=lambda r: r.pos.z, default=None)
         if near_rock is not None and near_rock.pos.z < 25:
@@ -883,7 +918,7 @@ def check() -> None:
         world.update(STEP)
     print(f"  40 秒: よけた {world.passed}（点 {world.score}）、残り {world.lives}、速さ {world.speed:.1f}")
     print("● 板の大きさ")
-    world = World(seed=2)
+    world = World(started=True, seed=2)
     for _ in range(90):
         world.update(STEP)
     small, big = Screen(), Screen(WIDTH * 2, HEIGHT * 2)
@@ -906,18 +941,18 @@ def check() -> None:
     print("  よけた・スレスレ・ゲート・ぶつかった・おしまい・ベスト更新 の 6 つ。全部別の音（近いは、よけたと同じ音）")
     print("● ゲートとステージ")
     assert stage_patterns(1) == ("one",) and stage_patterns(3) == ("one", "pair", "band") and stage_patterns(9) == STAGE_ORDER
-    world = World(seed=4)
+    world = World(started=True, seed=4)
     for name, maker in PATTERNS.items():
         rocks = maker(world)
         assert all(-REACH_X <= r.pos.x <= REACH_X and REACH_Y[0] <= r.pos.y <= REACH_Y[1] and r.pos.z == FAR for r in rocks), name
     assert len(spawn_band(world)) == 4 and len(spawn_pair(world)) == 2 and spawn_big(world)[0].radius >= 2.0
     print("  出方は one / pair / band / big の 4 つ。全部、動ける範囲の中に出る。帯は 5 つのうち 1 つが穴")
-    world = World(seed=4)
+    world = World(started=True, seed=4)
     world.rocks = [Rock(V(x, world.ship.y, world.ship.z + 0.01), 0.8, 0, V(0, 0, 0))
                    for x in (-REACH_X, -REACH_X + 2.1, REACH_X - 2.1, REACH_X)]   # 穴が真ん中の帯
     world.spawn_at = world.time + 99
     assert world.update(STEP) == "near" and world.passed == 1, "帯を抜けても「よけた」は 1（いちばん近い 1 個で決める）"
-    world = World(seed=4)
+    world = World(started=True, seed=4)
     world.lives, world.since_gate = 2, GATE_EVERY
     world.spawn_at = 0.0
     world.update(STEP)
@@ -929,7 +964,7 @@ def check() -> None:
     world.gate = Gate(V(world.ship.x + GATE_R * 1.1, world.ship.y, world.ship.z + 0.01))
     assert world.update(STEP) is None and world.stage == 2 and world.note.startswith("ゲートを外した")
     print(f"  よけた数が {GATE_EVERY} に達するとゲート。中を通れば ♥ が戻ってステージが進み、外れても罰は無い")
-    world = World(seed=5)
+    world = World(started=True, seed=5)
     for _ in range(30 * 60):
         near_rock = min((r for r in world.rocks if not r.passed), key=lambda r: r.pos.z, default=None)
         if world.gate is not None and not world.gate.passed and world.gate.pos.z < 30:
@@ -944,10 +979,47 @@ def check() -> None:
         world.update(STEP)
     assert world.stage >= 3, world.stage
     print(f"  ゲートを狙って 60 秒動くと、ステージ {world.stage}、よけた {world.passed}、点 {world.score}")
+    print("● スタートと一時停止")
+    world = World(seed=1)
+    star0 = world.stars[0]
+    for _ in range(30 * 10):
+        world.update(STEP)
+    assert not world.rocks and world.time == 0 and world.stars[0] != star0, "スタート前は星だけ流れて、小惑星は出ない"
+    obey(world, "go")
+    assert world.started and not world.paused
+    for _ in range(30 * 5):
+        world.update(STEP)
+    assert world.rocks and world.time > 0
+    obey(world, "go")
+    frozen = (world.time, [r.pos for r in world.rocks])
+    world.update(STEP)
+    assert world.paused and (world.time, [r.pos for r in world.rocks]) == frozen, "一時停止中は何も動かない"
+    obey(world, "go")
+    world.update(STEP)
+    assert not world.paused and world.time > frozen[0]
+    print("  スタート前は星だけ流れる。go で始まり、もう一度 go で止まり、もう一度でつづく")
+    print("● 速さの実感")
+    world = World(started=True, seed=1)
+    slow = world.focus
+    world.speed = SPEED_MAX
+    assert world.focus < slow and abs(world.focus - FOCUS * (1 - WIDE)) < 1e-9
+    star = V(3.0, 1.0, 6.0)
+    head_slow = project(view(star), 1.0, slow)
+    head_fast = project(view(star), 1.0, world.focus)
+    assert abs(head_fast[0] - CX) < abs(head_slow[0] - CX), "広角になると同じ点が真ん中寄りに映る"
+    streak = lambda speed: abs(project(view(V(star.x, star.y, star.z + speed * STEP * STREAK)))[0] - project(view(star))[0])
+    assert streak(SPEED_MAX) > streak(SPEED0) * 2, "速いほど流線が長い"
+    print(f"  速さ {SPEED0:.0f} → {SPEED_MAX:.0f} で焦点距離 {FOCUS:.0f} → {world.focus:.0f}（広角）。星の流線は {streak(SPEED0):.1f} → {streak(SPEED_MAX):.1f} ドット")
+    world = World(started=True, seed=1)
+    rock = Rock(V(world.ship.x, world.ship.y, 20.0), 1.0, 0, V(0, 0, 0))
+    assert world.dangerous(rock)
+    world.ship = V(world.ship.x + 3.0, world.ship.y, world.ship.z)
+    assert not world.dangerous(rock), "横へ動けば危なくない"
+    print("  いまの位置のままだとぶつかる小惑星は赤みがかる。動けば戻る")
     print("● ベスト記録")
     best = Best.parse("")
     assert best == Best() and Best.parse("{broken") == Best() and Best.parse('{"score": "x"}') == Best()
-    world = World(seed=1)
+    world = World(started=True, seed=1)
     world.score, world.combo_max, world.passed = 40, 3, 12
     assert best.take(world) and best == Best(40, 3, 12)
     world.score, world.combo_max, world.passed = 30, 5, 9
@@ -962,7 +1034,7 @@ def shot(path: str, seconds: float = 6.0) -> None:
     import struct
     import zlib
 
-    world = World(seed=3)
+    world = World(started=True, seed=3)
     for i in range(int(seconds / STEP)):
         world.aim = V(0.6 if i < 40 else -0.3, -0.2, 0)
         world.update(STEP)

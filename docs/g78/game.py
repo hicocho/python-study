@@ -97,6 +97,18 @@ SHAKE_GRAZE = 0.12                                  # スレスレのときに�
 SHAKE_AMP = 0.35                                    # 揺れの大きさ（世界の単位）
 
 
+SPEED0 = 10.0                                       # 始めの速さ
+
+
+SPEED_MAX = 34.0                                    # 速さの上限
+
+
+WIDE = 0.3                                          # 速さが上限のとき、焦点距離をこの割合だけ縮める（広角になる）
+
+
+STREAK = 3.0                                        # 星の流線の長さ（何コマぶんの動きを線にするか）
+
+
 GATE_EVERY = 10                                     # よけた数がこれに達するたびにゲートが来る
 
 
@@ -137,6 +149,9 @@ BLOOD = (235, 70, 60)                               # ぶつかったときの�
 
 
 GATE = (110, 230, 150)                              # ゲートの色
+
+
+ROCK_DANGER = (215, 95, 75)                         # いまの位置のままだとぶつかる小惑星の色
 
 
 RATE = 22050                                        # 音の標本の数（1 秒あたり）
@@ -247,13 +262,14 @@ def view(p: V, cam: Camera = Camera()) -> V:
     return rotate(q, 0, 0, -cam.roll)
 
 
-def project(p: V, scale: float = 1.0) -> tuple[float, float]:
+def project(p: V, scale: float = 1.0, focus: float = FOCUS) -> tuple[float, float]:
     """透視投影。遠い（z が大きい）ほど真ん中に寄って小さくなる。ここが 3D の心臓。
 
     受け取るのは「カメラから見た点」（view を通したもの）。
     scale は板の大きさ（ブラウザは 2 倍の板に描くので 2）。式は変わらず、全部が 2 倍になるだけ。
+    focus は焦点距離。小さいほど広角（同じ点が真ん中寄りに映り、手前のものが流れて見える）。
     """
-    return (CX + FOCUS * p.x / p.z) * scale, (CY - FOCUS * p.y / p.z) * scale
+    return (CX + focus * p.x / p.z) * scale, (CY - focus * p.y / p.z) * scale
 
 
 class Screen:
@@ -366,7 +382,7 @@ def shade(base: tuple[int, int, int], normal: V, z: float = 0.0) -> tuple[int, i
 
 
 def draw_solid(screen: Screen, points: list[V], faces: list[tuple[int, ...]],
-               color: tuple[int, int, int]) -> None:
+               color: tuple[int, int, int], focus: float = FOCUS) -> None:
     """立体をひとつ描く。こちらを向いた面だけを、奥から順に塗る。"""
     if min(p.z for p in points) < NEAR:
         return
@@ -378,7 +394,7 @@ def draw_solid(screen: Screen, points: list[V], faces: list[tuple[int, ...]],
         if normal.dot(a) >= 0:                      # 面の向きが視線と同じ＝裏側。描かない
             continue
         depth = sum(points[i].z for i in face) / len(face)
-        drawn.append((depth, [project(points[i], scale) for i in face], shade(color, normal, depth)))
+        drawn.append((depth, [project(points[i], scale, focus) for i in face], shade(color, normal, depth)))
     for _, flat, painted in sorted(drawn, key=lambda item: -item[0]):   # 奥から
         screen.fill(flat, painted)
 
@@ -440,7 +456,9 @@ class World:
     aim: V = V(0.0, 0.0, 0.0)                       # 動く向き（キー）
     cam: Camera = Camera()                          # 視点。自機を追いかけ、曲がると傾く
     rings: list[float] = field(default_factory=list)   # トンネルの輪の奥行き
-    speed: float = 10.0                             # 前へ進む速さ
+    speed: float = SPEED0                           # 前へ進む速さ
+    started: bool = False                           # スタート前は宇宙が流れているだけ
+    paused: bool = False
     time: float = 0.0
     spawn_at: float = 0.0
     score: int = 0                                  # 点。スレスレ +3、近い +2、それ以外 +1 に、コンボの倍率をかける
@@ -504,12 +522,21 @@ class World:
         self.score += points
         self.passed += 1
         self.since_gate += 1
-        self.speed = min(34.0, self.speed + 0.35)
+        self.speed = min(SPEED_MAX, self.speed + 0.35)
         return points
 
     def tell(self, text: str) -> None:
         self.note = text
         self.note_until = self.time + 1.2
+
+    @property
+    def focus(self) -> float:
+        """速いほど広角に（焦点距離を縮める）。速さの実感はここから来る。"""
+        return FOCUS * (1 - WIDE * (self.speed - SPEED0) / (SPEED_MAX - SPEED0))
+
+    def dangerous(self, rock: Rock) -> bool:
+        """自機がいまの位置のままだと、この小惑星にぶつかるか。"""
+        return not rock.passed and rock.pos.z > self.ship.z and self.gap(rock) < 0
 
     @property
     def cam_now(self) -> Camera:
@@ -521,10 +548,12 @@ class World:
                                  jolt_y=amp * 0.7 * math.cos(self.time * 53))
 
     def update(self, dt: float) -> str | None:
-        """1 コマ進める。起きたこと（EVENTS のどれか）を返す。"""
-        if self.over:
+        """1 コマ進める。起きたこと（EVENTS のどれか）を返す。
+        スタート前は宇宙（星・輪）だけが流れ、自機は動かせるが小惑星は出ない。一時停止中は何も動かない。"""
+        if self.over or self.paused:
             return None
-        self.time += dt
+        if self.started:                            # 時計はスタートしてから進む（出す間隔が時間で決まるので）
+            self.time += dt
         self.hurt = max(0.0, self.hurt - dt)
         self.shake = max(0.0, self.shake - dt)
         self.flash = max(0.0, self.flash - dt)
@@ -542,6 +571,8 @@ class World:
         # 星（視差：近いほど速く流れて見える。動く速さは同じ）
         self.stars = [V(s.x, s.y, s.z - self.speed * dt) if s.z - self.speed * dt > NEAR
                       else self.new_star(FAR) for s in self.stars]
+        if not self.started:
+            return None
         # 出す：ゲートの番なら ゲート、そうでなければ ステージに応じた並びの小惑星
         happened = None
         if self.time >= self.spawn_at:
@@ -564,7 +595,7 @@ class World:
                 if math.dist((self.gate.pos.x, self.gate.pos.y), (self.ship.x, self.ship.y)) <= GATE_R:
                     self.stage += 1
                     self.lives = min(3, self.lives + 1)
-                    self.speed = min(34.0, self.speed + GATE_SPEED)
+                    self.speed = min(SPEED_MAX, self.speed + GATE_SPEED)
                     self.flash, self.flash_color = 0.4, GATE
                     self.tell(f"ゲート通過！ ステージ {self.stage}")
                     happened = "gate"
@@ -644,11 +675,11 @@ def stage_patterns(stage: int) -> tuple[str, ...]:
     return STAGE_ORDER[:max(1, min(stage, len(STAGE_ORDER)))]
 
 
-def draw_gate(screen: Screen, gate: Gate, cam: Camera, scale: float) -> None:
+def draw_gate(screen: Screen, gate: Gate, cam: Camera, scale: float, focus: float = FOCUS) -> None:
     """ゲート。二重の 24 角形の輪。奥にあるほど霧で薄い。"""
     color = fog(GATE, gate.pos.z * 0.5)             # 目標なので、小惑星より霧に溶けにくくする
     for r in (GATE_R, GATE_R + 0.18):
-        corners = [project(view(V(gate.pos.x + r * math.cos(a), gate.pos.y + r * math.sin(a), gate.pos.z), cam), scale)
+        corners = [project(view(V(gate.pos.x + r * math.cos(a), gate.pos.y + r * math.sin(a), gate.pos.z), cam), scale, focus)
                    for a in (i * math.tau / 24 for i in range(24))]
         for i in range(24):
             screen.line(corners[i], corners[(i + 1) % 24], color)
@@ -659,33 +690,37 @@ def draw(screen: Screen, world: World) -> None:
     screen.clear(SPACE)
     cam = world.cam_now                             # 揺れ込み
     scale = screen.width / WIDTH
-    for star in world.stars:
-        sx, sy = project(view(star, cam), scale)
+    focus = world.focus                             # 速いほど広角
+    for star in world.stars:                        # 星。前のコマの位置から線を引く（流線）。近く・速いほど長い
+        sx, sy = project(view(star, cam), scale, focus)
+        back = star.z + world.speed * STEP * STREAK
+        bx, by = project(view(V(star.x, star.y, back), cam), scale, focus)
         near = 1 - star.z / FAR
         color = tuple(int(f + (n - f) * near) for f, n in zip(STAR_FAR, STAR_NEAR))
+        screen.line((bx, by), (sx, sy), tuple(c // 2 for c in color))
         screen.plot(int(sx), int(sy), color)
     for z in sorted(world.rings, reverse=True):     # 輪。奥から。16 角形の線
         color = fog(RING, z)
-        corners = [project(view(V(RING_R * math.cos(a), RING_Y + RING_R * math.sin(a), z), cam), scale)
+        corners = [project(view(V(RING_R * math.cos(a), RING_Y + RING_R * math.sin(a), z), cam), scale, focus)
                    for a in (i * math.tau / 16 for i in range(16))]
         for i in range(16):
             screen.line(corners[i], corners[(i + 1) % 16], color)
     gate_z = world.gate.pos.z if world.gate is not None else -1.0
     for rock in sorted(world.rocks, key=lambda r: -r.pos.z):
         if world.gate is not None and rock.pos.z < gate_z < FAR:   # ゲートより手前の小惑星の前に、ゲートを描く
-            draw_gate(screen, world.gate, cam, scale)
+            draw_gate(screen, world.gate, cam, scale, focus)
             gate_z = FAR
         points, faces = rock_shape(rock.seed)
         placed = [view(rotate(p, *rock.angle).scale(rock.radius) + rock.pos, cam) for p in points]
-        draw_solid(screen, placed, faces, ROCK)
+        draw_solid(screen, placed, faces, ROCK_DANGER if world.dangerous(rock) else ROCK, focus)   # 危ないのは赤み
     if world.gate is not None and gate_z < FAR:
-        draw_gate(screen, world.gate, cam, scale)
+        draw_gate(screen, world.gate, cam, scale, focus)
     if world.over or int(world.hurt * 12) % 2 == 0:  # ぶつかった直後は点滅
         tilt = -world.aim.x * 0.5                   # 曲がる向きに機体を傾ける
         placed = [view(rotate(p, 0.1, 0, tilt).scale(0.9) + world.ship, cam) for p in SHIP_POINTS]
-        draw_solid(screen, placed, SHIP_FACES, SHIP)
+        draw_solid(screen, placed, SHIP_FACES, SHIP, focus)
         tail = view(rotate(V(0, 0, -0.8), 0.1, 0, tilt).scale(0.9) + world.ship, cam)
-        fx, fy = project(tail, scale)
+        fx, fy = project(tail, scale, focus)
         screen.plot(int(fx), int(fy), FLAME)
         screen.plot(int(fx), int(fy) + 1, FLAME)
     if world.flash > 0:                             # 画面の縁が光る（スレスレは黄、ぶつかったら赤）
@@ -705,6 +740,11 @@ def obey(world: World, key: str, down: bool = True) -> None:
         world.aim = V(world.aim.x, -v, 0)
     elif key == "stop":
         world.aim = V(0.0, 0.0, 0)
+    elif key == "go" and down:                      # 1 つのキーで「始める」と「止める／つづける」
+        if not world.started:
+            world.started = True
+        elif not world.over:
+            world.paused = not world.paused
 
 
 # --- ここから下はブラウザ版だけ。CLI 版の run() / Screen.render() / Speaker にあたる ---
@@ -727,6 +767,7 @@ speed_label = document.querySelector("#speed")
 fps_label = document.querySelector("#fps")
 message = document.querySelector("#message")
 again_button = document.querySelector("#again")
+go_button = document.querySelector("#go")
 
 
 class CanvasScreen(Screen):
@@ -789,9 +830,15 @@ def refresh() -> None:
     if world.over:
         message.textContent = (f"おしまい。点 {world.score}" + ("  ベスト更新！" if improved else f"（ベスト {best.score}）")
                                + "  「もう一度」で最初から")
+    elif not world.started:
+        message.textContent = "「スタート」で始まります（矢印で動けます）"
+    elif world.paused:
+        message.textContent = "一時停止中"
     else:
         message.textContent = ""
     again_button.hidden = not world.over
+    go_button.hidden = world.over
+    go_button.textContent = "▶ スタート" if not world.started else "▶ つづける" if world.paused else "❚❚ 一時停止"
 
 
 async def loop():
@@ -820,7 +867,7 @@ async def loop():
 
 
 KEYS = {"ArrowLeft": "left", "ArrowRight": "right", "ArrowUp": "up", "ArrowDown": "down",
-        "a": "left", "d": "right", "w": "up", "s": "down"}
+        "a": "left", "d": "right", "w": "up", "s": "down", " ": "go", "p": "go", "Enter": "go"}
 
 
 @when("keydown", "body")
@@ -835,7 +882,22 @@ def on_down(event):
 def on_up(event):
     key = KEYS.get(event.key)
     if key is not None:
+        event.preventDefault()
         obey(world, key, False)
+
+
+@when("click", "#go")
+def go(event):
+    obey(world, "go")
+    go_button.blur()                                # ボタンに焦点が残ると、スペースが 2 回（ボタンとキー）効いてしまう
+    refresh()
+
+
+@when("click", "#screen")
+def tap_screen(event):
+    """画面をタップしても 始める／止める（スマホ用）。"""
+    obey(world, "go")
+    refresh()
 
 
 @when("pointerdown", ".pad button[data-key]")
@@ -857,7 +919,7 @@ def pad_leave(event):
 @when("click", "#again")
 def again(event):
     global world, improved
-    world = World(seed=int(window.performance.now()))
+    world = World(seed=int(window.performance.now()), started=True)
     improved = False
     refresh()
 

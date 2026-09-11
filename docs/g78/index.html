@@ -176,14 +176,17 @@
       <button type="button" class="r" data-key="right">→</button>
       <button type="button" class="d" data-key="down">↓</button>
     </div>
-    <div class="pad" style="grid-template-columns:1fr"><button type="button" id="again" hidden>もう一度</button></div>
+    <div class="pad" style="grid-template-columns:1fr">
+      <button type="button" id="go" class="go">▶ スタート</button>
+      <button type="button" id="again" hidden>もう一度</button>
+    </div>
 
     <div class="howto">
-      <b>やること</b>：矢印キー（または w a s d、画面のボタン）で宇宙船を動かし、小惑星をよける。
+      <b>やること</b>：「スタート」（スペースでも）で始め、矢印キー（または w a s d、画面のボタン）で宇宙船を動かし、小惑星をよける。p か画面タップで一時停止。
       <ol>
-        <li>小惑星は奥から迫ってきます。<b>近づくほど大きく</b>、回りながら来ます。</li>
+        <li>小惑星は奥から迫ってきます。<b>近づくほど大きく</b>、回りながら来ます。<b>いまの位置のままだとぶつかるものは赤み</b>がかります。</li>
         <li>ぶつかると ♥ が 1 つ減り、しばらく点滅します。3 回で終わり。</li>
-        <li>よけるたびに<b>速さが上がります</b>。どこまでいけるか。</li>
+        <li>よけるたびに<b>速さが上がります</b>。速いほど視野が広がり、星が流れます。どこまでいけるか。</li>
         <li>よけた数が 10 になるたびに緑の<b>ゲート</b>が来ます。中を通れば ♥ が 1 つ戻り、<b>ステージ</b>が進みます。ステージが進むと小惑星の出方が増えます（1 個 → 左右 2 個 → 横一列の帯 → 大きいの）。</li>
         <li>終わると<b>ベスト</b>（点・最高コンボ・よけた数）がこのブラウザに残ります。</li>
         <li><b>ギリギリで通ると点が高い</b>：スレスレ +3、近い +2、それ以外 +1。スレスレ・近いが<b>続くとコンボ</b>で ×2 ×3 …（×5 まで）。遠くをよけるか、ぶつかるとコンボは 0。ぶつかると画面が揺れます。</li>
@@ -212,6 +215,6 @@
   </footer>
 </main>
 
-<script type="py" src="./game.py?v=3fcf75f4"></script>
+<script type="py" src="./game.py?v=1fc0ebcb"></script>
 </body>
 </html>
