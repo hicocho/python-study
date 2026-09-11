@@ -144,7 +144,7 @@ RIVAL_LANES = (-2.2, 0.6, 2.4)                      # CPU カーの走る位置�
 GEARS = (0.0, 9.0, 18.0, 28.0, 44.5)                # ギアの切り替わる速さ（m/s）。4 速
 
 
-ENGINE_HZ = 60.0                                    # エンジン音の輪（0.5 秒）の基本の高さ。速さで再生の速さを変える
+ENGINE_HZ = 110.0                                   # エンジン音の輪（0.5 秒）の基本の高さ。速さで再生の速さを変える
 
 
 COURSE = [(0, 0, 0), (0, 70, 0), (-12, 130, 4), (30, 170, 9), (85, 160, 7), (105, 110, 2),
@@ -291,14 +291,15 @@ def sound_bytes(kind: str) -> bytes:
 
 
 def engine_bytes() -> bytes:
-    """エンジン音の輪。ノコギリ波に近い倍音の和（1/n）を 0.5 秒。ちょうど 30 周期なので、つないでも切れ目が無い。
-    ブラウザはこれを loop で回し、playbackRate を速さで変えて音の高さにする。"""
+    """エンジン音の輪。ノコギリ波に近い倍音の和（1/n、8 個）を 0.5 秒。ちょうど 55 周期なので、つないでも切れ目が無い。
+    ブラウザはこれを loop で回し、playbackRate を速さで変えて音の高さにする。
+    基本の高さは 110 Hz——60 Hz にしたら、スマホやノートのスピーカーでは低すぎて聞こえなかった。"""
     count = int(RATE * 0.5)
     samples = array("h")
     for i in range(count):
         t = i / RATE
-        wave_ = sum(math.sin(math.tau * ENGINE_HZ * n * t) / n for n in range(1, 7))
-        samples.append(int(32767 * VOLUME * 0.55 * wave_))
+        wave_ = sum(math.sin(math.tau * ENGINE_HZ * n * t) / n for n in range(1, 9))
+        samples.append(int(32767 * 0.22 * wave_))
     buffer = io.BytesIO()
     with wave.open(buffer, "wb") as out:
         out.setnchannels(1)
@@ -1233,7 +1234,8 @@ class Speaker:
         self.engine = window.Audio.new("data:audio/wav;base64," + base64.b64encode(engine_bytes()).decode())
         self.engine.loop = True
         self.engine.preservesPitch = False          # 速く再生したら高く聞こえるように（既定は高さを保ってしまう）
-        self.engine.volume = 0.5
+        self.engine.webkitPreservesPitch = False    # Safari は別の名前
+        self.engine.volume = 0.6
         self.running = False
 
     def say(self, kind: str | None) -> None:
@@ -1243,12 +1245,17 @@ class Speaker:
         sound.currentTime = 0
         sound.play()
 
-    def rev(self, speed: float, on: bool) -> None:
-        """エンジンの回転。on が False なら止める。"""
-        if on and not self.running:
+    def start_engine(self) -> None:
+        """エンジンを回し始める。**ボタンやキーの処理の中から呼ぶ**——Safari（iPhone）は、
+        人が触った処理の中でしか音を出し始められない。loop() のような時計から呼んでも黙って失敗する。"""
+        if not self.running:
+            self.engine.currentTime = 0
             self.engine.play()
             self.running = True
-        elif not on and self.running:
+
+    def rev(self, speed: float, on: bool) -> None:
+        """エンジンの回転。on が False なら止める。"""
+        if not on and self.running:
             self.engine.pause()
             self.running = False
         if self.running:
@@ -1327,12 +1334,19 @@ KEYS = {"ArrowLeft": "left", "ArrowRight": "right", "ArrowUp": "up", "ArrowDown"
         "a": "left", "d": "right", "w": "up", "s": "down", " ": "go", "Enter": "go"}
 
 
+def wake_sound() -> None:
+    """人が触ったときに音を起こす（スタート後で、チェックが入っていれば）。"""
+    if world.started and sound_on.checked and not world.player.finished():
+        speaker.start_engine()
+
+
 @when("keydown", "body")
 def on_down(event):
     key = KEYS.get(event.key)
     if key is not None:
         event.preventDefault()
         obey(world, key, True)
+        wake_sound()
 
 
 @when("keyup", "body")
@@ -1347,13 +1361,25 @@ def on_up(event):
 def go(event):
     obey(world, "go")
     go_button.blur()
+    wake_sound()
     refresh()
+
+
+@when("change", "#engine")
+def toggle_engine(event):
+    wake_sound()
+
+
+@when("pointerdown", "#screen")
+def tap_screen(event):
+    wake_sound()
 
 
 @when("pointerdown", ".pad button[data-key]")
 def pad_down(event):
     event.preventDefault()
     obey(world, event.target.getAttribute("data-key"), True)
+    wake_sound()
 
 
 @when("pointerup", ".pad button[data-key]")
@@ -1372,6 +1398,7 @@ def again(event):
     world = World(seed=int(window.performance.now()))
     world.started = True
     improved = (False, False)
+    wake_sound()
     refresh()
 
 

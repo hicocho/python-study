@@ -69,7 +69,7 @@ HIT_DIST = 2.6                                      # 車どうしがぶつか�
 RIVAL_PACE = (33.0, 36.5, 39.5)                     # CPU カーの直線での速さ
 RIVAL_LANES = (-2.2, 0.6, 2.4)                      # CPU カーの走る位置（中心からの横ずれ）
 GEARS = (0.0, 9.0, 18.0, 28.0, 44.5)                # ギアの切り替わる速さ（m/s）。4 速
-ENGINE_HZ = 60.0                                    # エンジン音の輪（0.5 秒）の基本の高さ。速さで再生の速さを変える
+ENGINE_HZ = 110.0                                   # エンジン音の輪（0.5 秒）の基本の高さ。速さで再生の速さを変える
 
 # 制御点 (x, z, y)。z が前、y が高さ。閉じたコースなので最後は最初につながる
 COURSE = [(0, 0, 0), (0, 70, 0), (-12, 130, 4), (30, 170, 9), (85, 160, 7), (105, 110, 2),
@@ -149,14 +149,15 @@ def sound_bytes(kind: str) -> bytes:
 
 
 def engine_bytes() -> bytes:
-    """エンジン音の輪。ノコギリ波に近い倍音の和（1/n）を 0.5 秒。ちょうど 30 周期なので、つないでも切れ目が無い。
-    ブラウザはこれを loop で回し、playbackRate を速さで変えて音の高さにする。"""
+    """エンジン音の輪。ノコギリ波に近い倍音の和（1/n、8 個）を 0.5 秒。ちょうど 55 周期なので、つないでも切れ目が無い。
+    ブラウザはこれを loop で回し、playbackRate を速さで変えて音の高さにする。
+    基本の高さは 110 Hz——60 Hz にしたら、スマホやノートのスピーカーでは低すぎて聞こえなかった。"""
     count = int(RATE * 0.5)
     samples = array("h")
     for i in range(count):
         t = i / RATE
-        wave_ = sum(math.sin(math.tau * ENGINE_HZ * n * t) / n for n in range(1, 7))
-        samples.append(int(32767 * VOLUME * 0.55 * wave_))
+        wave_ = sum(math.sin(math.tau * ENGINE_HZ * n * t) / n for n in range(1, 9))
+        samples.append(int(32767 * 0.22 * wave_))
     buffer = io.BytesIO()
     with wave.open(buffer, "wb") as out:
         out.setnchannels(1)
@@ -1357,7 +1358,9 @@ def check() -> None:
     body = loop_[44:]
     assert loop_[:4] == b"RIFF" and len(body) == RATE
     first, last = int.from_bytes(body[:2], "little", signed=True), int.from_bytes(body[-2:], "little", signed=True)
-    assert abs(first) < 400 and abs(last) < 1200, (first, last)
+    assert abs(first) < 400 and abs(last) < 2500, (first, last)
+    peak = max(abs(int.from_bytes(body[k:k + 2], "little", signed=True)) for k in range(0, len(body), 2))
+    assert 0.3 < peak / 32767 < 0.9, peak
     rates = [engine(v)[1] for v in range(0, 45)]
     gears = [engine(v)[0] for v in range(0, 45)]
     assert gears[0] == 1 and gears[44] == 4 and gears == sorted(gears)
