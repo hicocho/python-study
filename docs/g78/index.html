@@ -161,8 +161,9 @@
 
   <div class="card">
     <div class="status">
-      <span>点 <b id="score">0</b> ・ よけた <b id="passed">0</b> ・ コンボ <b id="combo">―</b></span>
-      <span>ベスト <b id="best">0</b> ・ 残り <b id="lives">♥♥♥</b> ・ 速さ <b id="speed">10.0</b> ・ <b id="fps">–</b> コマ/秒</span>
+      <span>点 <b id="score">0</b> ・ よけた <b id="passed">0</b> ・ コンボ <b id="combo">―</b> ・ ベスト <b id="best">0</b></span>
+      <span>ステージ <b id="stage">1</b> ・ ゲート <b id="gate">あと 10</b></span>
+      <span>残り <b id="lives">♥♥♥</b> ・ 速さ <b id="speed">10.0</b> ・ <b id="fps">–</b> コマ/秒</span>
     </div>
 
     <div class="stage"><canvas id="screen" width="256" height="160"></canvas></div>
@@ -183,6 +184,7 @@
         <li>小惑星は奥から迫ってきます。<b>近づくほど大きく</b>、回りながら来ます。</li>
         <li>ぶつかると ♥ が 1 つ減り、しばらく点滅します。3 回で終わり。</li>
         <li>よけるたびに<b>速さが上がります</b>。どこまでいけるか。</li>
+        <li>よけた数が 10 になるたびに緑の<b>ゲート</b>が来ます。中を通れば ♥ が 1 つ戻り、<b>ステージ</b>が進みます。ステージが進むと小惑星の出方が増えます（1 個 → 左右 2 個 → 横一列の帯 → 大きいの）。</li>
         <li>終わると<b>ベスト</b>（点・最高コンボ・よけた数）がこのブラウザに残ります。</li>
         <li><b>ギリギリで通ると点が高い</b>：スレスレ +3、近い +2、それ以外 +1。スレスレ・近いが<b>続くとコンボ</b>で ×2 ×3 …（×5 まで）。遠くをよけるか、ぶつかるとコンボは 0。ぶつかると画面が揺れます。</li>
       </ol>
@@ -210,6 +212,6 @@
   </footer>
 </main>
 
-<script type="py" src="./game.py?v=1f9d1a43"></script>
+<script type="py" src="./game.py?v=3fcf75f4"></script>
 </body>
 </html>

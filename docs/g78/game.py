@@ -97,6 +97,15 @@ SHAKE_GRAZE = 0.12                                  # スレスレのときに�
 SHAKE_AMP = 0.35                                    # 揺れの大きさ（世界の単位）
 
 
+GATE_EVERY = 10                                     # よけた数がこれに達するたびにゲートが来る
+
+
+GATE_R = 2.0                                        # ゲートの半径。中心からこれ以内を通れば通過
+
+
+GATE_SPEED = 1.5                                    # ゲートを通ると速さがこれだけ上がる（ステージが 1 つ進む）
+
+
 LIGHT_DIR = (-0.5, 0.8, -0.6)                       # 光の向き（左上・手前から）
 
 
@@ -127,6 +136,9 @@ GLOW = (255, 228, 96)                               # スレスレのとき画�
 BLOOD = (235, 70, 60)                               # ぶつかったときの縁の色
 
 
+GATE = (110, 230, 150)                              # ゲートの色
+
+
 RATE = 22050                                        # 音の標本の数（1 秒あたり）
 
 
@@ -145,13 +157,16 @@ def tone(hz: float, seconds: float, volume: float = VOLUME) -> array:
 
 def sound_bytes(kind: str) -> bytes:
     """出来事の音。pass はよけた（小さく高く）、graze はスレスレ（キラッと 2 音）、
-    hit はぶつかった（低く長く）、over はおしまい、best はベスト更新（上がっていく 4 音）。"near" は pass と同じ音。"""
+    gate はゲート通過（上がる 3 音）、hit はぶつかった（低く長く）、over はおしまい、
+    best はベスト更新（上がっていく 4 音）。"near" は pass と同じ音。"""
     if kind in ("pass", "near"):
         samples = tone(1320, 0.05)
     elif kind == "graze":
         samples = tone(1760, 0.04) + tone(2640, 0.08)
     elif kind == "best":
         samples = tone(523, 0.1) + tone(659, 0.1) + tone(784, 0.1) + tone(1047, 0.3)
+    elif kind == "gate":
+        samples = tone(660, 0.07) + tone(880, 0.07) + tone(1320, 0.18)
     elif kind == "hit":
         samples = tone(110, 0.28, VOLUME * 1.8)
     else:
@@ -165,7 +180,7 @@ def sound_bytes(kind: str) -> bytes:
     return buffer.getvalue()
 
 
-EVENTS = ("pass", "near", "graze", "hit", "over")   # update() が返す出来事。目立つ順
+EVENTS = ("pass", "near", "graze", "gate", "hit", "over")   # update() が返す出来事。目立つ順
 
 
 SOUNDS = EVENTS + ("best",)                         # 出来事ごとに音を 1 つ（near は pass と同じ音）＋ ベスト更新
@@ -379,6 +394,14 @@ class Rock:
 
 
 @dataclass
+class Gate:
+    """ゲート。中を通れば ♥ が 1 つ戻り、ステージが 1 つ進む。"""
+
+    pos: V
+    passed: bool = False
+
+
+@dataclass
 class Best:
     """これまでのベスト。端末は records.json、ブラウザは localStorage に置くが、中身の形（dump）は同じ。"""
 
@@ -426,6 +449,9 @@ class World:
     combo_max: int = 0
     lives: int = 3
     hurt: float = 0.0                               # ぶつかった直後（点滅）
+    stage: int = 1                                  # ゲートを通るたびに 1 つ進む。小惑星の出方が増える
+    gate: Gate | None = None                        # いま来ているゲート
+    since_gate: int = 0                             # 前のゲートからよけた数。GATE_EVERY で次のゲート
     shake: float = 0.0                              # 揺れの残り秒数
     flash: float = 0.0                              # 画面の縁が光る残り秒数
     flash_color: tuple[int, int, int] = GLOW
@@ -441,15 +467,23 @@ class World:
     def new_star(self, z: float) -> V:
         return V(self.luck.uniform(-24, 24), self.luck.uniform(-16, 16), z)
 
-    def new_rock(self) -> Rock:
-        return Rock(V(self.luck.uniform(-REACH_X, REACH_X), self.luck.uniform(*REACH_Y), FAR),
-                    self.luck.uniform(0.7, 1.6), self.luck.randrange(1 << 30),
+    def new_rock(self, pos: V | None = None, radius: float | None = None) -> Rock:
+        """小惑星を 1 つ。場所と大きさは指定がなければ、動ける範囲の中でランダム。"""
+        if pos is None:
+            pos = V(self.luck.uniform(-REACH_X, REACH_X), self.luck.uniform(*REACH_Y), FAR)
+        if radius is None:
+            radius = self.luck.uniform(0.7, 1.6)
+        return Rock(pos, radius, self.luck.randrange(1 << 30),
                     V(self.luck.uniform(-1.2, 1.2), self.luck.uniform(-1.2, 1.2), self.luck.uniform(-0.6, 0.6)))
+
+    def gap(self, rock: Rock) -> float:
+        """小惑星の「ぶつかる境目（縁 + HIT_GAP）」から自機までの余り。負ならぶつかっている。"""
+        return math.dist((rock.pos.x, rock.pos.y), (self.ship.x, self.ship.y)) - rock.radius - HIT_GAP
 
     def judge(self, rock: Rock) -> str:
         """自機の横を通り過ぎた小惑星との近さで、出来事を決める。
-        ぶつかる境目（縁 + HIT_GAP）からの余りが GRAZE_GAP 以内なら graze、NEAR_GAP 以内なら near。"""
-        gap = math.dist((rock.pos.x, rock.pos.y), (self.ship.x, self.ship.y)) - rock.radius - HIT_GAP
+        余りが GRAZE_GAP 以内なら graze、NEAR_GAP 以内なら near。"""
+        gap = self.gap(rock)
         if gap < 0:
             return "hit"
         if gap < GRAZE_GAP:
@@ -469,6 +503,7 @@ class World:
             points = 1
         self.score += points
         self.passed += 1
+        self.since_gate += 1
         self.speed = min(34.0, self.speed + 0.35)
         return points
 
@@ -507,45 +542,116 @@ class World:
         # 星（視差：近いほど速く流れて見える。動く速さは同じ）
         self.stars = [V(s.x, s.y, s.z - self.speed * dt) if s.z - self.speed * dt > NEAR
                       else self.new_star(FAR) for s in self.stars]
-        # 小惑星
+        # 出す：ゲートの番なら ゲート、そうでなければ ステージに応じた並びの小惑星
         happened = None
         if self.time >= self.spawn_at:
-            self.rocks.append(self.new_rock())
-            self.spawn_at = self.time + max(0.35, 1.1 - self.time * 0.01)
-        kept = []
+            if self.gate is None and self.since_gate >= GATE_EVERY:
+                self.gate = Gate(V(self.luck.uniform(-REACH_X + GATE_R * 0.6, REACH_X - GATE_R * 0.6),
+                                   self.luck.uniform(0.2, 2.0), FAR))
+                self.spawn_at = self.time + 0.8     # 通ったあとも少し休み
+            elif self.gate is not None and not self.gate.passed:
+                pass                                # ゲートが来る間は小惑星を出さない（ひと息つく）
+            else:
+                pattern = self.luck.choice(stage_patterns(self.stage))
+                self.rocks.extend(PATTERNS[pattern](self))
+                self.spawn_at = self.time + max(0.35, 1.1 - self.time * 0.01)
+        # ゲート
+        if self.gate is not None:
+            self.gate.pos = V(self.gate.pos.x, self.gate.pos.y, self.gate.pos.z - self.speed * dt)
+            if not self.gate.passed and self.gate.pos.z <= self.ship.z:
+                self.gate.passed = True
+                self.since_gate = 0
+                if math.dist((self.gate.pos.x, self.gate.pos.y), (self.ship.x, self.ship.y)) <= GATE_R:
+                    self.stage += 1
+                    self.lives = min(3, self.lives + 1)
+                    self.speed = min(34.0, self.speed + GATE_SPEED)
+                    self.flash, self.flash_color = 0.4, GATE
+                    self.tell(f"ゲート通過！ ステージ {self.stage}")
+                    happened = "gate"
+                else:
+                    self.tell("ゲートを外した…")
+            if self.gate.pos.z <= NEAR:
+                self.gate = None
+        # 小惑星。同じコマに何個も通り過ぎたら（帯など）、いちばん近い 1 個で決める
         for rock in self.rocks:
             rock.pos = V(rock.pos.x, rock.pos.y, rock.pos.z - self.speed * dt)
             rock.angle = rock.angle + rock.spin.scale(dt)
-            if not rock.passed and rock.pos.z <= self.ship.z:
+        passing = [r for r in self.rocks if not r.passed and r.pos.z <= self.ship.z]
+        if passing:
+            for rock in passing:
                 rock.passed = True
-                event = self.judge(rock)
-                if event == "hit" and self.hurt > 0:   # 点滅中（無敵）はぶつからないが、点にもならない
-                    pass
-                elif event == "hit":
-                    self.lives -= 1
-                    self.hurt = 1.0
-                    self.combo = 0
-                    self.shake = SHAKE_HIT
-                    self.flash, self.flash_color = SHAKE_HIT, BLOOD
-                    self.tell("ぶつかった！ コンボ 0")
-                    happened = "hit"
-                    if self.lives <= 0:
-                        self.over = True
-                        happened = "over"
-                else:
-                    points = self.reward(event)
-                    if event == "graze":
-                        self.shake = max(self.shake, SHAKE_GRAZE)
-                        self.flash, self.flash_color = 0.25, GLOW
-                        self.tell(f"スレスレ！ +{points}" + (f"  ×{min(self.combo, COMBO_MAX)}" if self.combo > 1 else ""))
-                    elif event == "near":
-                        self.tell(f"近い +{points}" + (f"  ×{min(self.combo, COMBO_MAX)}" if self.combo > 1 else ""))
-                    if happened is None or EVENTS.index(event) > EVENTS.index(happened):
-                        happened = event            # 同じコマに 2 つ起きたら、目立つ方（EVENTS の後ろ）を返す
-            if rock.pos.z > NEAR:
-                kept.append(rock)
-        self.rocks = kept
+            rock = min(passing, key=self.gap)
+            event = self.judge(rock)
+            if event == "hit" and self.hurt > 0:   # 点滅中（無敵）はぶつからないが、点にもならない
+                pass
+            elif event == "hit":
+                self.lives -= 1
+                self.hurt = 1.0
+                self.combo = 0
+                self.shake = SHAKE_HIT
+                self.flash, self.flash_color = SHAKE_HIT, BLOOD
+                self.tell("ぶつかった！ コンボ 0")
+                happened = "hit"
+                if self.lives <= 0:
+                    self.over = True
+                    happened = "over"
+            else:
+                points = self.reward(event)
+                if event == "graze":
+                    self.shake = max(self.shake, SHAKE_GRAZE)
+                    self.flash, self.flash_color = 0.25, GLOW
+                    self.tell(f"スレスレ！ +{points}" + (f"  ×{min(self.combo, COMBO_MAX)}" if self.combo > 1 else ""))
+                elif event == "near":
+                    self.tell(f"近い +{points}" + (f"  ×{min(self.combo, COMBO_MAX)}" if self.combo > 1 else ""))
+                if happened is None or EVENTS.index(event) > EVENTS.index(happened):
+                    happened = event            # 同じコマに 2 つ起きたら、目立つ方（EVENTS の後ろ）を返す
+        self.rocks = [r for r in self.rocks if r.pos.z > NEAR]
         return happened
+
+
+def spawn_one(world: World) -> list[Rock]:
+    """1 個。場所も大きさもランダム。"""
+    return [world.new_rock()]
+
+
+def spawn_pair(world: World) -> list[Rock]:
+    """左右に 2 個。間を抜けると両方スレスレ。"""
+    center = world.luck.uniform(-REACH_X + 1.9, REACH_X - 1.9)
+    y = world.luck.uniform(*REACH_Y)
+    return [world.new_rock(V(center - 1.9, y, FAR), 0.9), world.new_rock(V(center + 1.9, y, FAR), 0.9)]
+
+
+def spawn_band(world: World) -> list[Rock]:
+    """横一列の帯。1 か所だけ穴が空いている（上下によけてもよい）。"""
+    y = world.luck.uniform(*REACH_Y)
+    hole = world.luck.randrange(5)
+    return [world.new_rock(V(-REACH_X + 2.1 * i, y, FAR), 0.8) for i in range(5) if i != hole]
+
+
+def spawn_big(world: World) -> list[Rock]:
+    """大きいのが 1 個。動ける範囲の半分をふさぐ。"""
+    return [world.new_rock(radius=world.luck.uniform(2.0, 2.6))]
+
+
+PATTERNS = {"one": spawn_one, "pair": spawn_pair, "band": spawn_band, "big": spawn_big}   # 名前 → 出し方
+
+
+STAGE_ORDER = ("one", "pair", "band", "big")        # ステージが進むと、この順に出方が増える
+
+
+def stage_patterns(stage: int) -> tuple[str, ...]:
+    """そのステージで出る出方。ステージ 1 は 1 個だけ、2 で左右、3 で帯、4 で大きいの。"""
+    return STAGE_ORDER[:max(1, min(stage, len(STAGE_ORDER)))]
+
+
+def draw_gate(screen: Screen, gate: Gate, cam: Camera, scale: float) -> None:
+    """ゲート。二重の 24 角形の輪。奥にあるほど霧で薄い。"""
+    color = fog(GATE, gate.pos.z * 0.5)             # 目標なので、小惑星より霧に溶けにくくする
+    for r in (GATE_R, GATE_R + 0.18):
+        corners = [project(view(V(gate.pos.x + r * math.cos(a), gate.pos.y + r * math.sin(a), gate.pos.z), cam), scale)
+                   for a in (i * math.tau / 24 for i in range(24))]
+        for i in range(24):
+            screen.line(corners[i], corners[(i + 1) % 24], color)
 
 
 def draw(screen: Screen, world: World) -> None:
@@ -564,10 +670,16 @@ def draw(screen: Screen, world: World) -> None:
                    for a in (i * math.tau / 16 for i in range(16))]
         for i in range(16):
             screen.line(corners[i], corners[(i + 1) % 16], color)
+    gate_z = world.gate.pos.z if world.gate is not None else -1.0
     for rock in sorted(world.rocks, key=lambda r: -r.pos.z):
+        if world.gate is not None and rock.pos.z < gate_z < FAR:   # ゲートより手前の小惑星の前に、ゲートを描く
+            draw_gate(screen, world.gate, cam, scale)
+            gate_z = FAR
         points, faces = rock_shape(rock.seed)
         placed = [view(rotate(p, *rock.angle).scale(rock.radius) + rock.pos, cam) for p in points]
         draw_solid(screen, placed, faces, ROCK)
+    if world.gate is not None and gate_z < FAR:
+        draw_gate(screen, world.gate, cam, scale)
     if world.over or int(world.hurt * 12) % 2 == 0:  # ぶつかった直後は点滅
         tilt = -world.aim.x * 0.5                   # 曲がる向きに機体を傾ける
         placed = [view(rotate(p, 0.1, 0, tilt).scale(0.9) + world.ship, cam) for p in SHIP_POINTS]
@@ -607,6 +719,8 @@ passed_label = document.querySelector("#passed")
 combo_label = document.querySelector("#combo")
 note_label = document.querySelector("#note")
 best_label = document.querySelector("#best")
+stage_label = document.querySelector("#stage")
+gate_label = document.querySelector("#gate")
 SAVED = "g78-best"                                  # localStorage の鍵。CLI 版の records.json にあたる
 lives_label = document.querySelector("#lives")
 speed_label = document.querySelector("#speed")
@@ -665,10 +779,13 @@ def refresh() -> None:
     passed_label.textContent = str(world.passed)
     combo_label.textContent = f"×{min(world.combo, COMBO_MAX)}" if world.combo > 1 else "―"
     note_label.textContent = world.note if world.time < world.note_until else " "
-    note_label.style.color = "#c0392b" if world.note.startswith("ぶつかった") else "#b8860b"
+    note_label.style.color = ("#c0392b" if world.note.startswith("ぶつかった")
+                              else "#2e8b57" if world.note.startswith("ゲート") else "#b8860b")
     lives_label.textContent = "♥" * world.lives + "♡" * (3 - world.lives)
     speed_label.textContent = f"{world.speed:.1f}"
     best_label.textContent = str(best.score)
+    stage_label.textContent = str(world.stage)
+    gate_label.textContent = "来た！" if world.gate is not None and not world.gate.passed else f"あと {GATE_EVERY - world.since_gate}"
     if world.over:
         message.textContent = (f"おしまい。点 {world.score}" + ("  ベスト更新！" if improved else f"（ベスト {best.score}）")
                                + "  「もう一度」で最初から")
