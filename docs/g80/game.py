@@ -541,8 +541,13 @@ class World:
         self.shots_left -= 1
         self.recoil = 1.0
         self.flash = 0.08
-        if self.clay is None or not self.clay.flying():   # 皿が無い（まだ出ていない・決着した）→ 空撃ち
-            self.tell("皿が無い…" if self.clay is None else "もう決着した")
+        if self.clay is None or not self.clay.flying():   # 皿が無い（まだ出ていない・割れた・落ちた）→ 空撃ち
+            if self.clay is None:
+                self.tell("皿はまだ…")
+            elif self.clay.result in POINTS:
+                self.tell("もう割れている")
+            else:
+                self.tell("次の皿を待つ")
             return "shot"
         self.clay.shots += 1
         aim = direction(self.cam.yaw, self.cam.pitch)
