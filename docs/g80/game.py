@@ -116,6 +116,12 @@ TURN_RAMP = 0.5
 PITCH_GAIN = 0.5                                    # 上下は左右の半分の速さ（皿の上下の動きは小さいので）
 
 
+NUDGE = 0.02                                        # 1 回押したときに動く角度（ラジアン。1.1°＝散弾の広がりの 0.7 倍）
+
+
+HOLD = 0.18                                         # これより長く押し続けたら、連続して回り始める
+
+
 PITCH_LIMIT = (-0.35, 0.9)                          # 見下ろし・見上げの限界
 
 
@@ -574,12 +580,14 @@ class World:
         if not self.started or self.over:
             return None
         self.time += dt
-        # 照準。押した直後はゆっくり（細かく合わせる）、押し続けると速く（大きく振る）
+        # 照準。1 回押すと NUDGE だけ動く（obey）。HOLD 秒より長く押し続けると連続して回り、
+        # 最初はゆっくり（細かく合わせる）、さらに押し続けると速く（大きく振る）
         if self.turn.x or self.turn.y:
             self.turning += dt
         else:
             self.turning = 0.0
-        rate = TURN + (TURN_FAST - TURN) * min(1.0, self.turning / TURN_RAMP)
+        held = max(0.0, self.turning - HOLD)
+        rate = (TURN + (TURN_FAST - TURN) * min(1.0, held / TURN_RAMP)) if self.turning > HOLD else 0.0
         yaw = self.cam.yaw + self.turn.x * rate * dt
         pitch = max(PITCH_LIMIT[0], min(PITCH_LIMIT[1], self.cam.pitch + self.turn.y * rate * PITCH_GAIN * dt))
         self.cam = Camera(self.cam.pos, yaw, pitch)
@@ -812,6 +820,13 @@ def draw(screen: Screen, world: World) -> None:
 def obey(world: World, key: str, down: bool = True) -> str | None:
     """キーを 1 つ受ける。矢印は照準、fire は撃つ、go は始める。撃った結果の出来事を返す。"""
     v = 1.0 if down else 0.0
+    nudge = {"left": (-1, 0), "right": (1, 0), "up": (0, 1), "down": (0, -1)}.get(key)
+    if nudge and down and world.started and not world.over:   # 押した瞬間に少しだけ動く（押し始めだけ）
+        was = world.turn.x if nudge[0] else world.turn.y
+        if was == 0.0:
+            yaw = world.cam.yaw + nudge[0] * NUDGE
+            pitch = max(PITCH_LIMIT[0], min(PITCH_LIMIT[1], world.cam.pitch + nudge[1] * NUDGE * PITCH_GAIN))
+            world.cam = Camera(world.cam.pos, yaw, pitch)
     if key == "left":
         world.turn = V(-v if down else (0.0 if world.turn.x < 0 else world.turn.x), world.turn.y, 0)
     elif key == "right":
@@ -952,7 +967,7 @@ def on_down(event):
     key = KEYS.get(event.key)
     if key is not None:
         event.preventDefault()
-        if event.repeat and key == "fire":
+        if event.repeat:                            # 押しっぱなしの繰り返しは無視（押し始めだけ 1 回ぶん動く）
             return
         speaker.say(obey(world, key, True))
 

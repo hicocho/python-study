@@ -57,6 +57,8 @@ TURN = 1.0                                          # 照準を回す速さ（�
 TURN_FAST = 3.2                                     # 押し続けると TURN_RAMP 秒でここまで速くなる（大きく振る）
 TURN_RAMP = 0.5
 PITCH_GAIN = 0.5                                    # 上下は左右の半分の速さ（皿の上下の動きは小さいので）
+NUDGE = 0.02                                        # 1 回押したときに動く角度（ラジアン。1.1°＝散弾の広がりの 0.7 倍）
+HOLD = 0.18                                         # これより長く押し続けたら、連続して回り始める
 PITCH_LIMIT = (-0.35, 0.9)                          # 見下ろし・見上げの限界
 RECOIL = 0.05                                       # 撃ったときに跳ね上がる角度
 POINTS = {"smash": 3, "break": 2, "chip": 1}        # 粉々・割れる・かする
@@ -488,12 +490,14 @@ class World:
         if not self.started or self.over:
             return None
         self.time += dt
-        # 照準。押した直後はゆっくり（細かく合わせる）、押し続けると速く（大きく振る）
+        # 照準。1 回押すと NUDGE だけ動く（obey）。HOLD 秒より長く押し続けると連続して回り、
+        # 最初はゆっくり（細かく合わせる）、さらに押し続けると速く（大きく振る）
         if self.turn.x or self.turn.y:
             self.turning += dt
         else:
             self.turning = 0.0
-        rate = TURN + (TURN_FAST - TURN) * min(1.0, self.turning / TURN_RAMP)
+        held = max(0.0, self.turning - HOLD)
+        rate = (TURN + (TURN_FAST - TURN) * min(1.0, held / TURN_RAMP)) if self.turning > HOLD else 0.0
         yaw = self.cam.yaw + self.turn.x * rate * dt
         pitch = max(PITCH_LIMIT[0], min(PITCH_LIMIT[1], self.cam.pitch + self.turn.y * rate * PITCH_GAIN * dt))
         self.cam = Camera(self.cam.pos, yaw, pitch)
@@ -726,6 +730,13 @@ def draw(screen: Screen, world: World) -> None:
 def obey(world: World, key: str, down: bool = True) -> str | None:
     """キーを 1 つ受ける。矢印は照準、fire は撃つ、go は始める。撃った結果の出来事を返す。"""
     v = 1.0 if down else 0.0
+    nudge = {"left": (-1, 0), "right": (1, 0), "up": (0, 1), "down": (0, -1)}.get(key)
+    if nudge and down and world.started and not world.over:   # 押した瞬間に少しだけ動く（押し始めだけ）
+        was = world.turn.x if nudge[0] else world.turn.y
+        if was == 0.0:
+            yaw = world.cam.yaw + nudge[0] * NUDGE
+            pitch = max(PITCH_LIMIT[0], min(PITCH_LIMIT[1], world.cam.pitch + nudge[1] * NUDGE * PITCH_GAIN))
+            world.cam = Camera(world.cam.pos, yaw, pitch)
     if key == "left":
         world.turn = V(-v if down else (0.0 if world.turn.x < 0 else world.turn.x), world.turn.y, 0)
     elif key == "right":
@@ -846,11 +857,14 @@ def run() -> None:
                 elif key == "mode" and not world.started:
                     world.mode = "skeet" if world.mode == "trap" else "trap"
                 elif key in ("left", "right", "up", "down"):
-                    held[key] = now + 0.45
+                    if held.get(key, 0.0) <= now:   # 押し始め：1 回ぶん動く
+                        obey(world, key, True)
+                    held[key] = now + 0.15          # 端末はキーの離しが分からない。連打（OS の繰り返し）が続く間だけ「押している」
                 else:
                     speaker.say(obey(world, key))
             for key in ("left", "right", "up", "down"):
-                obey(world, key, held.get(key, 0.0) > now)
+                if held.get(key, 0.0) <= now and (world.turn.x if key in ("left", "right") else world.turn.y):
+                    obey(world, key, False)
             lag = min(lag + now - last, 0.25)
             last = now
             while lag >= STEP:
@@ -975,27 +989,31 @@ def check() -> None:
     print("● 照準と皿の速さの慣らし")
     world = World(seed=6)
     world.started = True
-    world.turn = V(1.0, 0.0, 0)
+    obey(world, "right", True)                       # 押した瞬間
+    assert abs(world.cam.yaw - NUDGE) < 1e-9, "1 回押すと NUDGE だけ動く"
+    for _ in range(int(HOLD / STEP)):
+        world.update(STEP)
+    assert abs(world.cam.yaw - NUDGE) < 1e-9, "HOLD 秒までは動かない"
     world.update(STEP)
-    first = world.cam.yaw
+    first = world.cam.yaw - NUDGE
+    assert 0 < first < TURN * STEP * 1.2, first
     for _ in range(30):
         world.update(STEP)
-    later = world.cam.yaw - first
-    assert first < TURN * STEP * 1.2 and later / 30 > first * 2, (first, later / 30)
-    world.turn = V(0.0, 0.0, 0)
+    later = world.cam.yaw - NUDGE - first
+    assert later / 30 > first * 2, (first, later / 30)
+    obey(world, "right", False)
     world.update(STEP)
     assert world.turning == 0.0, "離せば次はまたゆっくりから"
-    world.turn = V(0.0, 1.0, 0)
-    pitch0 = world.cam.pitch
-    world.update(STEP)
-    assert abs((world.cam.pitch - pitch0) / first - PITCH_GAIN) < 0.05, "上下は左右の半分"
+    yaw0 = world.cam.yaw
+    obey(world, "up", True)
+    assert abs(world.cam.pitch - NUDGE * PITCH_GAIN) < 1e-9 and world.cam.yaw == yaw0, "上下は左右の半分"
     world = World(seed=6)
     speeds = []
     for k in range(ROUND):
         world.thrown = k
         speeds.append(world.launch_speed())
     assert LAUNCH_SLOW[0] <= speeds[0] <= LAUNCH_SLOW[1] and LAUNCH_SPEED[0] <= speeds[-1] <= LAUNCH_SPEED[1]
-    print(f"  照準は押した直後 {TURN} rad/s、{TURN_RAMP} 秒で {TURN_FAST} rad/s。上下はその {PITCH_GAIN} 倍。皿は 1 枚目 {speeds[0]:.0f} m/s → {EASE_IN} 枚目以降 {speeds[-1]:.0f} m/s")
+    print(f"  1 回押すと {math.degrees(NUDGE):.1f}°。{HOLD} 秒より長く押すと {TURN} rad/s から {TURN_RAMP} 秒で {TURN_FAST} rad/s。上下はその {PITCH_GAIN} 倍。皿は 1 枚目 {speeds[0]:.0f} m/s → {EASE_IN} 枚目以降 {speeds[-1]:.0f} m/s")
     print("● 撃てるとき")
     world = World(seed=4)
     world.started = True
