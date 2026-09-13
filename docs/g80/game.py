@@ -170,10 +170,40 @@ HOUSE = (176, 166, 148)
 HOUSE_ROOF = (120, 110, 96)
 
 
-CLAY = (240, 120, 40)
+CLAY = (245, 130, 40)
+
+
+CLAY_RIM = (200, 95, 28)
 
 
 CLAY_UNDER = (150, 70, 20)
+
+
+CLAY_SHADOW = (52, 96, 44)
+
+
+CLOUD_SHADE = (205, 214, 228)
+
+
+MOUNTAIN_FARTHEST = (150, 172, 205)
+
+
+TREELINE = (52, 92, 62)
+
+
+PATCH = (66, 124, 56)
+
+
+SUN = (255, 246, 210)
+
+
+SUN_HALO = (236, 232, 214)
+
+
+FENCE = (190, 180, 160)
+
+
+DOOR = (60, 52, 44)
 
 
 BARREL = (48, 48, 54)
@@ -381,6 +411,29 @@ class Screen:
                 left, right = max(0, int(min(xs))), min(self.width - 1, int(max(xs)))
                 if left <= right:
                     self.rows[y][left * 3:(right + 1) * 3] = paint * (right - left + 1)
+
+    def strip(self, x0: int, x1: int, top0: float, top1: float, bottom: int, color: tuple[int, int, int]) -> None:
+        """x0〜x1 の縦の帯を、上の縁を top0 → top1 の直線にして bottom まで塗る（山なみ用）。
+        fill() より速い：辺との交点を求めず、行ごとに「どこから右を塗るか」だけ計算する。"""
+        x0, x1 = max(0, x0), min(self.width, x1)
+        if x1 <= x0:
+            return
+        paint = bytes(color)
+        hi, lo = min(top0, top1), max(top0, top1)
+        bottom = min(self.height, bottom)
+        width = x1 - x0
+        for y in range(max(0, int(lo)), bottom):     # 上の縁より下は全部
+            self.rows[y][x0 * 3:x1 * 3] = paint * width
+        for y in range(max(0, int(hi)), min(bottom, int(lo) + 1)):   # 斜めの縁のところは一部
+            t = (y - top0) / (top1 - top0) if top1 != top0 else 0.0
+            if top1 > top0:                          # 右へ行くほど下がる → 左側だけ
+                right = x0 + int(width * max(0.0, min(1.0, t)))
+                if right > x0:
+                    self.rows[y][x0 * 3:right * 3] = paint * (right - x0)
+            else:                                    # 右へ行くほど上がる → 右側だけ
+                left = x0 + int(width * max(0.0, min(1.0, t)))
+                if left < x1:
+                    self.rows[y][left * 3:x1 * 3] = paint * (x1 - left)
 
     def line(self, a: tuple[float, float], b: tuple[float, float], color: tuple[int, int, int]) -> None:
         (x1, y1), (x2, y2) = a, b
@@ -690,10 +743,22 @@ def box(w: float, h: float, length: float, at: V) -> tuple[list[V], list[tuple[i
     return points, outward(points, faces)
 
 
-DISC = [V(math.cos(a) * CLAY_R, 0.0, math.sin(a) * CLAY_R) for a in (i * math.tau / 10 for i in range(10))]
+DISC_N = 12
 
 
-DISC_FACES = [tuple(range(10)), tuple(reversed(range(10)))]   # 表と裏（どちらか一方だけこちらを向く）
+DISC = ([V(math.cos(a) * CLAY_R, 0.0, math.sin(a) * CLAY_R) for a in (i * math.tau / DISC_N for i in range(DISC_N))]
+        + [V(math.cos(a) * CLAY_R * 0.8, -CLAY_R * 0.25, math.sin(a) * CLAY_R * 0.8) for a in (i * math.tau / DISC_N for i in range(DISC_N))])
+
+
+DISC_FACES = ([tuple(range(DISC_N)), tuple(reversed(range(DISC_N, 2 * DISC_N)))]                        # 天面と底面
+              + [(i, (i + 1) % DISC_N, DISC_N + (i + 1) % DISC_N, DISC_N + i) for i in range(DISC_N)])   # 縁（斜めの帯）
+
+
+DISC_COLORS = [CLAY, CLAY_UNDER] + [CLAY_RIM] * DISC_N
+
+
+PATCHES = [(math.sin(a) * d, math.cos(a) * d, 2.0 + 2.5 * abs(math.sin(a * 3)), 0.5 + 0.4 * abs(math.cos(a * 5)))
+           for a, d in ((i * 0.83, 8 + (i * 37) % 60) for i in range(24))]   # 草の濃い斑（x, z, 半径, 縦横比）
 
 
 TREES = [(a, 95 + 25 * math.sin(a * 5), "conifer" if k % 3 else "broadleaf", 0.8 + 0.5 * math.sin(a * 7))
@@ -701,9 +766,11 @@ TREES = [(a, 95 + 25 * math.sin(a * 5), "conifer" if k % 3 else "broadleaf", 0.8
 
 
 def ridge(angle: float, layer: int) -> float:
+    if layer == 2:
+        return 6.0 + 3.0 * math.sin(angle * 2 + 1.7) + 2.0 * math.sin(angle * 5 + 0.6) + 0.8 * math.sin(angle * 11 + 1.2)
     if layer == 0:
-        return 5.0 + 3.6 * math.sin(angle * 3 + 0.4) + 2.4 * math.sin(angle * 7 + 2.0) + 1.2 * math.sin(angle * 13)
-    return 2.0 + 2.0 * math.sin(angle * 4 + 1.1) + 1.4 * math.sin(angle * 9 + 0.3) + 0.8 * math.sin(angle * 17 + 2.5)
+        return 5.0 + 3.6 * math.sin(angle * 3 + 0.4) + 2.4 * math.sin(angle * 7 + 2.0) + 1.2 * math.sin(angle * 13) + 0.4 * math.sin(angle * 29)
+    return 2.0 + 2.0 * math.sin(angle * 4 + 1.1) + 1.4 * math.sin(angle * 9 + 0.3) + 0.8 * math.sin(angle * 17 + 2.5) + 0.3 * math.sin(angle * 37)
 
 
 def draw_backdrop(screen: Screen, cam: Camera) -> None:
@@ -716,22 +783,33 @@ def draw_backdrop(screen: Screen, cam: Camera) -> None:
         t = y / max(1, horizon)
         screen.band(y, y + 1, tuple(int(a + (b - a) * t) for a, b in zip(SKY_TOP, SKY)))
     screen.band(horizon, screen.height, GRASS_FAR)
-    for k in range(9):
-        angle = k * math.tau / 9 + 0.3
+    dx = math.remainder(1.1 - cam.yaw, math.tau)   # 太陽（左上のほう）
+    if abs(dx) < 0.8:
+        sx, sy = (CX + FOCUS * math.tan(dx)) * scale, horizon - (36 - cam.pitch * FOCUS * 0) * scale
+        sy = horizon - 36 * scale
+        for r, color in ((7.0 * scale, SUN_HALO), (4.6 * scale, SUN)):
+            screen.fill([(sx + r * math.cos(a), sy + r * math.sin(a)) for a in (i * math.tau / 14 for i in range(14))], color)
+    for k in range(11):                             # 雲：明るい上半分と、少し暗い下側
+        angle = k * math.tau / 11 + 0.3
         dx = math.remainder(angle - cam.yaw, math.tau)
         if abs(dx) > 0.7:
             continue
         cx = (CX + FOCUS * math.tan(dx)) * scale
-        cy = horizon - (30 + 8 * math.sin(k * 2.1)) * scale
-        rx, ry = (9 + 3 * math.sin(k * 1.7)) * scale, 2.8 * scale
-        ring = [(cx + rx * math.cos(a), cy + ry * math.sin(a)) for a in (i * math.tau / 10 for i in range(10))]
-        screen.fill(ring, CLOUD)
-    step = int(6 * scale)
-    for layer, color in ((0, MOUNTAIN_FAR), (1, MOUNTAIN_NEAR)):
-        xs = list(range(0, screen.width + step, step))
-        heights = [ridge(cam.yaw + math.atan((x / scale - CX) / FOCUS), layer) * scale for x in xs]
+        cy = horizon - (26 + 9 * math.sin(k * 2.1)) * scale
+        rx, ry = (9 + 4 * math.sin(k * 1.7)) * scale, 2.6 * scale
+        screen.fill([(cx + rx * math.cos(a), cy + 0.6 * scale + ry * math.sin(a)) for a in (i * math.tau / 14 for i in range(14))], CLOUD_SHADE)
+        screen.fill([(cx + rx * 0.9 * math.cos(a), cy - 0.4 * scale + ry * 0.8 * math.sin(a)) for a in (i * math.tau / 14 for i in range(14))], CLOUD)
+        screen.fill([(cx + rx * 0.35 + rx * 0.4 * math.cos(a), cy - 1.6 * scale + ry * 0.9 * math.sin(a)) for a in (i * math.tau / 10 for i in range(10))], CLOUD)
+    step = max(2, int(3 * scale))                   # 山 3 層：列ごとの高さをつないだ縦の帯。細かく刻むと滑らか
+    xs = list(range(0, screen.width + step, step))
+    angles = [cam.yaw + math.atan((x / scale - CX) / FOCUS) for x in xs]
+    for layer, color, gain in ((2, MOUNTAIN_FARTHEST, 1.5), (0, MOUNTAIN_FAR, 1.0), (1, MOUNTAIN_NEAR, 1.0)):
+        heights = [ridge(a, layer) * gain * scale for a in angles]
         for x0, x1, h0, h1 in zip(xs, xs[1:], heights, heights[1:]):
-            screen.fill([(x0, horizon - h0), (x1, horizon - h1), (x1, horizon + 1), (x0, horizon + 1)], color)
+            screen.strip(x0, x1, horizon - h0, horizon - h1, horizon + 1, color)
+    for x0, x1, a0 in zip(xs, xs[1:], angles):      # 地平線の林（細かい凹凸の帯）
+        h = (1.2 + 0.8 * abs(math.sin(a0 * 53)) + 0.5 * abs(math.sin(a0 * 17))) * scale
+        screen.strip(x0, x1, horizon - h, horizon - h, horizon + 1, TREELINE)
 
 
 def draw_ground(screen: Screen, cam: Camera) -> None:
@@ -746,38 +824,47 @@ def draw_ground(screen: Screen, cam: Camera) -> None:
         draw_quad(screen, quad, fog(GRASS_A if k % 2 else GRASS_B, depth), scale)
     back = [view(V(-160, 0, -40), cam), view(V(160, 0, -40), cam), view(V(160, 0, 0), cam), view(V(-160, 0, 0), cam)]
     draw_quad(screen, back, GRASS_B, scale)
+    for x, z, r, squash in PATCHES:                 # 草の濃い斑（決まった場所）。単調な緑に模様を付ける
+        ring = [view(V(x + r * math.cos(a), 0.005, z + r * squash * math.sin(a)), cam) for a in (i * math.tau / 6 for i in range(6))]
+        if max(p.z for p in ring) > NEAR:
+            draw_quad(screen, ring, fog(PATCH, max(NEAR, ring[0].z)), scale)
 
 
 def draw_tree(screen: Screen, base: V, kind: str, size: float, scale: float) -> None:
     if base.z < NEAR + 1:
         return
     z = base.z
+    shadow = [V(base.x + 1.6 * size + 2.2 * size * math.cos(a), base.y, z + 1.0 + 0.9 * size * math.sin(a)) for a in (i * math.tau / 8 for i in range(8))]
+    draw_quad(screen, shadow, fog(CLAY_SHADOW, z), scale)
     trunk = [V(base.x - 0.25, base.y, z), V(base.x + 0.25, base.y, z), V(base.x + 0.25, base.y + 2.0 * size, z), V(base.x - 0.25, base.y + 2.0 * size, z)]
     screen.fill([project(p, scale) for p in trunk], fog(TRUNK, z))
     if kind == "conifer":
-        for w, y0, y1, tone_ in ((2.4, 1.2, 4.0, 0.7), (1.8, 2.6, 5.4, 0.85), (1.2, 4.0, 7.0, 1.0)):
+        for w, y0, y1, tone_ in ((2.6, 1.2, 3.6, 0.62), (2.2, 2.2, 4.8, 0.74), (1.7, 3.3, 5.9, 0.86), (1.1, 4.4, 7.2, 1.0)):
             tri = [V(base.x - w * size, base.y + y0 * size, z), V(base.x + w * size, base.y + y0 * size, z), V(base.x, base.y + y1 * size, z)]
             screen.fill([project(p, scale) for p in tri], fog(tuple(int(c * tone_) for c in CROWN), z))
     else:
-        for dx, dy, r, tone_ in ((0.0, 4.2, 2.8, 0.72), (-0.6, 4.7, 2.1, 1.0)):
-            ring = [V(base.x + dx + r * size * math.cos(a), base.y + dy * size + r * size * 0.85 * math.sin(a), z)
-                    for a in (i * math.tau / 10 for i in range(10))]
-            screen.fill([project(p, scale) for p in ring], fog(tuple(int(c * tone_) for c in LEAF), z))
+        for dx, dy, r, tone_ in ((0.0, 4.2, 2.9, 0.66), (0.9, 4.0, 2.0, 0.8), (-0.9, 4.9, 2.2, 0.9), (-0.2, 5.4, 1.7, 1.05)):
+            ring = [V(base.x + dx * size + r * size * math.cos(a), base.y + dy * size + r * size * 0.85 * math.sin(a), z)
+                    for a in (i * math.tau / 8 for i in range(8))]
+            screen.fill([project(p, scale) for p in ring], fog(tuple(min(255, int(c * tone_)) for c in LEAF), z))
 
 
 def draw_clay(screen: Screen, clay: Clay, cam: Camera) -> None:
     """皿。回りながら飛ぶ薄い円盤（表は明るく、裏は暗い）。割れたら破片。"""
+    scale = screen.width / WIDTH
     if clay.result is None or clay.result == "miss":
+        ground = [view(V(clay.pos.x + CLAY_R * 1.2 * math.cos(a), 0.01, clay.pos.z + CLAY_R * 1.2 * math.sin(a)), cam)
+                  for a in (i * math.tau / 8 for i in range(8))]          # 地面の影（高さと距離が分かる）
+        draw_quad(screen, ground, fog(CLAY_SHADOW, ground[0].z), scale)
         tilt = 0.35 + 0.15 * math.sin(clay.spin * 0.7)
         placed = [view(rotate(rotate(p, 0.0, clay.spin, 0.0), tilt, 0.0, 0.0) + clay.pos, cam) for p in DISC]
-        draw_solid(screen, placed, DISC_FACES, CLAY, [CLAY, CLAY_UNDER], flat=True)
-    scale = screen.width / WIDTH
+        draw_solid(screen, placed, DISC_FACES, CLAY, DISC_COLORS, flat=True)
     for p, _ in clay.pieces:
         q = view(p, cam)
         if q.z > NEAR:
             x, y = project(q, scale)
-            screen.plot(int(x), int(y), PIECE)
-            screen.plot(int(x) + 1, int(y), PIECE)
+            r = max(1.0, 0.5 * scale)
+            screen.fill([(x - r, y), (x, y - r), (x + r, y), (x, y + r)], fog(PIECE, q.z))
 
 
 def draw_gun(screen: Screen, world: World) -> None:
@@ -791,6 +878,13 @@ def draw_gun(screen: Screen, world: World) -> None:
         screen.fill([project(p, scale) for p in quad], color)
     stock = [root + V(-0.12, -0.12, -0.05), root + V(0.22, -0.12, -0.05), root + V(0.16, 0.06, 0), root + V(-0.06, 0.06, 0)]
     screen.fill([project(p, scale) for p in stock], STOCK)
+    grip = [root + V(-0.02, 0.0, 0.25), root + V(0.10, 0.0, 0.25), root + V(0.075, 0.035, 0.6), root + V(0.0, 0.035, 0.6)]   # 先台（木）
+    screen.fill([project(p, scale) for p in grip], STOCK)
+    rib = [root + V(-0.02, 0.05, 0), root + V(0.0, 0.05, 0), tip + V(0.005, 0.014, 0), tip + V(-0.004, 0.014, 0)]        # 照星へ続くリブ
+    screen.fill([project(p, scale) for p in rib], (150, 150, 158))
+    bx, by = project(tip + V(0.0, 0.02, 0), scale)  # 照星（銃口の上の白い玉）
+    r = max(1.0, 0.7 * scale)
+    screen.fill([(bx - r, by), (bx, by - r), (bx + r, by), (bx, by + r)], (240, 240, 235))
     if world.flash > 0:                             # 発砲の光
         ring = [tip + V(0.07 * math.cos(a), 0.02 + 0.07 * math.sin(a), 0) for a in (i * math.tau / 8 for i in range(8))]
         screen.fill([project(p, scale) for p in ring], FLASH)
@@ -821,10 +915,20 @@ def draw(screen: Screen, world: World) -> None:
             draw_tree(screen, *thing, scale)
         else:
             at = thing
-            points, faces = box(2.4, 1.2 if at.z > 10 else 3.0, 2.0, V(at.x, 0.0, at.z))
+            tall = 1.2 if at.z > 10 else 3.0
+            points, faces = box(2.4, tall, 2.0, V(at.x, 0.0, at.z))
             draw_solid(screen, [view(p, cam) for p in points], faces, HOUSE)
-            roof, rf = box(2.7, 0.2, 2.3, V(at.x, 1.2 if at.z > 10 else 3.0, at.z))
+            roof, rf = box(2.9, 0.22, 2.5, V(at.x, tall, at.z))
             draw_solid(screen, [view(p, cam) for p in roof], rf, HOUSE_ROOF)
+            door = [view(V(at.x - 0.45, 0.0, at.z - 1.001), cam), view(V(at.x + 0.45, 0.0, at.z - 1.001), cam),
+                    view(V(at.x + 0.45, tall * 0.55, at.z - 1.001), cam), view(V(at.x - 0.45, tall * 0.55, at.z - 1.001), cam)]
+            if at.z > world.cam.pos.z:              # 放出口（手前の面の暗い四角）
+                draw_quad(screen, door, fog(DOOR, door[0].z), scale)
+    for x in range(-12, 13, 4):                     # 射台の柵（横一列の低い柱）
+        base = view(V(float(x), 0.0, 3.0), cam)
+        if base.z > NEAR + 0.5:
+            post = [V(base.x - 0.06, base.y, base.z), V(base.x + 0.06, base.y, base.z), V(base.x + 0.06, base.y + 0.9, base.z), V(base.x - 0.06, base.y + 0.9, base.z)]
+            screen.fill([project(p, scale) for p in post], fog(FENCE, base.z))
     if world.clay is not None:
         draw_clay(screen, world.clay, cam)
     draw_gun(screen, world)
@@ -858,7 +962,7 @@ def obey(world: World, key: str, down: bool = True) -> str | None:
 
 # --- ここから下はブラウザ版だけ。CLI 版の run() / Screen.render() / Speaker / status() にあたる ---
 
-SCALE = 3                                           # ブラウザは 3 倍の板（384 × 240）に描く
+SCALE = 5                                           # ブラウザは 5 倍の板（640 × 400）に描く
 canvas = document.querySelector("#screen")
 ctx = canvas.getContext("2d")
 ctx.imageSmoothingEnabled = False
@@ -968,7 +1072,8 @@ async def loop():
         del frames[:-30]
         if len(frames) >= 2:
             fps_label.textContent = f"{(len(frames) - 1) / (frames[-1] - frames[0]):.0f}"
-        await asyncio.sleep(STEP)
+        spent = window.performance.now() / 1000 - now   # 描くのにかかった時間を引いて眠る（g78・g79 は STEP ぶん眠っていたので 20 コマ/秒止まりだった）
+        await asyncio.sleep(max(0.002, STEP - spent))
 
 
 KEYS = {"ArrowLeft": "left", "ArrowRight": "right", "ArrowUp": "up", "ArrowDown": "down",

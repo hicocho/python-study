@@ -1327,7 +1327,8 @@ async def loop():
         del frames[:-30]
         if len(frames) >= 2:
             fps_label.textContent = f"{(len(frames) - 1) / (frames[-1] - frames[0]):.0f}"
-        await asyncio.sleep(STEP)
+        spent = window.performance.now() / 1000 - now   # 描くのにかかった時間を引いて眠る（STEP ぶん眠ると 20 コマ/秒止まり）
+        await asyncio.sleep(max(0.002, STEP - spent))
 
 
 KEYS = {"ArrowLeft": "left", "ArrowRight": "right", "ArrowUp": "up", "ArrowDown": "down",

@@ -168,7 +168,7 @@
       <span>弾 <b id="shots">●●</b> ・ ベスト <b id="best">0</b> ・ <b id="fps">–</b> コマ/秒</span>
     </div>
 
-    <div class="stage"><canvas id="screen" width="384" height="240"></canvas></div>
+    <div class="stage"><canvas id="screen" width="640" height="400"></canvas></div>
     <p id="note" class="note-line">&nbsp;</p>
     <pre id="message"></pre>
     <p id="log" class="log"></p>
@@ -210,7 +210,7 @@
   <p class="note">
     このページは <strong>Python のコードがブラウザの中でそのまま動いています</strong>（PyScript）。
     カメラ・皿の物理・当たり判定・ラウンドの進行・描く処理は CLI 版と 1 文字も違いません。
-    端末は 128 × 80 ドットを ▀ の並びで、ここでは<strong>同じ式を 3 倍の板（384 × 240）</strong>で回して canvas に出しています。
+    端末は 128 × 80 ドットを ▀ の並びで、ここでは<strong>同じ式を 5 倍の板（640 × 400）</strong>で回して canvas に出しています。
   </p>
 
 
@@ -222,6 +222,6 @@
   </footer>
 </main>
 
-<script type="py" src="./game.py?v=7d1d4b32"></script>
+<script type="py" src="./game.py?v=4e38ed1e"></script>
 </body>
 </html>
