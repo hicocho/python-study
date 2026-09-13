@@ -62,6 +62,7 @@ HOLD = 0.18                                         # これより長く押し�
 PITCH_LIMIT = (-0.35, 0.9)                          # 見下ろし・見上げの限界
 RECOIL = 0.05                                       # 撃ったときに跳ね上がる角度
 POINTS = {"smash": 3, "break": 2, "chip": 1}        # 粉々・割れる・かする
+WIND = 0.012                                        # 雲が流れる速さ（ラジアン/秒。1 周 9 分）
 
 SKY_TOP = (74, 128, 208)
 SKY = (176, 204, 232)
@@ -445,6 +446,7 @@ class World:
     note: str = ""
     note_until: float = 0.0
     log: list[str] = field(default_factory=list)   # 枚ごとの結果
+    wind: float = 0.0                               # 雲を流す時計（スタート前から動く）
 
     def __post_init__(self):
         self.luck = random.Random(self.seed)
@@ -533,6 +535,7 @@ class World:
 
     def update(self, dt: float) -> str | None:
         """1 コマ進める。起きたこと（EVENTS のどれか）を返す。"""
+        self.wind += dt                             # 雲はいつでも流れる
         if not self.started or self.over:
             return None
         self.time += dt
@@ -655,8 +658,8 @@ def ridge(angle: float, layer: int) -> float:
     return 2.0 + 2.0 * math.sin(angle * 4 + 1.1) + 1.4 * math.sin(angle * 9 + 0.3) + 0.8 * math.sin(angle * 17 + 2.5) + 0.3 * math.sin(angle * 37)
 
 
-def draw_backdrop(screen: Screen, cam: Camera) -> None:
-    """空 → 雲 → 山 → 地面。地平線は pitch で上下する。山と雲は yaw で横に流れる。"""
+def draw_backdrop(screen: Screen, cam: Camera, wind: float = 0.0) -> None:
+    """空 → 太陽 → 雲 → 山 → 林。地平線は pitch で上下する。山と雲は yaw で横に流れ、雲はさらに風で少しずつ流れる。"""
     scale = screen.width / WIDTH
     far = view(V(math.sin(cam.yaw) * 1e5, EYE, math.cos(cam.yaw) * 1e5), cam)   # 地平線の点
     horizon = int(project(far, scale)[1]) if far.z > 0 else screen.height
@@ -671,8 +674,8 @@ def draw_backdrop(screen: Screen, cam: Camera) -> None:
         sy = horizon - 36 * scale
         for r, color in ((7.0 * scale, SUN_HALO), (4.6 * scale, SUN)):
             screen.fill([(sx + r * math.cos(a), sy + r * math.sin(a)) for a in (i * math.tau / 14 for i in range(14))], color)
-    for k in range(11):                             # 雲：明るい上半分と、少し暗い下側
-        angle = k * math.tau / 11 + 0.3
+    for k in range(11):                             # 雲：明るい上半分と、少し暗い下側。風で右から左へ流れる
+        angle = k * math.tau / 11 + 0.3 - wind * WIND * (0.8 + 0.4 * math.sin(k * 1.3))   # 雲ごとに速さが少し違う
         dx = math.remainder(angle - cam.yaw, math.tau)
         if abs(dx) > 0.7:
             continue
@@ -782,7 +785,7 @@ def draw(screen: Screen, world: World) -> None:
     """空・山 → 地面 → 木と放出機（奥から）→ 皿 → 銃と照準。"""
     scale = screen.width / WIDTH
     cam = world.cam
-    draw_backdrop(screen, cam)
+    draw_backdrop(screen, cam, world.wind)
     draw_ground(screen, cam)
     things = []
     for angle, dist, kind, size in TREES:
@@ -1119,6 +1122,17 @@ def check() -> None:
     assert world.fire() == "miss" and world.shots_left == 0 and world.clay.result == "miss"
     assert world.fire() == "click", "決着したあとは弾も無い"
     print("  押せば必ず発砲する（皿が無ければ空撃ち、弾が無ければカチッ）。2 発外すと外れで決着")
+    print("● 雲")
+    world = World(seed=7)
+    a, b = Screen(), Screen()
+    draw(a, world)
+    for _ in range(30 * 20):
+        world.update(STEP)                          # スタート前でも雲は流れる
+    draw(b, world)
+    assert world.wind > 19 and not world.started
+    sky = sum(1 for y in range(HEIGHT // 3) for x in range(WIDTH) if a.pixel(x, y) != b.pixel(x, y))
+    assert sky > 20, sky
+    print(f"  20 秒で雲が {math.degrees(20 * WIND):.1f}° 流れる（スタート前でも）。空の {sky} ドットが変わった")
     print("● 板の大きさ")
     world = World(seed=2)
     world.started = True
