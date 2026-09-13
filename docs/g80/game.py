@@ -113,6 +113,9 @@ TURN_FAST = 3.2                                     # 押し続けると TURN_RA
 TURN_RAMP = 0.5
 
 
+PITCH_GAIN = 0.5                                    # 上下は左右の半分の速さ（皿の上下の動きは小さいので）
+
+
 PITCH_LIMIT = (-0.35, 0.9)                          # 見下ろし・見上げの限界
 
 
@@ -578,7 +581,7 @@ class World:
             self.turning = 0.0
         rate = TURN + (TURN_FAST - TURN) * min(1.0, self.turning / TURN_RAMP)
         yaw = self.cam.yaw + self.turn.x * rate * dt
-        pitch = max(PITCH_LIMIT[0], min(PITCH_LIMIT[1], self.cam.pitch + self.turn.y * rate * dt))
+        pitch = max(PITCH_LIMIT[0], min(PITCH_LIMIT[1], self.cam.pitch + self.turn.y * rate * PITCH_GAIN * dt))
         self.cam = Camera(self.cam.pos, yaw, pitch)
         self.recoil = max(0.0, self.recoil - 4 * dt)
         self.flash = max(0.0, self.flash - dt)
@@ -1017,7 +1020,7 @@ def screen_move(event):
     dx, dy = event.clientX - drag["x"], event.clientY - drag["y"]
     drag.update(x=event.clientX, y=event.clientY, moved=drag["moved"] + abs(dx) + abs(dy))
     yaw = world.cam.yaw + dx * DRAG_GAIN
-    pitch = max(PITCH_LIMIT[0], min(PITCH_LIMIT[1], world.cam.pitch - dy * DRAG_GAIN))
+    pitch = max(PITCH_LIMIT[0], min(PITCH_LIMIT[1], world.cam.pitch - dy * DRAG_GAIN * PITCH_GAIN))
     world.cam = Camera(world.cam.pos, yaw, pitch)
 
 

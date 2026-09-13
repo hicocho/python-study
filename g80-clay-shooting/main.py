@@ -56,6 +56,7 @@ ROUND = 25                                          # 1 ラウンドの枚数
 TURN = 1.0                                          # 照準を回す速さ（ラジアン/秒）。押した直後はこの速さ（細かく合わせる）
 TURN_FAST = 3.2                                     # 押し続けると TURN_RAMP 秒でここまで速くなる（大きく振る）
 TURN_RAMP = 0.5
+PITCH_GAIN = 0.5                                    # 上下は左右の半分の速さ（皿の上下の動きは小さいので）
 PITCH_LIMIT = (-0.35, 0.9)                          # 見下ろし・見上げの限界
 RECOIL = 0.05                                       # 撃ったときに跳ね上がる角度
 POINTS = {"smash": 3, "break": 2, "chip": 1}        # 粉々・割れる・かする
@@ -494,7 +495,7 @@ class World:
             self.turning = 0.0
         rate = TURN + (TURN_FAST - TURN) * min(1.0, self.turning / TURN_RAMP)
         yaw = self.cam.yaw + self.turn.x * rate * dt
-        pitch = max(PITCH_LIMIT[0], min(PITCH_LIMIT[1], self.cam.pitch + self.turn.y * rate * dt))
+        pitch = max(PITCH_LIMIT[0], min(PITCH_LIMIT[1], self.cam.pitch + self.turn.y * rate * PITCH_GAIN * dt))
         self.cam = Camera(self.cam.pos, yaw, pitch)
         self.recoil = max(0.0, self.recoil - 4 * dt)
         self.flash = max(0.0, self.flash - dt)
@@ -984,13 +985,17 @@ def check() -> None:
     world.turn = V(0.0, 0.0, 0)
     world.update(STEP)
     assert world.turning == 0.0, "離せば次はまたゆっくりから"
+    world.turn = V(0.0, 1.0, 0)
+    pitch0 = world.cam.pitch
+    world.update(STEP)
+    assert abs((world.cam.pitch - pitch0) / first - PITCH_GAIN) < 0.05, "上下は左右の半分"
     world = World(seed=6)
     speeds = []
     for k in range(ROUND):
         world.thrown = k
         speeds.append(world.launch_speed())
     assert LAUNCH_SLOW[0] <= speeds[0] <= LAUNCH_SLOW[1] and LAUNCH_SPEED[0] <= speeds[-1] <= LAUNCH_SPEED[1]
-    print(f"  照準は押した直後 {TURN} rad/s、{TURN_RAMP} 秒で {TURN_FAST} rad/s。皿は 1 枚目 {speeds[0]:.0f} m/s → {EASE_IN} 枚目以降 {speeds[-1]:.0f} m/s")
+    print(f"  照準は押した直後 {TURN} rad/s、{TURN_RAMP} 秒で {TURN_FAST} rad/s。上下はその {PITCH_GAIN} 倍。皿は 1 枚目 {speeds[0]:.0f} m/s → {EASE_IN} 枚目以降 {speeds[-1]:.0f} m/s")
     print("● 撃てるとき")
     world = World(seed=4)
     world.started = True
