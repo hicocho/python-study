@@ -127,6 +127,8 @@ def sound_bytes(kind: str) -> bytes:
         samples = noise(0.08, VOLUME * 0.7, 30.0, 7)
     elif kind == "miss":
         samples = tone(220, 0.12, VOLUME * 0.6)
+    elif kind == "click":
+        samples = noise(0.03, VOLUME * 0.8, 60.0, 9)
     elif kind == "best":
         samples = tone(523, 0.1) + tone(659, 0.1) + tone(784, 0.1) + tone(1047, 0.3)
     else:
@@ -141,7 +143,7 @@ def sound_bytes(kind: str) -> bytes:
 
 
 EVENTS = ("pull", "shot", "miss", "chip", "break", "smash", "end")   # update() が返す出来事。目立つ順
-SOUNDS = EVENTS + ("best",)
+SOUNDS = EVENTS + ("click", "best")                 # click は弾切れ（fire() が返す）
 
 
 # ── 3D の点 ─────────────────────────────────────────────────────────────
@@ -440,13 +442,19 @@ class World:
         self.note_until = self.time + seconds
 
     def fire(self) -> str | None:
-        """撃つ。飛んでいる皿があって弾が残っていれば判定。結果の出来事を返す。"""
-        if self.clay is None or not self.clay.flying() or self.shots_left <= 0:
+        """撃つ。弾が残っていれば必ず発砲する（音と反動）。飛んでいる皿があれば判定。
+        弾が無ければ「カチッ」。押したのに何も起きない、が無いように。"""
+        if self.over:
             return None
+        if self.shots_left <= 0:
+            return "click"
         self.shots_left -= 1
-        self.clay.shots += 1
         self.recoil = 1.0
         self.flash = 0.08
+        if self.clay is None or not self.clay.flying():   # 皿が無い（まだ出ていない・決着した）→ 空撃ち
+            self.tell("皿が無い…" if self.clay is None else "もう決着した")
+            return "shot"
+        self.clay.shots += 1
         aim = direction(self.cam.yaw, self.cam.pitch)
         result, ratio, t = judge(self.cam.pos, aim, self.clay)
         if result == "miss":
@@ -1017,15 +1025,16 @@ def check() -> None:
     print("● 撃てるとき")
     world = World(seed=4)
     world.started = True
-    assert world.fire() is None, "皿が無いときは撃てない"
+    assert world.fire() == "shot" and world.shots_left == 1, "皿が無くても発砲はする（空撃ち）"
+    assert world.fire() == "shot" and world.fire() == "click", "弾が無ければカチッ"
     while world.clay is None:
         world.update(STEP)
-    assert world.shots_left == 2
+    assert world.shots_left == 2, "皿が出ると弾は 2 発に戻る"
     world.cam = Camera(world.cam.pos, math.pi, 0.0)       # 後ろを向いて撃つ
     assert world.fire() == "shot" and world.shots_left == 1 and world.clay.result is None
     assert world.fire() == "miss" and world.shots_left == 0 and world.clay.result == "miss"
-    assert world.fire() is None, "決着した皿には撃てない"
-    print("  皿が無い・決着した皿には撃てない。2 発外すと外れで決着")
+    assert world.fire() == "click", "決着したあとは弾も無い"
+    print("  押せば必ず発砲する（皿が無ければ空撃ち、弾が無ければカチッ）。2 発外すと外れで決着")
     print("● 板の大きさ")
     world = World(seed=2)
     world.started = True
@@ -1046,7 +1055,7 @@ def check() -> None:
     assert best == Best() and Best.parse("{x") == Best()
     assert best.take(20, 50) and not best.take(22, 40) and best == Best(22, 50)
     assert Best.parse(best.dump()) == best
-    assert len({sound_bytes(k) for k in SOUNDS}) == len(SOUNDS) and all(k in SOUNDS for k in EVENTS)
+    assert len({sound_bytes(k) for k in SOUNDS}) == len(SOUNDS) and all(k in SOUNDS for k in EVENTS + ("click",))
     print(f"  ベストは点で更新（命中数は別に最大）。音は {len(SOUNDS)} つ全部別で、返す出来事に全部ある")
     print("\nぜんぶ通った。")
 

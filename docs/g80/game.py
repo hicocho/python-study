@@ -239,6 +239,8 @@ def sound_bytes(kind: str) -> bytes:
         samples = noise(0.08, VOLUME * 0.7, 30.0, 7)
     elif kind == "miss":
         samples = tone(220, 0.12, VOLUME * 0.6)
+    elif kind == "click":
+        samples = noise(0.03, VOLUME * 0.8, 60.0, 9)
     elif kind == "best":
         samples = tone(523, 0.1) + tone(659, 0.1) + tone(784, 0.1) + tone(1047, 0.3)
     else:
@@ -255,7 +257,7 @@ def sound_bytes(kind: str) -> bytes:
 EVENTS = ("pull", "shot", "miss", "chip", "break", "smash", "end")   # update() が返す出来事。目立つ順
 
 
-SOUNDS = EVENTS + ("best",)
+SOUNDS = EVENTS + ("click", "best")                 # click は弾切れ（fire() が返す）
 
 
 class V(NamedTuple):
@@ -530,13 +532,19 @@ class World:
         self.note_until = self.time + seconds
 
     def fire(self) -> str | None:
-        """撃つ。飛んでいる皿があって弾が残っていれば判定。結果の出来事を返す。"""
-        if self.clay is None or not self.clay.flying() or self.shots_left <= 0:
+        """撃つ。弾が残っていれば必ず発砲する（音と反動）。飛んでいる皿があれば判定。
+        弾が無ければ「カチッ」。押したのに何も起きない、が無いように。"""
+        if self.over:
             return None
+        if self.shots_left <= 0:
+            return "click"
         self.shots_left -= 1
-        self.clay.shots += 1
         self.recoil = 1.0
         self.flash = 0.08
+        if self.clay is None or not self.clay.flying():   # 皿が無い（まだ出ていない・決着した）→ 空撃ち
+            self.tell("皿が無い…" if self.clay is None else "もう決着した")
+            return "shot"
+        self.clay.shots += 1
         aim = direction(self.cam.yaw, self.cam.pitch)
         result, ratio, t = judge(self.cam.pos, aim, self.clay)
         if result == "miss":
