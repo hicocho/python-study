@@ -39,7 +39,7 @@ STEP = 1 / 30
 G = 9.8                                             # 重力（破片用）
 CLAY_G = 4.4                                        # 皿に効く重力。円盤は揚力で落ちにくい（本物も 3〜4 秒飛ぶ）
 AIR = 0.22                                          # 皿の空気抵抗（1 秒に速さの 22% を失う）
-CLAY_R = 0.42                                       # 皿の半径（本物は 0.055。見えるように大きく）
+CLAY_R = 0.5                                        # 皿の半径（本物は 0.055。見えるように大きく）
 TRAP = (0.0, 0.6, 12.0)                             # 放出機の位置（正面 12 m）
 SKEET_HIGH = (-18.0, 3.0, 6.0)                      # スキートの高い放出機（左）
 SKEET_LOW = (18.0, 1.0, 6.0)                        # スキートの低い放出機（右）
@@ -49,7 +49,7 @@ EASE_IN = 15
 TRAP_YAW = 0.7                                      # トラップの左右のばらつき（±ラジアン）
 TRAP_PITCH = (0.22, 0.42)                           # トラップの仰角の範囲
 PELLET_SPEED = 400.0                                # 散弾の速さ
-SPREAD = math.radians(1.6)                          # 散弾の広がり（円錐の半角）。30 m で半径 0.84 m
+SPREAD = math.radians(3.2)                          # 散弾の広がり（円錐の半角）。30 m で半径 1.7 m。1.6° では全然当たらなかった
 RANGE = 70.0                                        # これより遠くには届かない
 SHOTS = 2                                           # 1 枚につき 2 発
 ROUND = 25                                          # 1 ラウンドの枚数
@@ -965,9 +965,10 @@ def check() -> None:
     now_aim = (moving.pos - shooter).unit()                  # 今の位置を狙う
     lead_aim = (moving.ahead(t) - shooter).unit()            # 届く時刻の位置を狙う
     assert judge(shooter, lead_aim, moving)[0] == "smash"
-    assert judge(shooter, now_aim, moving)[0] == "miss", judge(shooter, now_aim, moving)
+    now_result, now_ratio, _ = judge(shooter, now_aim, moving)
+    assert now_result != "smash" and now_ratio > 0.6, (now_result, now_ratio)   # 今の位置を狙っても粉々にはならない
     lead = angle_between(now_aim, lead_aim)
-    print(f"  横切る皿は弾が届くまで {t * 1000:.0f} ms 動くので、今の位置を狙うと外れ、{math.degrees(lead):.1f}° 先を狙えば粉々")
+    print(f"  横切る皿は弾が届くまで {t * 1000:.0f} ms 動くので、今の位置を狙うと「{now_result}」止まり、{math.degrees(lead):.1f}° 先を狙えば粉々")
     print("● 1 ラウンド（自動操縦）")
     for mode in ("trap", "skeet"):
         world = World(seed=2, mode=mode)
