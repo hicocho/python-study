@@ -74,7 +74,13 @@ SKEET_HIGH = (-18.0, 3.0, 6.0)                      # スキートの高い放�
 SKEET_LOW = (18.0, 1.0, 6.0)                        # スキートの低い放出機（右）
 
 
-LAUNCH_SPEED = (21.0, 26.0)                         # 放出の速さ（m/s）の範囲
+LAUNCH_SPEED = (21.0, 26.0)                         # 放出の速さ（m/s）の範囲（慣れたころ）
+
+
+LAUNCH_SLOW = (13.0, 16.0)                          # 最初の皿の速さ。EASE_IN 枚かけて LAUNCH_SPEED まで上げる
+
+
+EASE_IN = 15
 
 
 TRAP_YAW = 0.7                                      # トラップの左右のばらつき（±ラジアン）
@@ -98,7 +104,13 @@ SHOTS = 2                                           # 1 枚につき 2 発
 ROUND = 25                                          # 1 ラウンドの枚数
 
 
-TURN = 1.3                                          # 照準を回す速さ（ラジアン/秒）
+TURN = 1.0                                          # 照準を回す速さ（ラジアン/秒）。押した直後はこの速さ（細かく合わせる）
+
+
+TURN_FAST = 3.2                                     # 押し続けると TURN_RAMP 秒でここまで速くなる（大きく振る）
+
+
+TURN_RAMP = 0.5
 
 
 PITCH_LIMIT = (-0.35, 0.9)                          # 見下ろし・見上げの限界
@@ -473,6 +485,7 @@ class World:
     pull_at: float = 0.6                            # 次の放出の時刻
     over: bool = False
     turn: V = V(0.0, 0.0, 0.0)                      # 照準の動き（x 左右、y 上下）
+    turning: float = 0.0                            # 照準を動かし続けている秒数（長いほど速く回る）
     recoil: float = 0.0                             # 反動の残り
     flash: float = 0.0                              # 発砲の光の残り
     note: str = ""
@@ -482,9 +495,16 @@ class World:
     def __post_init__(self):
         self.luck = random.Random(self.seed)
 
+    def launch_speed(self) -> float:
+        """放出の速さ。最初はゆっくり、EASE_IN 枚かけて本来の速さへ（慣れてから速く）。"""
+        ease = min(1.0, self.thrown / EASE_IN)
+        lo = LAUNCH_SLOW[0] + (LAUNCH_SPEED[0] - LAUNCH_SLOW[0]) * ease
+        hi = LAUNCH_SLOW[1] + (LAUNCH_SPEED[1] - LAUNCH_SLOW[1]) * ease
+        return self.luck.uniform(lo, hi)
+
     def launch(self) -> Clay:
         """放出。トラップは正面の放出機から遠ざかる向きに、スキートは左右の放出機から交差して。"""
-        speed = self.luck.uniform(*LAUNCH_SPEED)
+        speed = self.launch_speed()
         if self.mode == "trap":
             yaw = self.luck.uniform(-TRAP_YAW, TRAP_YAW)
             pitch = self.luck.uniform(*TRAP_PITCH)
@@ -551,9 +571,14 @@ class World:
         if not self.started or self.over:
             return None
         self.time += dt
-        # 照準
-        yaw = self.cam.yaw + self.turn.x * TURN * dt
-        pitch = max(PITCH_LIMIT[0], min(PITCH_LIMIT[1], self.cam.pitch + self.turn.y * TURN * dt))
+        # 照準。押した直後はゆっくり（細かく合わせる）、押し続けると速く（大きく振る）
+        if self.turn.x or self.turn.y:
+            self.turning += dt
+        else:
+            self.turning = 0.0
+        rate = TURN + (TURN_FAST - TURN) * min(1.0, self.turning / TURN_RAMP)
+        yaw = self.cam.yaw + self.turn.x * rate * dt
+        pitch = max(PITCH_LIMIT[0], min(PITCH_LIMIT[1], self.cam.pitch + self.turn.y * rate * dt))
         self.cam = Camera(self.cam.pos, yaw, pitch)
         self.recoil = max(0.0, self.recoil - 4 * dt)
         self.flash = max(0.0, self.flash - dt)
