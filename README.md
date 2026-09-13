@@ -95,6 +95,7 @@ Python のコードがブラウザの中でそのまま動いています（[PyS
 | g77 | [タイピング3（記録と苦手キー）](g77-type-record/) | 記録を残し、自己ベストといつもの速さを添える。ミスを押すべきだったキーごとに数え、苦手キーを含むことばを多めに出す（タイピング 3 段階の完成形） | `dataclasses.asdict` と `json` で記録の形を 1 つに / `random.choices(weights=)` / `heapq.nlargest` / `datetime.fromisoformat` / 中央値 |
 | g78 | [小惑星をよける（3D）](g78-space-3d/) | 宇宙船の後ろ視点で迫る小惑星をよける。3D（回転・透視投影・隠面消去・陰影）を標準ライブラリだけで書く | `NamedTuple` にベクトル演算 / 透視投影 `x/z` / 外積で法線 / 画家のアルゴリズム / スキャンラインで塗る |
 | g79 | [3D レース](g79-race-3d/) | 曲がって上下する周回コースを CPU カー 3 台と 3 周で競う。車の向きで回るカメラ、ニアクリッピング、Catmull-Rom の曲線から道の帯を作る | カメラの回転（yaw） / `clip_near`（Sutherland–Hodgman） / Catmull-Rom / `bisect_right` で道のり→断面 / `math.remainder` で角度の差 |
+| g80 | [クレー射撃](g80-clay-shooting/) | 放出機から飛ぶ皿を散弾銃で撃つ。上下左右に回るカメラ、3D の放物線、円錐に広がる散弾の当たり判定、弾が届く時刻の位置を狙う先読み | yaw と pitch の順で逆回転 / `angle_between`（内積と acos） / 写しを進めて未来の位置 `ahead(t)` / 種を固定した雑音で発砲音 |
 
 ## 動かし方
 
