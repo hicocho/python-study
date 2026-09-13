@@ -134,6 +134,15 @@ POINTS = {"smash": 3, "break": 2, "chip": 1}        # 粉々・割れる・か�
 WIND = 0.012                                        # 雲が流れる速さ（ラジアン/秒。1 周 9 分）
 
 
+BIRDS_AT_LEAST = 2                                  # 1 ラウンドに少なくとも何回、鳥が飛んでくるか
+
+
+BIRD_SPEED = 11.0                                   # 鳥の速さ（m/s）
+
+
+BIRD_SPAN = 2.0                                     # 翼を広げた幅（本物より大きめ。見えるように）
+
+
 SKY_TOP = (74, 128, 208)
 
 
@@ -209,6 +218,12 @@ FENCE = (190, 180, 160)
 DOOR = (60, 52, 44)
 
 
+BIRD = (40, 36, 40)
+
+
+FEATHER = (120, 116, 120)
+
+
 BARREL = (48, 48, 54)
 
 
@@ -274,6 +289,10 @@ def sound_bytes(kind: str) -> bytes:
         samples = tone(220, 0.12, VOLUME * 0.6)
     elif kind == "click":
         samples = noise(0.03, VOLUME * 0.8, 60.0, 9)
+    elif kind == "chirp":                           # 鳥が来た（ピピッ）
+        samples = tone(2200, 0.05, VOLUME * 0.6) + tone(2600, 0.05, VOLUME * 0.6)
+    elif kind == "bird":                            # 鳥に当ててしまった（ギャッ）
+        samples = tone(900, 0.06, VOLUME * 0.9) + tone(600, 0.12, VOLUME * 0.9) + noise(0.12, VOLUME * 0.8, 20.0, 11)
     elif kind == "best":
         samples = tone(523, 0.1) + tone(659, 0.1) + tone(784, 0.1) + tone(1047, 0.3)
     else:
@@ -287,10 +306,10 @@ def sound_bytes(kind: str) -> bytes:
     return buffer.getvalue()
 
 
-EVENTS = ("pull", "shot", "miss", "chip", "break", "smash", "end")   # update() が返す出来事。目立つ順
+EVENTS = ("chirp", "pull", "shot", "miss", "chip", "break", "smash", "end")   # update() が返す出来事。目立つ順
 
 
-SOUNDS = EVENTS + ("click", "best")                 # click は弾切れ（fire() が返す）
+SOUNDS = EVENTS + ("click", "bird", "best")         # click は弾切れ、bird は鳥に当てた（fire() が返す）
 
 
 class V(NamedTuple):
@@ -483,6 +502,37 @@ class Clay:
         return copy.pos
 
 
+@dataclass
+class Bird:
+    """空を横切る鳥。撃ってはいけない。当てると破裂して点にならない。"""
+
+    pos: V
+    vel: V
+    flap: float = 0.0
+    hit_at: float | None = None
+    pieces: list[tuple[V, V]] = field(default_factory=list)
+
+    def fly(self, dt: float) -> None:
+        if self.hit_at is None:
+            self.pos = self.pos + self.vel.scale(dt)
+            self.flap += 9 * dt
+        for k, (p, v) in enumerate(self.pieces):
+            v = V(v.x, v.y - 2.5 * dt, v.z).scale(1 - 1.2 * dt)     # 羽はふわりと落ちる
+            self.pieces[k] = (p + v.scale(dt), v)
+
+    def flying(self) -> bool:
+        return self.hit_at is None
+
+    def ahead(self, seconds: float) -> V:
+        return self.pos + self.vel.scale(seconds)
+
+    def gone(self, now: float) -> bool:
+        """画面の外へ行った、または破裂して 1.5 秒たった。"""
+        if self.hit_at is not None:
+            return now - self.hit_at > 1.5
+        return abs(self.pos.x) > 70 or self.pos.z > 90 or self.pos.z < -10
+
+
 def flight_time(shooter: V, clay: Clay) -> float:
     """散弾が皿に届くまでの時間。届く時刻の皿の位置は動くので、2 回まわして近づける。"""
     t = (clay.pos - shooter).length() / PELLET_SPEED
@@ -559,9 +609,21 @@ class World:
     note_until: float = 0.0
     log: list[str] = field(default_factory=list)   # 枚ごとの結果
     wind: float = 0.0                               # 雲を流す時計（スタート前から動く）
+    birds: list[Bird] = field(default_factory=list)
+    bird_at: list[int] = field(default_factory=list)   # 何枚目の皿のときに鳥を出すか
+    bird_count: int = 0
 
     def __post_init__(self):
         self.luck = random.Random(self.seed)
+        self.bird_at = sorted(self.luck.sample(range(2, ROUND - 1), BIRDS_AT_LEAST))   # 少なくとも 2 回は必ず
+
+    def release_bird(self) -> Bird:
+        """鳥を放す。左右どちらかの遠くから、皿の飛ぶあたりを横切る。"""
+        side = self.luck.choice((-1, 1))
+        z = self.luck.uniform(16.0, 30.0)
+        y = self.luck.uniform(7.0, 13.0)
+        vel = V(-side * BIRD_SPEED, self.luck.uniform(-0.6, 0.8), self.luck.uniform(-2.0, 2.0))
+        return Bird(V(side * 55.0, y, z), vel)
 
     def launch_speed(self) -> float:
         """放出の速さ。最初はゆっくり、EASE_IN 枚かけて本来の速さへ（慣れてから速く）。"""
@@ -598,6 +660,20 @@ class World:
         self.shots_left -= 1
         self.recoil = 1.0
         self.flash = 0.08
+        aim = direction(self.cam.yaw, self.cam.pitch)
+        for bird in self.birds:                     # 鳥に当ててしまったか（鳥が先。当てたら皿の判定はしない）
+            if not bird.flying():
+                continue
+            t = (bird.pos - self.cam.pos).length() / PELLET_SPEED
+            target = bird.ahead(t)
+            if angle_between(aim, target - self.cam.pos) < SPREAD and (target - self.cam.pos).length() <= RANGE:
+                bird.hit_at = self.time
+                bird.pos = target
+                for k in range(8):
+                    a = k * math.tau / 8
+                    bird.pieces.append((target, V(math.cos(a) * 2.5, self.luck.uniform(0.5, 3.0), math.sin(a) * 2.5)))
+                self.tell("鳥は当ててはいけません！", 2.0)
+                return "bird"
         if self.clay is None or not self.clay.flying():   # 皿が無い（まだ出ていない・割れた・落ちた）→ 空撃ち
             if self.clay is None:
                 self.tell("皿はまだ…")
@@ -607,7 +683,6 @@ class World:
                 self.tell("次の皿を待つ")
             return "shot"
         self.clay.shots += 1
-        aim = direction(self.cam.yaw, self.cam.pitch)
         result, ratio, t = judge(self.cam.pos, aim, self.clay)
         if result == "miss":
             if self.shots_left == 0:                # 2 発とも外れ
@@ -684,6 +759,14 @@ class World:
             self.thrown += 1
             self.shots_left = SHOTS
             happened = "pull"
+            if self.thrown in self.bird_at or self.luck.random() < 0.06:   # 決めた回＋たまに
+                self.birds.append(self.release_bird())
+                self.bird_count += 1
+                happened = "chirp"
+        # 鳥
+        for bird in self.birds:
+            bird.fly(dt)
+        self.birds = [b for b in self.birds if not b.gone(self.time)]
         return happened
 
     def status_text(self) -> str:
@@ -872,6 +955,34 @@ def draw_clay(screen: Screen, clay: Clay, cam: Camera) -> None:
             screen.fill([(x - r, y), (x, y - r), (x + r, y), (x, y + r)], fog(PIECE, q.z))
 
 
+BIRD_WING = [V(0.0, 0.0, 0.16), V(BIRD_SPAN / 2, 0.0, 0.04), V(BIRD_SPAN / 2 * 0.9, 0.0, -0.22), V(0.0, 0.0, -0.14)]
+
+
+def draw_bird(screen: Screen, bird: Bird, cam: Camera) -> None:
+    """鳥。胴は小さな菱形、翼は 2 枚の四角。羽ばたきは翼を上下に回す。破裂したら羽が舞う。"""
+    scale = screen.width / WIDTH
+    yaw = math.atan2(bird.vel.x, bird.vel.z)
+    if bird.flying():
+        flap = math.sin(bird.flap) * 0.7
+        for side in (-1, 1):
+            wing = [rotate(V(p.x * side, p.y, p.z), 0.0, 0.0, -side * flap) for p in BIRD_WING]
+            placed = [view(rotate(p, 0.0, yaw, 0.0) + bird.pos, cam) for p in wing]
+            if min(p.z for p in placed) > NEAR:
+                a, b, c = placed[0], placed[1], placed[2]
+                poly = placed if (b - a).cross(c - a).dot(a) < 0 else list(reversed(placed))
+                screen.fill([project(p, scale) for p in poly], fog(BIRD, placed[0].z))
+        body = [V(0.0, 0.08, 0.5), V(0.13, 0.0, 0.0), V(0.0, -0.03, -0.45), V(-0.13, 0.0, 0.0)]
+        placed = [view(rotate(p, 0.0, yaw, 0.0) + bird.pos, cam) for p in body]
+        if min(p.z for p in placed) > NEAR:
+            screen.fill([project(p, scale) for p in placed], fog(BIRD, placed[0].z))
+    for p, _ in bird.pieces:
+        q = view(p, cam)
+        if q.z > NEAR:
+            x, y = project(q, scale)
+            r = max(1.0, 0.45 * scale)
+            screen.fill([(x - r, y), (x, y - r * 0.6), (x + r, y), (x, y + r * 0.6)], fog(FEATHER, q.z))
+
+
 def draw_gun(screen: Screen, world: World) -> None:
     """銃身。カメラに付いているので、カメラ座標に直接置く（回さない）。反動で下から跳ね上がる。"""
     scale = screen.width / WIDTH
@@ -934,6 +1045,8 @@ def draw(screen: Screen, world: World) -> None:
         if base.z > NEAR + 0.5:
             post = [V(base.x - 0.06, base.y, base.z), V(base.x + 0.06, base.y, base.z), V(base.x + 0.06, base.y + 0.9, base.z), V(base.x - 0.06, base.y + 0.9, base.z)]
             screen.fill([project(p, scale) for p in post], fog(FENCE, base.z))
+    for bird in world.birds:
+        draw_bird(screen, bird, cam)
     if world.clay is not None:
         draw_clay(screen, world.clay, cam)
     draw_gun(screen, world)
