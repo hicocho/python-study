@@ -165,7 +165,7 @@
   <div class="card">
     <div class="status">
       <span><b id="count">0/25</b> 枚 ・ 命中 <b id="hits">0</b> ・ 点 <b id="score">0</b> ・ 連続 <b id="streak">0</b></span>
-      <span>弾 <b id="shots">●●</b> ・ ベスト <b id="best">0</b> ・ <b id="fps">–</b> コマ/秒</span>
+      <span>弾 <b id="shots">●●</b> ・ 風 <b id="wind">↑ 0.0</b> ・ ベスト <b id="best">0</b> ・ <b id="fps">–</b> コマ/秒</span>
     </div>
 
     <div class="stage"><canvas id="screen" width="640" height="400"></canvas></div>
@@ -195,6 +195,7 @@
         <li><b>先を狙う</b>：弾が届くまでの間に皿は動きます。飛ぶ向きの少し前を撃つ。</li>
         <li>散弾は円錐に広がります（30 m 先で半径 1.7 m）。中心に近いほど <b>粉々（3 点）→ 割れる（2 点）→ かする（1 点）</b>。</li>
         <li><b>鳥が飛んできます</b>（1 ラウンドに 2 回以上）。撃ってはいけません。当てると破裂しますが点にならず、弾を 1 発むだにします。</li>
+        <li><b>風</b>がラウンドごとに違います（旗と「風」の表示）。皿は風に流されます。粉々にするとスローモーション。ラウンドが進むと日が傾いて夕焼けに。</li>
         <li>連続で当てると連続数が出ます。25 枚の命中数と点のベストがこのブラウザに残ります。</li>
       </ol>
       <div class="cues">
@@ -223,6 +224,6 @@
   </footer>
 </main>
 
-<script type="py" src="./game.py?v=575e6fdf"></script>
+<script type="py" src="./game.py?v=a10cb128"></script>
 </body>
 </html>

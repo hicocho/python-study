@@ -134,6 +134,15 @@ POINTS = {"smash": 3, "break": 2, "chip": 1}        # 粉々・割れる・か�
 WIND = 0.012                                        # 雲が流れる速さ（ラジアン/秒。1 周 9 分）
 
 
+SLOWMO = 0.45                                       # 粉々のとき、この秒数だけ時間を 1/4 に
+
+
+SLOWMO_RATE = 0.25
+
+
+WIND_MAX = 3.0                                      # 風の強さの上限（m/s）。皿と羽が流される
+
+
 BIRDS_AT_LEAST = 2                                  # 1 ラウンドに少なくとも何回、鳥が飛んでくるか
 
 
@@ -222,6 +231,27 @@ BIRD = (40, 36, 40)
 
 
 FEATHER = (120, 116, 120)
+
+
+DUSK_TOP = (58, 62, 128)                            # 夕方の空（上）
+
+
+DUSK_LOW = (236, 150, 96)                           # 夕方の地平線
+
+
+DUSK_SUN = (255, 150, 70)
+
+
+FLAG = (230, 60, 50)
+
+
+FLAG_POLE = (200, 200, 196)
+
+
+HIT_MARK = (255, 255, 240)
+
+
+SKY_NOW = [SKY]                                     # いまの空の色（fog が溶かす先）。draw() が毎コマ決める
 
 
 BARREL = (48, 48, 54)
@@ -479,22 +509,23 @@ class Clay:
     result: str | None = None                       # smash / break / chip / miss。None は飛行中
     pieces: list[tuple[V, V]] = field(default_factory=list)   # 割れた破片（位置, 速さ）
     done_at: float = 0.0                            # 決着した時刻
+    wind: V = V(0.0, 0.0, 0.0)                      # 風（皿も破片も流される）
 
     def fly(self, dt: float) -> None:
-        """放物線。重力で落ち、空気抵抗で減速する（g64 の物理を 3D に）。"""
+        """放物線。重力で落ち、空気抵抗で減速し、風に流される（g64 の物理を 3D に）。"""
         self.vel = V(self.vel.x, self.vel.y - CLAY_G * dt, self.vel.z).scale(1 - AIR * dt)
-        self.pos = self.pos + self.vel.scale(dt)
+        self.pos = self.pos + (self.vel + self.wind).scale(dt)
         self.spin += 12 * dt
         for k, (p, v) in enumerate(self.pieces):
             v = V(v.x, v.y - G * dt, v.z).scale(1 - 0.6 * dt)
-            self.pieces[k] = (p + v.scale(dt), v)
+            self.pieces[k] = (p + (v + self.wind).scale(dt), v)
 
     def flying(self) -> bool:
         return self.result is None and self.pos.y > 0
 
     def ahead(self, seconds: float) -> V:
         """seconds 後の位置（同じ物理で写しを進める）。散弾が届く時刻の位置を知るのに使う。"""
-        copy = Clay(self.pos, self.vel)
+        copy = Clay(self.pos, self.vel, wind=self.wind)
         left = seconds
         while left > 0:
             copy.fly(min(STEP, left))
@@ -610,12 +641,23 @@ class World:
     log: list[str] = field(default_factory=list)   # 枚ごとの結果
     wind: float = 0.0                               # 雲を流す時計（スタート前から動く）
     birds: list[Bird] = field(default_factory=list)
+    slow: float = 0.0                               # スローモーションの残り（実時間の秒）
+    gust: V = V(0.0, 0.0, 0.0)                      # 風（このラウンドの間ずっと同じ）
+    mark: tuple[V, float] | None = None             # 命中マーク（場所, 時刻）
     bird_at: list[int] = field(default_factory=list)   # 何枚目の皿のときに鳥を出すか
     bird_count: int = 0
 
     def __post_init__(self):
         self.luck = random.Random(self.seed)
         self.bird_at = sorted(self.luck.sample(range(2, ROUND - 1), BIRDS_AT_LEAST))   # 少なくとも 2 回は必ず
+        angle = self.luck.uniform(0, math.tau)
+        strength = self.luck.uniform(0.5, WIND_MAX)
+        self.gust = V(math.sin(angle) * strength, 0.0, math.cos(angle) * strength)
+
+    @property
+    def dusk(self) -> float:
+        """夕方の進み具合（0 = 昼、1 = 夕焼け）。ラウンドが進むと日が傾く。"""
+        return min(1.0, self.thrown / ROUND)
 
     def release_bird(self) -> Bird:
         """鳥を放す。左右どちらかの遠くから、皿の飛ぶあたりを横切る。"""
@@ -638,13 +680,13 @@ class World:
         if self.mode == "trap":
             yaw = self.luck.uniform(-TRAP_YAW, TRAP_YAW)
             pitch = self.luck.uniform(*TRAP_PITCH)
-            return Clay(V(*TRAP), direction(yaw, pitch).scale(speed))
+            return Clay(V(*TRAP), direction(yaw, pitch).scale(speed), wind=self.gust)
         if self.thrown % 2 == 0:                    # 高い放出機（左）から右へ
             start, yaw = V(*SKEET_HIGH), math.pi / 2 - self.luck.uniform(0.25, 0.45)
         else:                                       # 低い放出機（右）から左へ
             start, yaw = V(*SKEET_LOW), -math.pi / 2 + self.luck.uniform(0.25, 0.45)
         pitch = self.luck.uniform(0.28, 0.4)
-        return Clay(start, direction(yaw, pitch).scale(speed))
+        return Clay(start, direction(yaw, pitch).scale(speed), wind=self.gust)
 
     def tell(self, text: str, seconds: float = 1.4) -> None:
         self.note = text
@@ -714,6 +756,9 @@ class World:
         self.tell(f"{word} +{points}{second}" + (f"  {self.streak} 連続" if self.streak > 1 else ""))
         where = clay.ahead(t)                       # 弾が届いた場所で割れる
         clay.pos = where
+        self.mark = (where, self.time)
+        if result == "smash":
+            self.slow = SLOWMO                      # 粉々の瞬間はスローモーション
         count = {"smash": 10, "break": 6, "chip": 3}[result]
         for k in range(count):
             a = k * math.tau / count
@@ -725,6 +770,9 @@ class World:
         self.wind += dt                             # 雲はいつでも流れる
         if not self.started or self.over:
             return None
+        if self.slow > 0:                           # スローモーション：実時間 dt のうち、世界は 1/4 だけ進む
+            self.slow = max(0.0, self.slow - dt)
+            dt *= SLOWMO_RATE
         self.time += dt
         # 照準。1 回押すと NUDGE だけ動く（obey）。HOLD 秒より長く押し続けると連続して回り、
         # 最初はゆっくり（細かく合わせる）、さらに押し続けると速く（大きく振る）
@@ -775,13 +823,23 @@ class World:
 
 def fog(color: tuple[int, int, int], z: float) -> tuple[int, int, int]:
     amount = max(0.0, min(0.85, (z - FOG_FROM) / (FAR - FOG_FROM)))
-    return tuple(int(c + (b - c) * amount) for c, b in zip(color, SKY))
+    return tuple(int(c + (b - c) * amount) for c, b in zip(color, SKY_NOW[0]))
+
+
+def dim(color: tuple[int, int, int], k: float) -> tuple[int, int, int]:
+    """暗くする。"""
+    return color if k >= 1.0 else tuple(int(c * k) for c in color)
 
 
 def shade(base: tuple[int, int, int], normal: V, z: float = 0.0) -> tuple[int, int, int]:
     light = V(*LIGHT_DIR).unit()
     bright = 0.4 + 0.6 * max(0.0, normal.dot(light))
     return fog(tuple(min(255, int(c * bright)) for c in base), z)
+
+
+def mix(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[int, int, int]:
+    """色 a から b へ t（0〜1）だけ寄せる。"""
+    return tuple(int(x + (y - x) * t) for x, y in zip(a, b))
 
 
 def draw_solid(screen: Screen, points: list[V], faces: list[tuple[int, ...]], color: tuple[int, int, int],
@@ -861,21 +919,22 @@ def ridge(angle: float, layer: int) -> float:
     return 2.0 + 2.0 * math.sin(angle * 4 + 1.1) + 1.4 * math.sin(angle * 9 + 0.3) + 0.8 * math.sin(angle * 17 + 2.5) + 0.3 * math.sin(angle * 37)
 
 
-def draw_backdrop(screen: Screen, cam: Camera, wind: float = 0.0) -> None:
-    """空 → 太陽 → 雲 → 山 → 林。地平線は pitch で上下する。山と雲は yaw で横に流れ、雲はさらに風で少しずつ流れる。"""
+def draw_backdrop(screen: Screen, cam: Camera, wind: float = 0.0, dusk: float = 0.0) -> None:
+    """空 → 太陽 → 雲 → 山 → 林。地平線は pitch で上下する。山と雲は yaw で横に流れ、雲はさらに風で少しずつ流れる。
+    dusk（0 → 1）で昼から夕方へ：空が染まり、太陽が下がって赤く、山と林は暗く。"""
     scale = screen.width / WIDTH
     far = view(V(math.sin(cam.yaw) * 1e5, EYE, math.cos(cam.yaw) * 1e5), cam)   # 地平線の点
     horizon = int(project(far, scale)[1]) if far.z > 0 else screen.height
     horizon = max(0, min(screen.height, horizon))
+    top, low = mix(SKY_TOP, DUSK_TOP, dusk), mix(SKY, DUSK_LOW, dusk)
     for y in range(horizon):
         t = y / max(1, horizon)
-        screen.band(y, y + 1, tuple(int(a + (b - a) * t) for a, b in zip(SKY_TOP, SKY)))
-    screen.band(horizon, screen.height, GRASS_FAR)
-    dx = math.remainder(1.1 - cam.yaw, math.tau)   # 太陽（左上のほう）
+        screen.band(y, y + 1, mix(top, low, t))
+    screen.band(horizon, screen.height, dim(GRASS_FAR, 1 - 0.35 * dusk))
+    dx = math.remainder(1.1 - cam.yaw, math.tau)   # 太陽（左上のほう）。夕方は低く、赤く
     if abs(dx) < 0.8:
-        sx, sy = (CX + FOCUS * math.tan(dx)) * scale, horizon - (36 - cam.pitch * FOCUS * 0) * scale
-        sy = horizon - 36 * scale
-        for r, color in ((7.0 * scale, SUN_HALO), (4.6 * scale, SUN)):
+        sx, sy = (CX + FOCUS * math.tan(dx)) * scale, horizon - (36 - 28 * dusk) * scale
+        for r, color in ((7.0 * scale, mix(SUN_HALO, mix(DUSK_SUN, DUSK_LOW, 0.5), dusk)), (4.6 * scale, mix(SUN, DUSK_SUN, dusk))):
             screen.fill([(sx + r * math.cos(a), sy + r * math.sin(a)) for a in (i * math.tau / 14 for i in range(14))], color)
     for k in range(11):                             # 雲：明るい上半分と、少し暗い下側。風で右から左へ流れる
         angle = k * math.tau / 11 + 0.3 - wind * WIND * (0.8 + 0.4 * math.sin(k * 1.3))   # 雲ごとに速さが少し違う
@@ -885,37 +944,40 @@ def draw_backdrop(screen: Screen, cam: Camera, wind: float = 0.0) -> None:
         cx = (CX + FOCUS * math.tan(dx)) * scale
         cy = horizon - (26 + 9 * math.sin(k * 2.1)) * scale
         rx, ry = (9 + 4 * math.sin(k * 1.7)) * scale, 2.6 * scale
-        screen.fill([(cx + rx * math.cos(a), cy + 0.6 * scale + ry * math.sin(a)) for a in (i * math.tau / 14 for i in range(14))], CLOUD_SHADE)
-        screen.fill([(cx + rx * 0.9 * math.cos(a), cy - 0.4 * scale + ry * 0.8 * math.sin(a)) for a in (i * math.tau / 14 for i in range(14))], CLOUD)
-        screen.fill([(cx + rx * 0.35 + rx * 0.4 * math.cos(a), cy - 1.6 * scale + ry * 0.9 * math.sin(a)) for a in (i * math.tau / 10 for i in range(10))], CLOUD)
+        shade_c, light_c = mix(CLOUD_SHADE, (170, 120, 130), dusk), mix(CLOUD, (255, 205, 170), dusk)
+        screen.fill([(cx + rx * math.cos(a), cy + 0.6 * scale + ry * math.sin(a)) for a in (i * math.tau / 14 for i in range(14))], shade_c)
+        screen.fill([(cx + rx * 0.9 * math.cos(a), cy - 0.4 * scale + ry * 0.8 * math.sin(a)) for a in (i * math.tau / 14 for i in range(14))], light_c)
+        screen.fill([(cx + rx * 0.35 + rx * 0.4 * math.cos(a), cy - 1.6 * scale + ry * 0.9 * math.sin(a)) for a in (i * math.tau / 10 for i in range(10))], light_c)
     step = max(2, int(3 * scale))                   # 山 3 層：列ごとの高さをつないだ縦の帯。細かく刻むと滑らか
     xs = list(range(0, screen.width + step, step))
     angles = [cam.yaw + math.atan((x / scale - CX) / FOCUS) for x in xs]
     for layer, color, gain in ((2, MOUNTAIN_FARTHEST, 1.5), (0, MOUNTAIN_FAR, 1.0), (1, MOUNTAIN_NEAR, 1.0)):
+        color = mix(color, (96, 70, 110), dusk * 0.8)
         heights = [ridge(a, layer) * gain * scale for a in angles]
         for x0, x1, h0, h1 in zip(xs, xs[1:], heights, heights[1:]):
             screen.strip(x0, x1, horizon - h0, horizon - h1, horizon + 1, color)
     for x0, x1, a0 in zip(xs, xs[1:], angles):      # 地平線の林（細かい凹凸の帯）
         h = (1.2 + 0.8 * abs(math.sin(a0 * 53)) + 0.5 * abs(math.sin(a0 * 17))) * scale
-        screen.strip(x0, x1, horizon - h, horizon - h, horizon + 1, TREELINE)
+        screen.strip(x0, x1, horizon - h, horizon - h, horizon + 1, dim(TREELINE, 1 - 0.45 * dusk))
 
 
-def draw_ground(screen: Screen, cam: Camera) -> None:
-    """地面。10 m ごとの帯（色を交互に）で距離が分かるように。手前 100 m まで。"""
+def draw_ground(screen: Screen, cam: Camera, dusk: float = 0.0) -> None:
+    """地面。10 m ごとの帯（色を交互に）で距離が分かるように。手前 100 m まで。夕方は暗く、少し赤く。"""
     scale = screen.width / WIDTH
+    k_dusk = 1 - 0.3 * dusk
     for k in range(9, -1, -1):                      # 奥から
         z0, z1 = k * 10.0, k * 10.0 + 10.0
         quad = [view(V(-160, 0, z0), cam), view(V(160, 0, z0), cam), view(V(160, 0, z1), cam), view(V(-160, 0, z1), cam)]
         if max(p.z for p in quad) < NEAR:
             continue
         depth = max(NEAR, sum(p.z for p in quad) / 4)
-        draw_quad(screen, quad, fog(GRASS_A if k % 2 else GRASS_B, depth), scale)
+        draw_quad(screen, quad, fog(dim(GRASS_A if k % 2 else GRASS_B, k_dusk), depth), scale)
     back = [view(V(-160, 0, -40), cam), view(V(160, 0, -40), cam), view(V(160, 0, 0), cam), view(V(-160, 0, 0), cam)]
-    draw_quad(screen, back, GRASS_B, scale)
+    draw_quad(screen, back, dim(GRASS_B, k_dusk), scale)
     for x, z, r, squash in PATCHES:                 # 草の濃い斑（決まった場所）。単調な緑に模様を付ける
         ring = [view(V(x + r * math.cos(a), 0.005, z + r * squash * math.sin(a)), cam) for a in (i * math.tau / 6 for i in range(6))]
         if max(p.z for p in ring) > NEAR:
-            draw_quad(screen, ring, fog(PATCH, max(NEAR, ring[0].z)), scale)
+            draw_quad(screen, ring, fog(dim(PATCH, k_dusk), max(NEAR, ring[0].z)), scale)
 
 
 def draw_tree(screen: Screen, base: V, kind: str, size: float, scale: float) -> None:
@@ -983,6 +1045,28 @@ def draw_bird(screen: Screen, bird: Bird, cam: Camera) -> None:
             screen.fill([(x - r, y), (x, y - r * 0.6), (x + r, y), (x, y + r * 0.6)], fog(FEATHER, q.z))
 
 
+def draw_flag(screen: Screen, world: World) -> None:
+    """風見の旗。放出機の横の柱に、風下へなびく三角。強いほど大きく、はためきは時間で。"""
+    scale = screen.width / WIDTH
+    cam = world.cam
+    foot = V(-6.0, 0.0, 10.0)
+    top = foot + V(0, 4.0, 0)
+    a, b = view(foot, cam), view(top, cam)
+    if min(a.z, b.z) <= NEAR:
+        return
+    pole = [V(a.x - 0.05, a.y, a.z), V(a.x + 0.05, a.y, a.z), V(b.x + 0.05, b.y, b.z), V(b.x - 0.05, b.y, b.z)]
+    screen.fill([project(p, scale) for p in pole], fog(FLAG_POLE, a.z))
+    strength = world.gust.length()
+    if strength < 0.05:
+        return
+    along = world.gust.unit().scale(0.5 + 0.6 * strength / WIND_MAX)   # 旗の長さ：風が強いほど長い
+    flutter = 0.12 * math.sin(world.wind * 9) * (strength / WIND_MAX)
+    tip = top + along + V(0, -0.15 + flutter, 0)
+    flag = [view(top, cam), view(top + V(0, -0.7, 0), cam), view(tip, cam)]
+    if min(p.z for p in flag) > NEAR:
+        screen.fill([project(p, scale) for p in flag], fog(FLAG, flag[0].z))
+
+
 def draw_gun(screen: Screen, world: World) -> None:
     """銃身。カメラに付いているので、カメラ座標に直接置く（回さない）。反動で下から跳ね上がる。"""
     scale = screen.width / WIDTH
@@ -1016,8 +1100,10 @@ def draw(screen: Screen, world: World) -> None:
     """空・山 → 地面 → 木と放出機（奥から）→ 皿 → 銃と照準。"""
     scale = screen.width / WIDTH
     cam = world.cam
-    draw_backdrop(screen, cam, world.wind)
-    draw_ground(screen, cam)
+    SKY_NOW[0] = mix(SKY, DUSK_LOW, world.dusk)     # 霧が溶ける先＝いまの空の色
+    draw_backdrop(screen, cam, world.wind, world.dusk)
+    draw_ground(screen, cam, world.dusk)
+    draw_flag(screen, world)
     things = []
     for angle, dist, kind, size in TREES:
         base = view(V(math.sin(angle) * dist, 0.0, math.cos(angle) * dist), cam)
@@ -1049,6 +1135,14 @@ def draw(screen: Screen, world: World) -> None:
         draw_bird(screen, bird, cam)
     if world.clay is not None:
         draw_clay(screen, world.clay, cam)
+    if world.mark is not None and world.time - world.mark[1] < 0.5:   # 命中マーク：広がる X
+        where, when = world.mark
+        q = view(where, cam)
+        if q.z > NEAR:
+            x, y = project(q, scale)
+            r = (2 + 10 * (world.time - when) / 0.5) * scale
+            for dx, dy in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
+                screen.line((x + dx * r * 0.4, y + dy * r * 0.4), (x + dx * r, y + dy * r), HIT_MARK)
     draw_gun(screen, world)
 
 
@@ -1078,6 +1172,13 @@ def obey(world: World, key: str, down: bool = True) -> str | None:
     return None
 
 
+def wind_text(world: World) -> str:
+    """風を「→ 2.3」のように。矢印は風が吹いていく向き（自分から見て）。"""
+    arrows = "↑↗→↘↓↙←↖"
+    angle = math.atan2(world.gust.x, world.gust.z)
+    return f"{arrows[int((angle / math.tau * 8 + 8.5)) % 8]} {world.gust.length():.1f}"
+
+
 # --- ここから下はブラウザ版だけ。CLI 版の run() / Screen.render() / Speaker / status() にあたる ---
 
 SCALE = 5                                           # ブラウザは 5 倍の板（640 × 400）に描く
@@ -1090,6 +1191,7 @@ hits_label = document.querySelector("#hits")
 score_label = document.querySelector("#score")
 streak_label = document.querySelector("#streak")
 shots_label = document.querySelector("#shots")
+wind_label = document.querySelector("#wind")
 best_label = document.querySelector("#best")
 fps_label = document.querySelector("#fps")
 note_label = document.querySelector("#note")
@@ -1150,6 +1252,7 @@ def refresh() -> None:
     score_label.textContent = str(world.score)
     streak_label.textContent = str(world.streak)
     shots_label.textContent = "●" * world.shots_left + "○" * (SHOTS - world.shots_left)
+    wind_label.textContent = wind_text(world)
     best_label.textContent = str(best.score)
     log_label.textContent = " ".join(world.log)
     note_label.textContent = (world.note if world.time < world.note_until else "") or " "
