@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>軽飛行機で輪をくぐる — python-study</title>
+<meta name="description" content="山と谷の上の 12 個の輪を順にくぐる 3D フライト。3 軸の回転・基底で見るカメラ・ハイトマップの地形を自分で書いた。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#9992;&#65039;</text></svg>">
+<link rel="stylesheet" href="https://pyscript.net/releases/2025.8.1/core.css">
+<script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #656d76;
+    --line: #d8dbe0;
+    --accent: #3b6f9c;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c;
+      --panel: #1f2229;
+      --ink: #e6e6e3;
+      --muted: #9aa2ad;
+      --line: #333842;
+      --accent: #8fc3ee;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 2rem 1rem 3rem;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    line-height: 1.7;
+  }
+  main { max-width: 34rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; letter-spacing: .02em; }
+  .sub { color: var(--muted); font-size: .875rem; margin: 0 0 1.5rem; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: .75rem;
+    padding: 1.25rem;
+  }
+  .status { display: flex; flex-wrap: wrap; gap: .15rem 1.2rem; justify-content: space-between; align-items: baseline;
+    margin-bottom: .75rem; color: var(--muted); font-size: .875rem;
+    font-variant-numeric: tabular-nums; }
+  .status b { color: var(--ink); font-weight: 700; }
+  .status span { white-space: nowrap; }
+
+  /* ドット絵の画面。126×80 の canvas を CSS で 4 倍に */
+  .stage { display: flex; justify-content: center; }
+  #screen {
+    width: min(100%, 504px);
+    aspect-ratio: 128 / 80;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    background: #000;
+    border: 2px solid var(--line);
+    border-radius: .35rem;
+    touch-action: none;
+    cursor: pointer;
+  }
+  .pad { display: grid; gap: .4rem; margin-top: .75rem;
+    grid-template-columns: 1fr 1.4fr 1fr; }
+  .pad button { padding: .8rem 0; font-size: 1.05rem; font-family: inherit; font-weight: 600;
+    color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+    border-radius: .5rem; cursor: pointer; user-select: none; -webkit-user-select: none; }
+  .pad button:active { background: var(--accent); color: var(--panel); }
+  .pad button.go { background: var(--accent); color: var(--panel); border-color: var(--accent); }
+  .pad button:disabled { opacity: .35; cursor: default; }
+  .pad { grid-template-columns: 1.35fr 1fr 1fr; }
+  .pad button { white-space: nowrap; }
+  #program { width: 100%; box-sizing: border-box; margin-top: .75rem; min-height: 15em;
+    font-family: ui-monospace, Menlo, monospace; font-size: .8125rem; line-height: 1.5;
+    color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+    border-radius: .5rem; padding: .6rem .7rem; resize: vertical; }
+  #lines { font-family: ui-monospace, Menlo, monospace; font-size: .75rem; color: var(--muted);
+    margin: .5rem 0 0; white-space: pre; overflow-x: auto; }
+  #record { font-family: ui-monospace, Menlo, monospace; font-size: .7rem; color: var(--muted);
+    margin: .4rem 0 0; white-space: pre; overflow-x: auto; max-height: 16em; overflow-y: auto; }
+  #tree { font-family: ui-monospace, Menlo, monospace; font-size: .75rem; color: var(--muted);
+    margin: .4rem 0 0; white-space: pre; overflow-x: auto; }
+  details { margin-top: .6rem; }
+  summary { font-size: .8125rem; color: var(--muted); cursor: pointer; }
+  #message { font-family: ui-monospace, Menlo, monospace; font-size: .75rem; margin: .5rem 0 0;
+    white-space: pre; overflow-x: auto; min-height: 3.4em; color: var(--muted); }
+  #message.bad { color: #d1495b; }
+  #message.done { color: var(--accent); font-weight: 700; }
+  #message { min-height: 1.6em; margin: .6rem 0 0; font-size: .8125rem; color: var(--ink);
+    font-family: inherit; white-space: normal; }
+  label { display: block; font-size: .8125rem; color: var(--muted); margin-top: .75rem; }
+  .legend { display: flex; flex-wrap: wrap; gap: .25rem .9rem; margin: .6rem 0 0;
+    font-size: .8125rem; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: .35rem; }
+  .legend i { width: .8rem; height: .8rem; border-radius: .15rem; display: inline-block;
+    border: 1px solid var(--line); }
+  .howto { margin: .75rem 0 0; padding: .7rem .8rem; background: var(--bg);
+    border: 1px solid var(--line); border-radius: .5rem; font-size: .8125rem; }
+  .howto b { color: var(--ink); }
+  .howto ol { margin: .4rem 0 0; padding-left: 1.2rem; }
+  .howto li { margin: .15rem 0; }
+  .howto code { background: transparent; }
+  table.words { border-collapse: collapse; font-size: .8125rem; margin-top: .4rem; }
+  table.words td { border-top: 1px solid var(--line); padding: .25rem .6rem .25rem 0;
+    vertical-align: top; }
+  table.words td:first-child { font-family: ui-monospace, Menlo, monospace;
+    white-space: nowrap; color: var(--ink); }
+  #lines-title { font-size: .8125rem; color: var(--muted); margin: .75rem 0 0; }
+  #loading { color: var(--muted); font-size: .875rem; text-align: center; padding: .5rem 0; margin: .5rem 0 0; }
+  .keys { font-size: .8125rem; color: var(--muted); text-align: center; margin: .75rem 0 0; }
+  .back { font-size: .875rem; margin: 0 0 1rem; }
+  .back a { color: var(--muted); text-decoration: none; }
+  .back a:hover { text-decoration: underline; }
+  .note { font-size: .875rem; color: var(--muted); margin-top: 1.5rem; }
+  .note a { color: inherit; }
+  footer { margin-top: 2rem; font-size: .8125rem; color: var(--muted); }
+  #title { font-family: inherit; }
+  .song { margin: .8rem 0 0; text-align: center; font-size: 1.5rem; font-weight: 700;
+    letter-spacing: .04em; line-height: 1.3; color: var(--muted); text-wrap: balance; }
+  .song { color: var(--ink); }
+  .song.done { color: #2f7d52; }
+  .who { text-align: center; font-size: .8125rem; color: var(--muted); margin: .15rem 0 0; }
+  @media (prefers-color-scheme: dark) { .song.done { color: #79c99b; } }
+  .verdict { margin: .5rem 0 0; text-align: center; font-size: 1.6rem; font-weight: 800;
+    letter-spacing: .08em; line-height: 1.2; }
+  .verdict.good { color: #2f7d52; }
+  .verdict.almost { color: #b7791f; }
+  .verdict.bad { color: #c0453a; }
+  .pad button.go { background: #2f7d52; border-color: #2f7d52; color: #fff; }
+  @media (prefers-color-scheme: dark) {
+    .pad button.go { background: #3f8f62; border-color: #3f8f62; color: #0f1512; }
+    .verdict.good { color: #79c99b; }
+    .verdict.almost { color: #e0b25c; }
+    .verdict.bad { color: #e58579; }
+  }
+
+  /* 十字ボタン（スマホ用。押している間だけ動く） */
+  .cross { display: grid; grid-template-columns: repeat(3, 3.2rem); grid-template-rows: repeat(3, 3.2rem);
+    gap: .3rem; justify-content: center; margin-top: .75rem; }
+  .cross button { font-size: 1.3rem; padding: 0; touch-action: none; user-select: none; -webkit-user-select: none; }
+  .cross .u { grid-column: 2; grid-row: 1; } .cross .l { grid-column: 1; grid-row: 2; }
+  .cross .r { grid-column: 3; grid-row: 2; } .cross .d { grid-column: 2; grid-row: 3; }
+  #again { width: 100%; margin-top: .6rem; }
+  #message { min-height: 1.6em; text-align: center; font-family: inherit; white-space: normal; color: var(--ink); }
+  .modes { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem; margin-top: .75rem; }
+  .engine-toggle { display: block; text-align: center; font-size: .8125rem; color: var(--muted); margin: .5rem 0 0; }
+  .log { text-align: center; letter-spacing: .15em; color: var(--muted); font-size: .9rem; margin: .2rem 0 0; min-height: 1.4em; }
+  .note-line { margin: .3rem 0 0; min-height: 1.4em; text-align: center; font-weight: 700; color: #b8860b; font-size: .95rem; }
+  .cues { display: grid; grid-template-columns: 1fr 1fr; gap: .3rem .9rem; margin: .6rem 0 0; font-size: .8125rem;
+    color: var(--muted); }
+  .cues b { color: var(--ink); }
+</style>
+</head>
+<body>
+<main>
+  <p class="back"><a href="../">← 課題一覧</a></p>
+  <h1>軽飛行機で輪をくぐる</h1>
+  <p class="sub">山と谷の上に浮かぶ 12 個の輪を、順にくぐってタイムを競います。コックピット視点。<strong>3D はライブラリを使わず自分で書きました</strong>——向きを 3 本のベクトルで持つ 3 軸の回転、内積だけで見るカメラ、高さの表から作る地形、傾く地平線。<strong>音を出してお使いください。</strong></p>
+
+  <div class="card">
+    <div class="status">
+      <span><b id="time">0:00.00</b> ・ 輪 <b id="ring">0/12</b> ・ ベスト <b id="best">--:--.--</b></span>
+      <span>速さ <b id="speed">65</b> m/s ・ 高度 <b id="alt">120</b> m ・ 方位 <b id="heading">000</b> ・ <b id="fps">–</b> コマ/秒</span>
+    </div>
+
+    <div class="stage"><canvas id="screen" width="512" height="320"></canvas></div>
+    <p id="note" class="note-line">&nbsp;</p>
+    <pre id="message"></pre>
+
+    <div class="pad cross">
+      <button type="button" class="u" data-key="up">↑</button>
+      <button type="button" class="l" data-key="left">←</button>
+      <button type="button" class="r" data-key="right">→</button>
+      <button type="button" class="d" data-key="down">↓</button>
+    </div>
+    <div class="pad" style="grid-template-columns:1fr 1fr">
+      <button type="button" data-key="slower">▼ スロットル</button>
+      <button type="button" data-key="faster">▲ スロットル</button>
+    </div>
+    <div class="pad" style="grid-template-columns:1fr">
+      <button type="button" id="go" class="go">▶ スタート</button>
+      <button type="button" id="again" hidden>もう一度</button>
+    </div>
+
+    <div class="howto">
+      <b>やること</b>：「スタート」で 3・2・1 のあと出発。← → で翼を傾けると曲がり（離すと水平に戻る）、↑ ↓ で機首の上げ下げ、▲ ▼ でスロットル 3 段階。<b>橙の輪</b>を順にくぐる。菱形の印が次の輪、画面の外なら縁の矢印。
+      <ol>
+        <li>輪の面をまたいだとき中心から 14 m 以内なら「くぐった」。外したら戻ってくぐる。</li>
+        <li>山や地面にぶつかると跳ね返って減速（窓の縁が赤く）。タイムのロスが罰。</li>
+        <li>12 個全部くぐったタイムがベストとしてこのブラウザに残ります。</li>
+      </ol>
+      <div class="cues">
+        <span><b>3 軸の回転</b>：前・上・右の 3 本を機体の軸まわりで回す</span>
+        <span><b>基底で見るカメラ</b>：右・上・前との内積がカメラ座標</span>
+        <span><b>ハイトマップ</b>：高さの表 → 地形の網、法線で陰影</span>
+        <span><b>傾く地平線</b>：水平で無限に遠い向きを 2 つ投影した直線</span>
+      </div>
+    </div>
+
+    <p id="loading">Python を読み込んでいます… （初回は数秒かかります）</p>
+  </div>
+
+  <p class="note">
+    このページは <strong>Python のコードがブラウザの中でそのまま動いています</strong>（PyScript）。
+    3 軸の回転・カメラ・地形・輪の判定・描く処理は CLI 版と 1 文字も違いません。
+    端末は 128 × 80 ドットを ▀ の並びで、ここでは<strong>同じ式を 4 倍の板（512 × 320）</strong>で回して canvas に出しています。
+  </p>
+
+
+
+
+  <footer>
+    ソース: <a href="https://github.com/hicocho/python-study">github.com/hicocho/python-study</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/docs/g81/game.py">このページの game.py</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/g81-flight-rings/main.py">CLI 版 main.py</a>
+  </footer>
+</main>
+
+<script type="py" src="./game.py?v=25c483c0"></script>
+</body>
+</html>
