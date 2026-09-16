@@ -1,4 +1,4 @@
-"""軽飛行機で輪をくぐる ブラウザ版
+"""エア・スラローム ブラウザ版
 
 CLI 版（g81-flight-rings/main.py）と中身はまったく同じ。3 本のベクトルで持つ向き（Frame）も、
 ロドリゲスの回転（spin）も、基底で見るカメラ（view）も、地形（HEIGHTS / ground_at）も、輪の判定（World.update）も 1 文字も変えていない。
