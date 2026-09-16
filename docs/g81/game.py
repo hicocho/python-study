@@ -20,6 +20,7 @@ from array import array
 from dataclasses import dataclass, field
 from typing import NamedTuple
 
+from pyodide.ffi import create_proxy
 from pyscript import document, when, window
 
 
@@ -1916,6 +1917,66 @@ def pad_up(event):
 @when("pointerleave", ".pad button[data-key]")
 def pad_leave(event):
     obey(world, event.target.getAttribute("data-key"), False)
+
+
+# --- スマホの傾きで操縦（DeviceOrientation）。ブラウザだけ。
+#   gamma（左右の傾き）→ roll_in（-1〜+1 の連続値。キーより細かく曲がれる）、beta（前後の傾き）→ pitch_in。
+#   iPhone は「傾きで操縦」を押した処理の中で許可を求める必要がある（requestPermission）。
+tilt = {"on": False, "beta0": 40.0}
+tilt_button = document.querySelector("#tilt")
+tilt_note = document.querySelector("#tilt-note")
+
+
+def on_orientation(event):
+    if not tilt["on"]:
+        return
+    try:
+        gamma, beta = float(event.gamma), float(event.beta)
+    except (TypeError, ValueError):                 # 値が無いイベント（JS の null）は無視
+        return
+    world.roll_in = max(-1.0, min(1.0, gamma / 25.0))                 # 25° 傾けると押し切り
+    world.pitch_in = max(-1.0, min(1.0, (tilt["beta0"] - beta) / 20.0))   # 手前に起こすと機首上げ
+    if abs(world.roll_in) < 0.12:
+        world.roll_in = 0.0
+    if abs(world.pitch_in) < 0.15:
+        world.pitch_in = 0.0
+
+
+def enable_tilt(granted: bool) -> None:
+    if not granted:
+        tilt_note.textContent = "傾きの利用が許可されませんでした。ボタンかキーで操縦してください"
+        return
+    tilt["on"] = True
+    window.addEventListener("deviceorientation", create_proxy(on_orientation))
+    tilt_button.hidden = True
+    tilt_note.textContent = "傾きで操縦しています：左右に傾けて曲がる、手前に起こすと機首上げ、奥へ倒すと機首下げ。「傾きをやめる」で戻ります"
+    stop_button.hidden = False
+
+
+@when("click", "#tilt")
+def ask_tilt(event):
+    tilt["beta0"] = 40.0
+    request = getattr(window.DeviceOrientationEvent, "requestPermission", None)
+    if request is None:                             # Android など：許可なしで使える
+        enable_tilt(True)
+        return
+    def done(state):
+        enable_tilt(str(state) == "granted")
+    def failed(error):
+        enable_tilt(False)
+    request().then(create_proxy(done)).catch(create_proxy(failed))
+
+
+stop_button = document.querySelector("#tilt-stop")
+
+
+@when("click", "#tilt-stop")
+def stop_tilt(event):
+    tilt["on"] = False
+    world.roll_in = world.pitch_in = 0.0
+    tilt_button.hidden = False
+    stop_button.hidden = True
+    tilt_note.textContent = "傾きで操縦するには、上のボタンを押して許可してください（スマホ・タブレット）"
 
 
 @when("click", "#again")

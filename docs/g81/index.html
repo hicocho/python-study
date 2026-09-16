@@ -149,6 +149,7 @@
   #message { min-height: 1.6em; text-align: center; font-family: inherit; white-space: normal; color: var(--ink); }
   .courses, .weathers { display: grid; grid-template-columns: repeat(4, 1fr); gap: .4rem; margin-top: .75rem; }
   .weathers { grid-template-columns: repeat(5, 1fr); margin-top: .4rem; }
+  .tilt-note { font-size: .8125rem; color: var(--muted); text-align: center; margin: .3rem 0 0; }
   .courses button, .weathers button { padding: .6rem 0; font-size: .95rem; font-family: inherit; font-weight: 600; color: var(--ink); background: var(--bg);
     border: 1px solid var(--line); border-radius: .5rem; cursor: pointer; }
   .courses button.go, .weathers button.go { background: var(--accent); color: var(--panel); border-color: var(--accent); }
@@ -206,6 +207,11 @@
       <button type="button" id="again" hidden>もう一度</button>
     </div>
     <label class="engine-toggle"><input type="checkbox" id="engine" checked> エンジン音（スロットルと速さで高さが変わる。ブラウザだけ）</label>
+    <div class="pad" style="grid-template-columns:1fr">
+      <button type="button" id="tilt">📱 傾きで操縦（スマホ・タブレット）</button>
+      <button type="button" id="tilt-stop" hidden>傾きをやめる</button>
+    </div>
+    <p id="tilt-note" class="tilt-note">傾きで操縦するには、上のボタンを押して許可してください（スマホ・タブレット）</p>
 
     <div class="howto">
       <b>やること</b>：「スタート」で 3・2・1 のあと出発。← → で翼を傾けると曲がり（離すと水平に戻る）、↑ ↓ で機首の上げ下げ、▲ ▼ でスロットル 3 段階。峡谷を縫って<b>橙の輪</b>を順にくぐる。菱形の印が次の輪、画面の外なら縁の矢印。
@@ -216,6 +222,7 @@
         <li>区間：谷 → <b>狭い峡谷</b>（幅半分）→ <b>三連橋</b>（橋の下を 3 回）→ <b>S 字</b>（輪が大きく左右）→ 谷 → <b>トンネル</b>（暗い筒。壁で跳ね返る）→ 谷 → <b>滝の上昇</b>（谷底が 180 m 上る）。</li>
         <li><b>コース</b>：峡谷（8 区間の定番）／海岸（低い谷と川、橋が多い）／高原（雪と 2 本のトンネル）／<b>ランダム</b>（種から作る。毎回違う道すじと区間）。合計タイム（走行＋罰−低空）のベストがコースごとにこのブラウザに残ります。</li>
         <li><b>天気</b>：晴れ／雨（暗く、雨が斜めに）／霧（輪が直前まで見えない）／夕方／雪（地面が白い）。ランダムのコースは天気も毎回変わります。</li>
+        <li><b>スマホの傾きで操縦</b>できます（ブラウザ版だけ）。「📱 傾きで操縦」を押して許可すると、端末を<b>左右に傾けて曲がり</b>（25° で押し切り。キーと違って傾けた量だけ曲がる）、<b>手前に起こすと機首上げ、奥へ倒すと機首下げ</b>。持った角度を基準（前後 40°）にしています。iPhone は許可のダイアログが出ます。うまく反応しないときは、画面の回転ロックを外すか、ボタン操縦に戻してください。</li>
       </ol>
       <div class="cues">
         <span><b>3 軸の回転</b>：前・上・右の 3 本を機体の軸まわりで回す</span>
@@ -244,6 +251,6 @@
   </footer>
 </main>
 
-<script type="py" src="./game.py?v=cf764bbd"></script>
+<script type="py" src="./game.py?v=b9fa4f7a"></script>
 </body>
 </html>
