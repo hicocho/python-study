@@ -32,7 +32,7 @@ WIDTH = 120                                         # 画面の横（ドット�
 HEIGHT = 72                                         # 縦。端末では 2 ドット = 1 行 → 36 行
 TOP = 4                                             # 一番上の穴の上端
 STEP = 1 / 30
-STAGE_TIME = 25.0                                   # 1 ステージの秒数
+STAGE_TIME = 20.0                                   # 1 ステージの秒数
 STAGE_PAUSE = 2.5                                   # ステージが変わるときの間
 # ステージの表。name は表示、cols × rows は穴の数、weights はそのステージで出るキャラの重み（無いキャラは出ない）、
 # king_at はステージの何秒目に王様が出るか（None なら出ない）、lids は穴にふたが付くか、grass は草の色
@@ -45,8 +45,14 @@ STAGES = [
          king_at=None, lids=False, grass=(105, 118, 150)),
     dict(name="トラップ畑", cols=4, rows=3, weights={"normal": 30, "gold": 8, "helmet": 8, "bomb": 14, "hive": 12, "cactus": 12, "turtle": 12, "hourglass": 4},
          king_at=None, lids=False, grass=(150, 140, 78)),
-    dict(name="動物園", cols=4, rows=4, weights={"normal": 24, "rabbit": 26, "turtle": 12, "mouse": 12, "slime": 10, "gold": 6, "bomb": 6, "hourglass": 4},
-         king_at=10.0, lids=False, grass=(96, 168, 88)),
+    dict(name="動物園", cols=4, rows=3, weights={"normal": 24, "rabbit": 26, "turtle": 12, "mouse": 12, "slime": 10, "gold": 6, "bomb": 6, "hourglass": 4},
+         king_at=None, lids=False, grass=(96, 168, 88)),
+    dict(name="王様の城", cols=4, rows=3, weights={"normal": 26, "helmet": 24, "metal": 8, "gold": 12, "bomb": 8, "hive": 6, "cactus": 6, "hourglass": 4},
+         king_at=10.0, lids=False, grass=(160, 150, 120)),
+    dict(name="金鉱", cols=4, rows=4, weights={"normal": 24, "gold": 22, "metal": 10, "helmet": 10, "bomb": 10, "cactus": 8, "turtle": 6, "hourglass": 4},
+         king_at=None, lids=False, grass=(140, 120, 80)),
+    dict(name="おばけの墓場", cols=4, rows=4, weights={"normal": 22, "ghost": 26, "mouse": 14, "rabbit": 10, "bomb": 8, "hive": 8, "hourglass": 6, "turtle": 4},
+         king_at=None, lids=True, grass=(90, 100, 120)),
     dict(name="ごちゃまぜ", cols=4, rows=4, weights=None,                  # None は表の重みそのまま（全部出る）
          king_at=12.0, lids=True, grass=(118, 108, 140)),
 ]
@@ -1412,9 +1418,9 @@ def check() -> None:
     assert abs(world.stage_left() - (STAGE_TIME + TIME_BONUS - 1.0)) < 1e-9, "砂時計はステージの残りを延ばす"
     world = World(seed=1)
     world.started = True
-    world.stage = 4                                 # 動物園（王様が 10 秒目に出る）
+    world.stage = [s["name"] for s in STAGES].index("王様の城")   # 王様が 10 秒目に出る
     world.holes = world.new_holes()
-    world.time = STAGES[4]["king_at"] + 0.1
+    world.time = world.spec["king_at"] + 0.1
     world.next_pop = 0.0
     king = world.pop()
     assert king.kind == "king" and king.armor == 4 and world.kings_done == 1
@@ -1512,7 +1518,9 @@ def check() -> None:
     world.time = world.pause_until + 0.01
     world.next_pop = 0.0
     assert world.update(STEP) == "pop"
-    for name in ("トラップ畑", "動物園", "ごちゃまぜ"):
+    assert [(s["cols"], s["rows"]) for s in STAGES].count((3, 3)) == 3 and [(s["cols"], s["rows"]) for s in STAGES].count((4, 3)) == 3 \
+        and [(s["cols"], s["rows"]) for s in STAGES].count((4, 4)) == 3, "3×3・4×3・4×4 が 3 ステージずつ"
+    for name in ("トラップ畑", "金鉱", "ごちゃまぜ"):
         world.stage = [s["name"] for s in STAGES].index(name)
         world.holes = world.new_holes()
         spec = world.spec
