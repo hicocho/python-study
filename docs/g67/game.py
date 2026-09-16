@@ -63,13 +63,46 @@ HIT_SHOW = 0.35                                     # 叩かれた顔を見せ�
 MISS_PENALTY = 1                                    # 空の穴を叩いたときの減点
 
 
-POINTS = {"normal": 1, "gold": 5, "helmet": 3, "bomb": -3}
-
-
-WEIGHTS = {"normal": 70, "gold": 8, "helmet": 12, "bomb": 10}   # 出る割合（random.choices の重み）
-
-
 COMBO_STEP = 3                                      # 3 連続ごとに倍率が 1 上がる（上限 ×4）
+
+
+KINDS = {
+    "normal":    dict(points=1, hits=1, stay=1.0, weight=52, move=None, word="命中"),
+    "gold":      dict(points=5, hits=1, stay=0.6, weight=7, move=None, word="金！"),
+    "helmet":    dict(points=3, hits=2, stay=1.0, weight=9, move=None, word="割れた！"),
+    "bomb":      dict(points=-3, hits=1, stay=1.0, weight=8, move=None, word="爆弾！"),
+    "slime":     dict(points=2, hits=2, stay=1.1, weight=9, move="hop", word="スライム！"),
+    "metal":     dict(points=10, hits=3, stay=0.45, weight=3, move=None, word="メタル！"),
+    "ghost":     dict(points=4, hits=1, stay=1.3, weight=6, move="blink", word="おばけ！"),
+    "rabbit":    dict(points=3, hits=1, stay=1.5, weight=6, move="jump", word="ウサギ！"),
+    "mouse":     dict(points=1, hits=1, stay=1.0, weight=5, move="swarm", word="ネズミ"),
+    "hourglass": dict(points=0, hits=1, stay=1.0, weight=4, move="time", word="砂時計"),
+    "king":      dict(points=15, hits=4, stay=1.8, weight=0, move=None, word="王様！"),
+}
+
+
+BLINK = 0.3                                         # おばけが見え隠れする間隔（秒）
+
+
+JUMP_EVERY = 0.4                                    # ウサギが跳ぶ間隔
+
+
+JUMPS = 3                                           # ウサギが跳ぶ回数（そのあと引っ込む）
+
+
+SWARM = 3                                           # ネズミの群れの数
+
+
+SWARM_BONUS = 6                                     # 群れを全部叩いたボーナス
+
+
+TIME_BONUS = 3.0                                    # 砂時計で足す秒数
+
+
+KING_TIMES = (18.0, 42.0)                           # 王様が出る時刻（ラウンドの中で 2 回）
+
+
+KING_COMBO = 3                                      # 王様を倒すとコンボが伸びる数
 
 
 RATE = 22050
@@ -112,6 +145,12 @@ def sound_bytes(kind: str) -> bytes:
         samples = noise(0.4, VOLUME * 1.8, 8.0, 9) + tone(80, 0.25, VOLUME)
     elif kind == "miss":
         samples = tone(220, 0.1, VOLUME * 0.7)
+    elif kind == "hop":                             # スライムが跳ねる（ぽよん）
+        samples = tone(400, 0.05, VOLUME * 0.8) + tone(600, 0.08, VOLUME * 0.8)
+    elif kind == "tick":                            # 砂時計（チクタク）
+        samples = tone(1200, 0.04) + tone(900, 0.04) + tone(1200, 0.04) + tone(900, 0.04)
+    elif kind == "king":                            # 王様を倒した（ファンファーレ）
+        samples = tone(784, 0.1) + tone(988, 0.1) + tone(1175, 0.1) + tone(1568, 0.3)
     elif kind == "best":
         samples = tone(523, 0.1) + tone(659, 0.1) + tone(784, 0.1) + tone(1047, 0.3)
     else:
@@ -125,7 +164,7 @@ def sound_bytes(kind: str) -> bytes:
     return buffer.getvalue()
 
 
-EVENTS = ("pop", "miss", "clank", "hit", "gold", "bomb", "end")   # 目立つ順
+EVENTS = ("pop", "miss", "clank", "hop", "hit", "tick", "gold", "king", "bomb", "end")   # 目立つ順
 
 
 SOUNDS = EVENTS + ("best",)
@@ -143,6 +182,16 @@ PALETTE = {
     "g": (100, 100, 110),   # ヘルメットの影
     "R": (230, 70, 50),     # 赤（導火線の火・叩かれた星）
     "O": (255, 170, 60),    # 橙
+    "S": (96, 200, 96),     # スライム
+    "s": (60, 150, 70),     # スライムの影
+    "M": (196, 198, 210),   # メタル
+    "m": (120, 122, 140),   # メタルの影
+    "E": (236, 236, 250),   # おばけ
+    "e": (190, 190, 225),   # おばけの影
+    "N": (160, 150, 150),   # ネズミ
+    "n": (110, 100, 100),   # ネズミの影
+    "H": (232, 200, 120),   # 砂時計の砂
+    "h": (120, 80, 40),     # 砂時計の枠
 }
 
 
@@ -321,7 +370,231 @@ HAMMER = sprite("hammer", """
 """)
 
 
-SPRITES = {"normal": (MOLE, MOLE_HIT), "gold": (GOLD, GOLD_HIT), "helmet": (HELMET, HELMET_CRACKED), "bomb": (BOMB, BOOM)}
+SLIME = sprite("slime", """
+................
+................
+......SSSS......
+....SSSSSSSS....
+...SSSSSSSSSS...
+..SSSKSSSSSKSS..
+..SSSKWSSSSKWS..
+.SSSSSSSSSSSSSS.
+.SSSSSSSSSSSSSS.
+.SSSSSSSssSSSSS.
+.SSSSSSSSSSSSSS.
+.SsSSSSSSSSSSsS.
+..ssSSSSSSSSss..
+...ssssssssss...
+""")
+
+
+SLIME_HIT = sprite("slime-hit", """
+................
+................
+......SSSS......
+....SSSSSSSS....
+...SSSSSSSSSS...
+..SSKSKSSSKSKS..
+..SSSKSSSSSKSS..
+.SSKSKSSSSKSKSS.
+.SSSSSSSSSSSSSS.
+.SSSSSSsssSSSSS.
+.SSSSSSSSSSSSSS.
+.SsSSSSSSSSSSsS.
+..ssSSSSSSSSss..
+...ssssssssss...
+""")
+
+
+METAL = SLIME.recolor({"S": "M", "s": "m"})
+
+
+METAL_HIT = SLIME_HIT.recolor({"S": "M", "s": "m"})
+
+
+GHOST = sprite("ghost", """
+.....EEEEEE.....
+...EEEEEEEEEE...
+..EEEEEEEEEEEE..
+.EEEEEEEEEEEEEE.
+.EEEKKEEEEKKEEE.
+.EEEKKEEEEKKEEE.
+EEEEEEEEEEEEEEEE
+EEEEEEEEEEEEEEEE
+EEEEEEEKKEEEEEEE
+EEEEEEEEEEEEEEEE
+EEEEEEEEEEEEEEEE
+EeEEEeEEEEeEEEeE
+E.eEe.eEEe.eEe.E
+....e..ee..e....
+""")
+
+
+GHOST_HIT = sprite("ghost-hit", """
+.....EEEEEE.....
+...EEEEEEEEEE...
+..EEEEEEEEEEEE..
+.EEEEEEEEEEEEEE.
+.EEKEKEEEEKEKEE.
+.EEEKEEEEEEKEEE.
+EEEKEKEEEEKEKEEE
+EEEEEEEEEEEEEEEE
+EEEEEEKKKKEEEEEE
+EEEEEEEEEEEEEEEE
+EEEEEEEEEEEEEEEE
+EeEEEeEEEEeEEEeE
+E.eEe.eEEe.eEe.E
+....e..ee..e....
+""")
+
+
+RABBIT = sprite("rabbit", """
+...WW......WW...
+...WPW....WPW...
+...WPW....WPW...
+...WPW....WPW...
+....WWWWWWWW....
+...WWWWWWWWWW...
+..WWWKWWWWWKWW..
+..WWWWWWWWWWWW..
+..WWWWWPPWWWWW..
+..WWWWWWWWWWWW..
+...WWWWWWWWWW...
+.WWWWWWWWWWWWWW.
+.WWWWWWWWWWWWWW.
+..WWWW....WWWW..
+""")
+
+
+RABBIT_HIT = sprite("rabbit-hit", """
+....WW....WW....
+...WPW....WPW...
+..WPW......WPW..
+..WPW......WPW..
+....WWWWWWWW....
+...WWWWWWWWWW...
+..WWKWKWWWKWKW..
+..WWWKWWWWWKWW..
+..WWKWKWWWKWKW..
+..WWWWWPPWWWWW..
+...WWWWWWWWWW...
+.WWWWWWWWWWWWWW.
+.WWWWWWWWWWWWWW.
+..WWWW....WWWW..
+""")
+
+
+MOUSE = sprite("mouse", """
+................
+................
+................
+...NN......NN...
+..NnnN....NnnN..
+...NNNNNNNNNN...
+..NNNNNNNNNNNN..
+..NNKNNNNNNKNN..
+..NNNNNNNNNNNN..
+..NNNNNNPPNNNN..
+...NNNNNNNNNN...
+....NNNNNNNN..n.
+.....NNNNNNNNn..
+......nn..nn....
+""")
+
+
+MOUSE_HIT = sprite("mouse-hit", """
+................
+................
+................
+...NN......NN...
+..NnnN....NnnN..
+...NNNNNNNNNN...
+..NKNKNNNNKNKN..
+..NNKNNNNNNKNN..
+..NKNKNNNNKNKN..
+..NNNNNNPPNNNN..
+...NNNNNNNNNN...
+....NNNNNNNN..n.
+.....NNNNNNNNn..
+......nn..nn....
+""")
+
+
+HOURGLASS = sprite("hourglass", """
+................
+....hhhhhhhh....
+....hHHHHHHh....
+....hHHHHHHh....
+.....hHHHHh.....
+......hHHh......
+.......hh.......
+.......hh.......
+......h..h......
+.....h.HH.h.....
+....h.HHHH.h....
+....hHHHHHHh....
+....hhhhhhhh....
+................
+""")
+
+
+HOURGLASS_HIT = sprite("hourglass-hit", """
+................
+....hhhhhhhh....
+....h......h....
+....h......h....
+.....h....h.....
+......h..h......
+.......hh.......
+.......hh.......
+......hHHh......
+.....hHHHHh.....
+....hHHHHHHh....
+....hHHHHHHh....
+....hhhhhhhh....
+................
+""")
+
+
+KING = sprite("king", """
+..Y..Y.YY.Y..Y..
+..YYYYYYYYYYYY..
+..YYYYYYYYYYYY..
+.BBBBBBBBBBBBBB.
+.BBBKKBBBBKKBBB.
+.BBBKWBBBBKWBBB.
+BBBBBBBBBBBBBBBB
+BBBBBBBPPBBBBBBB
+BBBBBBPPPPBBBBBB
+BBBBBBBbbBBBBBBB
+BBBBBBbbbbBBBBBB
+.BBBBBBBBBBBBBB.
+.BBbBBBBBBBBbBB.
+..bbbBBBBBBbbb..
+""")
+
+
+KING_HIT = sprite("king-hit", """
+..Y..Y.YY.Y..Y..
+..YYYYYYYYYYYY..
+..YYYYYYYYYYYY..
+.BBBBBBBBBBBBBB.
+.BBKBKBBBBKBKBB.
+.BBBKBBBBBBKBBB.
+BBBKBKBBBBKBKBBB
+BBBBBBBPPBBBBBBB
+BBBBBBPPPPBBBBBB
+BBBBBBbbbbBBBBBB
+BBBBBbBBBBbBBBBB
+.BBBBBBBBBBBBBB.
+.BBbBBBBBBBBbBB.
+..bbbBBBBBBbbb..
+""")
+
+
+SPRITES = {"normal": (MOLE, MOLE_HIT), "gold": (GOLD, GOLD_HIT), "helmet": (HELMET, HELMET_CRACKED), "bomb": (BOMB, BOOM),
+           "slime": (SLIME, SLIME_HIT), "metal": (METAL, METAL_HIT), "ghost": (GHOST, GHOST_HIT), "rabbit": (RABBIT, RABBIT_HIT),
+           "mouse": (MOUSE, MOUSE_HIT), "hourglass": (HOURGLASS, HOURGLASS_HIT), "king": (KING, KING_HIT)}
 
 
 class Screen:
@@ -384,8 +657,11 @@ class Hole:
     kind: str = "normal"
     since: float = 0.0                              # いまの状態に入った時刻
     stay: float = 1.2                               # 顔を出している秒数
-    armor: int = 0                                  # ヘルメットの残り（2 回叩く）
+    armor: int = 0                                  # 叩く残り回数（ヘルメット 2、メタル 3、王様 4）
     shown_at: float = 0.0                           # 顔を出し始めた時刻（反応時間の起点）
+    index: int = 0                                  # 穴の番号（0〜8。隣を探すのに使う）
+    jumps: int = 0                                  # ウサギが跳んだ回数
+    swarm: int = 0                                  # ネズミの群れの番号（0 は群れでない）
 
     def enter(self, state: State, now: float) -> None:
         self.state, self.since = state, now
@@ -400,8 +676,16 @@ class Hole:
             return 1.0
         return 0.0
 
-    def whackable(self) -> bool:
-        return self.state in (State.RISING, State.UP)
+    def visible(self, now: float) -> bool:
+        """おばけは UP の間 BLINK 秒ごとに見え隠れする。ほかは出ていれば見える。"""
+        if self.kind == "ghost" and self.state == State.UP:
+            return int((now - self.since) / BLINK) % 2 == 0
+        return True
+
+    def whackable(self, now: float | None = None) -> bool:
+        if self.state not in (State.RISING, State.UP):
+            return False
+        return True if now is None else self.visible(now)
 
 
 def interval_at(t: float) -> float:
@@ -445,7 +729,7 @@ class Best:
 class World:
     seed: int = 0
     luck: random.Random = field(default_factory=random.Random)
-    holes: list[Hole] = field(default_factory=lambda: [Hole() for _ in range(COLS * ROWS)])
+    holes: list[Hole] = field(default_factory=lambda: [Hole(index=i) for i in range(COLS * ROWS)])
     time: float = 0.0
     started: bool = False
     over: bool = False
@@ -458,6 +742,10 @@ class World:
     misses: int = 0
     reactions: list[float] = field(default_factory=list)
     hammer: tuple[int, float] | None = None         # 振り下ろしたハンマー（穴の番号, 時刻）
+    extra: float = 0.0                              # 砂時計で足した秒数
+    swarms: dict[int, list[int]] = field(default_factory=dict)   # 群れの番号 → [叩いた数, 逃した数]
+    swarm_count: int = 0
+    kings_done: int = 0                             # 出した王様の数
     note: str = ""
     note_until: float = 0.0
 
@@ -472,25 +760,67 @@ class World:
         self.note = text
         self.note_until = self.time + seconds
 
+    @property
+    def limit(self) -> float:
+        """ラウンドの長さ（砂時計のぶん伸びる）。"""
+        return ROUND + self.extra
+
+    def place(self, hole: Hole, kind: str, swarm: int = 0) -> None:
+        """穴にキャラを出す。表から点・回数・時間を引く。"""
+        hole.kind = kind
+        hole.stay = stay_at(self.time) * KINDS[kind]["stay"]
+        hole.armor = KINDS[kind]["hits"]
+        hole.shown_at = self.time
+        hole.jumps = 0
+        hole.swarm = swarm
+        hole.enter(State.RISING, self.time)
+
     def pop(self) -> Hole | None:
-        """空いている穴を 1 つ選んでモグラを出す。種類は重みで抽選。"""
+        """空いている穴にキャラを出す。種類は表の重みで抽選（砂時計は後半ほど出やすい）。王様は決まった時刻に。
+        ネズミは 3 匹同時に別々の穴から。"""
         empty = [h for h in self.holes if h.state == State.EMPTY]
         if not empty:
             return None
+        if self.kings_done < len(KING_TIMES) and self.time >= KING_TIMES[self.kings_done]:
+            self.kings_done += 1
+            hole = self.luck.choice(empty)
+            self.place(hole, "king")
+            return hole
+        names = [k for k in KINDS if KINDS[k]["weight"] > 0]
+        weights = [KINDS[k]["weight"] * ((0.4 + 1.2 * self.time / ROUND) if k == "hourglass" else 1.0) for k in names]
+        kind = self.luck.choices(names, weights=weights)[0]
+        if kind == "mouse" and len(empty) >= SWARM:
+            self.swarm_count += 1
+            self.swarms[self.swarm_count] = [0, 0]
+            for hole in self.luck.sample(empty, SWARM):
+                self.place(hole, "mouse", self.swarm_count)
+            return hole
+        if kind == "mouse":
+            kind = "normal"
         hole = self.luck.choice(empty)
-        hole.kind = self.luck.choices(list(WEIGHTS), weights=list(WEIGHTS.values()))[0]
-        hole.stay = stay_at(self.time) * (0.6 if hole.kind == "gold" else 1.0)   # 金はすぐ引っ込む
-        hole.armor = 2 if hole.kind == "helmet" else 1
-        hole.shown_at = self.time
-        hole.enter(State.RISING, self.time)
+        self.place(hole, kind)
         return hole
+
+    def hop(self, hole: Hole) -> bool:
+        """スライムが隣の空いた穴へ跳ねる。跳べる穴が無ければ False。"""
+        col, row = hole.index % COLS, hole.index // COLS
+        near = [h for h in self.holes if h.state == State.EMPTY
+                and abs(h.index % COLS - col) + abs(h.index // COLS - row) == 1]
+        if not near:
+            return False
+        target = self.luck.choice(near)
+        shown, armor = hole.shown_at, hole.armor
+        hole.enter(State.EMPTY, self.time)
+        self.place(target, "slime")
+        target.shown_at, target.armor = shown, armor
+        return True
 
     def update(self, dt: float) -> str | None:
         if not self.started or self.over:
             return None
         self.time += dt
         happened = None
-        if self.time >= ROUND:
+        if self.time >= self.limit:
             self.over = True
             for hole in self.holes:
                 hole.enter(State.EMPTY, self.time)
@@ -499,10 +829,24 @@ class World:
             passed = self.time - hole.since
             if hole.state == State.RISING and passed >= RISE:
                 hole.enter(State.UP, self.time)
-            elif hole.state == State.UP and passed >= hole.stay:
+            elif hole.state == State.UP and hole.kind == "rabbit" and passed >= JUMP_EVERY and hole.jumps < JUMPS:
+                empty = [h for h in self.holes if h.state == State.EMPTY]
+                if empty:                           # ウサギは別の穴へ跳ぶ（跳んだ回数と顔を出した時刻は引き継ぐ）
+                    target = self.luck.choice(empty)
+                    jumps, shown = hole.jumps + 1, hole.shown_at
+                    hole.enter(State.EMPTY, self.time)
+                    self.place(target, "rabbit")
+                    target.jumps, target.shown_at = jumps, shown
+                    target.enter(State.UP, self.time)
+                else:
+                    hole.jumps += 1
+                    hole.since = self.time
+            elif hole.state == State.UP and passed >= hole.stay and not (hole.kind == "rabbit" and hole.jumps < JUMPS):
                 hole.enter(State.SINKING, self.time)
-                if hole.kind != "bomb":
+                if hole.kind not in ("bomb", "hourglass"):
                     self.escaped += 1
+                if hole.swarm:
+                    self.swarms[hole.swarm][1] += 1
             elif hole.state == State.SINKING and passed >= SINK:
                 hole.enter(State.EMPTY, self.time)
             elif hole.state == State.HIT and passed >= HIT_SHOW:
@@ -519,32 +863,54 @@ class World:
             return None
         hole = self.holes[index]
         self.hammer = (index, self.time)
-        if not hole.whackable():
+        if not hole.whackable(self.time):           # 空の穴、消えているおばけ
             self.score -= MISS_PENALTY
             self.misses += 1
             self.combo = 0
             self.tell("空振り −1")
             return "miss"
+        spec = KINDS[hole.kind]
         if hole.kind == "bomb":
-            self.score += POINTS["bomb"]
+            self.score += spec["points"]
             self.combo = 0
             hole.enter(State.HIT, self.time)
             self.tell("爆弾！ −3", 1.2)
             return "bomb"
         hole.armor -= 1
-        if hole.armor > 0:
-            self.tell("ヘルメット！ もう 1 回")
+        if hole.armor > 0:                          # まだ倒れない：ヘルメット・メタル・王様は耐える、スライムは隣へ跳ねる
+            if hole.kind == "slime":
+                if self.hop(hole):
+                    self.tell("跳ねた！ 隣の穴へ")
+                    return "hop"
+            self.tell({"helmet": "ヘルメット！ もう 1 回", "metal": f"メタル！ あと {hole.armor} 回",
+                       "king": f"王様！ あと {hole.armor} 回", "slime": "スライム！ もう 1 回"}[hole.kind])
             return "clank"
+        if hole.kind == "hourglass":                # 点ではなく時間
+            self.extra += TIME_BONUS
+            hole.enter(State.HIT, self.time)
+            self.tell(f"砂時計 +{TIME_BONUS:.0f} 秒", 1.2)
+            return "tick"
         self.combo += 1
+        points = spec["points"] * self.multiplier
+        if hole.kind == "king":                     # 王様は倒したあとにコンボが伸びる（点は倒す前の倍率）
+            self.combo += KING_COMBO
         self.best_combo = max(self.best_combo, self.combo)
-        points = POINTS[hole.kind] * self.multiplier
         self.score += points
         self.hits += 1
         self.reactions.append(self.time - hole.shown_at)
         hole.enter(State.HIT, self.time)
-        word = {"normal": "命中", "gold": "金！", "helmet": "割れた！"}[hole.kind]
-        self.tell(f"{word} +{points}" + (f"  ×{self.multiplier}" if self.multiplier > 1 else "") + (f"  {self.combo} 連続" if self.combo > 1 else ""))
-        return "gold" if hole.kind == "gold" else "hit"
+        word = spec["word"]
+        bonus = ""
+        if hole.swarm:                              # 群れ：3 匹全部なら +6
+            self.swarms[hole.swarm][0] += 1
+            if self.swarms[hole.swarm][0] == SWARM:
+                self.score += SWARM_BONUS
+                bonus = f"  群れ全滅 +{SWARM_BONUS}"
+        self.tell(f"{word} +{points}{bonus}" + (f"  ×{self.multiplier}" if self.multiplier > 1 else "")
+                  + (f"  {self.combo} 連続" if self.combo > 1 else ""), 1.2 if bonus else 1.0)
+        if bonus:
+            return "gold"
+        return {"gold": "gold", "king": "king", "metal": "gold"}.get(hole.kind, "hit")
 
     def average_reaction(self) -> float:
         return statistics.mean(self.reactions) if self.reactions else 0.0
@@ -572,7 +938,7 @@ def draw(screen: Screen, world: World) -> None:
         screen.ellipse(cx, cy, 15 * scale, 3.5 * scale, HOLE_RIM)
         screen.ellipse(cx, cy, 13 * scale, 2.5 * scale, HOLE)
         lift = hole.lift(world.time)
-        if lift > 0:
+        if lift > 0 and hole.visible(world.time):
             face, hit_face = SPRITES[hole.kind]
             spr = hit_face if hole.state == State.HIT else (HELMET_CRACKED if hole.kind == "helmet" and hole.armor == 1 else face)
             top_y = cy - spr.height * scale * lift                 # 出ているぶんだけ上に
@@ -666,7 +1032,7 @@ frames = []
 def refresh() -> None:
     draw(screen, world)
     screen.flush()
-    time_label.textContent = f"{max(0.0, ROUND - world.time):.1f}"
+    time_label.textContent = f"{max(0.0, world.limit - world.time):.1f}"
     score_label.textContent = str(world.score)
     combo_label.textContent = f"{world.combo}（×{world.multiplier}）"
     hits_label.textContent = str(world.hits)
