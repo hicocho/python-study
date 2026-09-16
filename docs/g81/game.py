@@ -257,6 +257,9 @@ SHADOW_COLOR = (40, 70, 40)
 PLUMB = (255, 255, 200)                             # 自機から真下へ落ちる線
 
 
+SPARK = (255, 220, 120)                             # くぐった輪が散る光
+
+
 GAUGE = (120, 200, 140)
 
 
@@ -307,8 +310,10 @@ def sound_bytes(kind: str) -> bytes:
         samples = tone(880, 0.12)
     elif kind == "go":
         samples = tone(1320, 0.35)
-    elif kind == "gate":
-        samples = tone(1047, 0.07) + tone(1319, 0.07) + tone(1568, 0.14)
+    elif kind == "gate":                            # くぐった：風切り（雑音の山）＋上がる 3 音
+        whoosh = noise(0.18, VOLUME * 0.9, 6.0, 8)
+        rise = tone(1047, 0.07) + tone(1319, 0.07) + tone(1568, 0.14)
+        samples = array("h", (max(-32767, min(32767, a + (rise[i] if i < len(rise) else 0))) for i, a in enumerate(whoosh)))
     elif kind == "miss":
         samples = tone(330, 0.12, VOLUME * 0.8) + tone(262, 0.16, VOLUME * 0.8)
     elif kind == "low":
@@ -332,6 +337,31 @@ EVENTS = ("count", "go", "low", "gate", "miss", "bump", "finish")
 
 
 SOUNDS = EVENTS + ("best",)
+
+
+ENGINE_HZ = 96.0                                    # エンジン音の輪（0.5 秒）の基本の高さ（g79 と同じ作り）
+
+
+def engine_bytes() -> bytes:
+    """エンジン音の輪。ノコギリ波に近い倍音の和を 0.5 秒＝ちょうど 48 周期。ブラウザが loop で回し、playbackRate を速さで変える。"""
+    count = int(RATE * 0.5)
+    samples = array("h")
+    for i in range(count):
+        t = i / RATE
+        wave_ = sum(math.sin(math.tau * ENGINE_HZ * n * t) / n for n in range(1, 8))
+        samples.append(int(32767 * 0.2 * wave_))
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(RATE)
+        out.writeframes(samples.tobytes())
+    return buffer.getvalue()
+
+
+def engine_rate(speed: float, throttle: int, boost: bool) -> float:
+    """エンジン音の再生の速さ。スロットルで段が変わり、速さで少し上がり、ブースト中はさらに高く。"""
+    return 0.7 + 0.25 * throttle + (speed - 55.0) / 200.0 + (0.25 if boost else 0.0)
 
 
 class V(NamedTuple):
@@ -961,6 +991,8 @@ class World:
     roll_in: float = 0.0
     pitch_in: float = 0.0
     turning: float = 0.0                            # いま曲がっている量（-1〜+1）。roll_in に 0.15 秒で追いつく
+    sparks: list[list] = field(default_factory=list)   # くぐった輪の光の粒 [位置, 速さ, 残り秒]
+    spray: list[list] = field(default_factory=list)    # 低空の水しぶき [位置, 速さ, 残り秒]
     hurt: float = 0.0
     bumps: int = 0
     misses: int = 0
@@ -1117,7 +1149,17 @@ class World:
         if self.collide():
             self.tell("ぶつかった！", 1.0)
             happened = "bump"
+        for bits in (self.sparks, self.spray):      # 粒を飛ばす
+            for bit in bits:
+                bit[0] = bit[0] + bit[1].scale(dt)
+                bit[1] = V(bit[1].x, bit[1].y - 9.8 * dt, bit[1].z)
+                bit[2] -= dt
+            bits[:] = [bit for bit in bits if bit[2] > 0]
         if self.altitude() < LOW_ALT and self.speed > 50:   # 低空：1 秒続けるごとにタイムを引く
+            if ground_at(self.pos.x, self.pos.z) < floor_at(self.hint) + 1.0 and len(self.spray) < 40:   # 川の上なら水しぶき
+                for _ in range(2):
+                    aside = self.frame.right.scale(random.Random(int(self.time * 1000) % 977).uniform(-3, 3))
+                    self.spray.append([self.pos - self.frame.forward.scale(3.0) + aside, V(0, 6.0, 0) - self.frame.forward.scale(8.0), 0.5])
             self.low_time += dt
             if self.low_time >= 1.0:
                 self.low_time -= 1.0
@@ -1152,6 +1194,11 @@ class World:
             gate.state = "hit"
             self.combo += 1
             self.boost = min(2.5, BOOST_TIME + 0.3 * (self.combo - 1))   # くぐるとブースト。連続なら長く
+            side, up = gate.basis()
+            for k in range(14):                     # 輪が光の粒になって散る
+                a = k * math.tau / 14
+                out = side.scale(math.cos(a)) + up.scale(math.sin(a))
+                self.sparks.append([gate.pos + out.scale(GATE_R), out.scale(18.0) + gate.dir.scale(self.speed * 0.3), 0.7])
             self.tell(f"輪 {self.next + 1}/{GATES}  ブースト" + (f"  {self.combo} 連続" if self.combo > 1 else ""))
         else:
             gate.state = "miss"
@@ -1513,6 +1560,11 @@ def draw_hud(screen: Screen, world: World) -> None:
         screen.fill([(x0, y1 - bar_h), (x0 + 3 * scale, y1 - bar_h), (x0 + 3 * scale, y1), (x0, y1)], GAUGE_BG)
         fill_h = bar_h * max(0.0, min(1.0, value / top_value))
         screen.fill([(x0, y1 - fill_h), (x0 + 3 * scale, y1 - fill_h), (x0 + 3 * scale, y1), (x0, y1)], color)
+    if world.boost > 0 and world.hurt == 0:         # ブースト中：縁がうっすら橙に
+        thick = int(2 * scale)
+        for quad in (((0, 0), (w, 0), (w, thick), (0, thick)), ((0, h - thick), (w, h - thick), (w, h), (0, h)),
+                     ((0, 0), (thick, 0), (thick, h), (0, h)), ((w - thick, 0), (w, 0), (w, h), (w - thick, h))):
+            screen.fill(list(quad), BOOST_COLOR)
     if world.hurt > 0:
         thick = int(3 * scale)
         screen.fill([(0, 0), (w, 0), (w, thick), (0, thick)], BUMP_RED)
@@ -1558,6 +1610,13 @@ def draw(screen: Screen, world: World) -> None:
             draw_falls(screen, thing, cam)
         else:
             draw_prop(screen, thing, cam)
+    for bits, color, size in ((world.sparks, SPARK, 0.8), (world.spray, FOAM, 0.6)):
+        for pos, _, left in bits:
+            q = view(pos, cam)
+            if q.z > NEAR:
+                x, y = project(q, scale)
+                r = max(1.0, size * scale * (0.5 + left))
+                screen.fill([(x - r, y), (x, y - r), (x + r, y), (x, y + r)], fog(color, q.z))
     draw_plane(screen, world, cam)
     if world.finished_at is None:
         draw_marker(screen, world, cam)
@@ -1607,6 +1666,7 @@ go_button = document.querySelector("#go")
 course_buttons = document.querySelectorAll(".courses button")
 course_label = document.querySelector("#course")
 SAVED = "g81-best"                                  # localStorage の鍵。CLI 版の records.json にあたる
+sound_on = document.querySelector("#engine")
 
 
 class CanvasScreen(Screen):
@@ -1625,11 +1685,19 @@ class CanvasScreen(Screen):
 
 
 class Speaker:
+    """出来事の音は Audio に持たせておく。エンジン音は 0.5 秒の輪を loop で回し、playbackRate を変える（g79 と同じ。ブラウザだけ）。"""
+
     def __init__(self):
         self.made = {}
         for kind in SOUNDS:
             uri = "data:audio/wav;base64," + base64.b64encode(sound_bytes(kind)).decode()
             self.made[kind] = window.Audio.new(uri)
+        self.engine = window.Audio.new("data:audio/wav;base64," + base64.b64encode(engine_bytes()).decode())
+        self.engine.loop = True
+        self.engine.preservesPitch = False
+        self.engine.webkitPreservesPitch = False
+        self.engine.volume = 0.45
+        self.running = False
 
     def say(self, kind: str | None) -> None:
         if kind is None:
@@ -1637,6 +1705,21 @@ class Speaker:
         sound = self.made[kind]
         sound.currentTime = 0
         sound.play()
+
+    def start_engine(self) -> None:
+        """人が触った処理の中から呼ぶ（Safari は時計からでは音を始められない。g79 で覚えた）。"""
+        if not self.running:
+            self.engine.currentTime = 0
+            self.engine.play()
+            self.running = True
+
+    def rev(self, world_: World, on: bool) -> None:
+        if not on and self.running:
+            self.engine.pause()
+            self.running = False
+        if self.running:
+            self.engine.playbackRate = engine_rate(world_.speed, world_.throttle, world_.boost > 0)
+            self.engine.volume = 0.6 if in_tunnel(world_.s) else 0.45   # トンネルの中は反響で大きく
 
 
 screen = CanvasScreen(WIDTH * SCALE, HEIGHT * SCALE)
@@ -1698,6 +1781,7 @@ async def loop():
                 event = "best" if improved else event
             speaker.say(event)
             lag -= STEP
+        speaker.rev(world, world.started and sound_on.checked)
         refresh()
         frames.append(window.performance.now() / 1000)
         del frames[:-30]
@@ -1711,6 +1795,11 @@ KEYS = {"ArrowLeft": "left", "ArrowRight": "right", "ArrowUp": "up", "ArrowDown"
         "a": "left", "d": "right", "w": "faster", "s": "slower", " ": "go", "Enter": "go"}
 
 
+def wake_sound() -> None:
+    if world.started and sound_on.checked:
+        speaker.start_engine()
+
+
 @when("keydown", "body")
 def on_down(event):
     key = KEYS.get(event.key)
@@ -1719,6 +1808,7 @@ def on_down(event):
         if event.repeat:
             return
         obey(world, key, True)
+        wake_sound()
 
 
 @when("keyup", "body")
@@ -1733,13 +1823,20 @@ def on_up(event):
 def go(event):
     obey(world, "go")
     go_button.blur()
+    wake_sound()
     refresh()
+
+
+@when("change", "#engine")
+def toggle_engine(event):
+    wake_sound()
 
 
 @when("pointerdown", ".pad button[data-key]")
 def pad_down(event):
     event.preventDefault()
     obey(world, event.target.getAttribute("data-key"), True)
+    wake_sound()
 
 
 @when("pointerup", ".pad button[data-key]")
@@ -1760,6 +1857,7 @@ def again(event):
     world = World(seed=int(window.performance.now()))
     world.started = True
     improved = False
+    wake_sound()
     refresh()
 
 

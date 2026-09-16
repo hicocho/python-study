@@ -106,6 +106,7 @@ NOSE_COLOR = (70, 70, 76)
 PROP_COLOR = (40, 40, 44)
 SHADOW_COLOR = (40, 70, 40)
 PLUMB = (255, 255, 200)                             # 自機から真下へ落ちる線
+SPARK = (255, 220, 120)                             # くぐった輪が散る光
 GAUGE = (120, 200, 140)
 GAUGE_BG = (28, 30, 34)
 BOOST_COLOR = (255, 170, 60)
@@ -144,8 +145,10 @@ def sound_bytes(kind: str) -> bytes:
         samples = tone(880, 0.12)
     elif kind == "go":
         samples = tone(1320, 0.35)
-    elif kind == "gate":
-        samples = tone(1047, 0.07) + tone(1319, 0.07) + tone(1568, 0.14)
+    elif kind == "gate":                            # くぐった：風切り（雑音の山）＋上がる 3 音
+        whoosh = noise(0.18, VOLUME * 0.9, 6.0, 8)
+        rise = tone(1047, 0.07) + tone(1319, 0.07) + tone(1568, 0.14)
+        samples = array("h", (max(-32767, min(32767, a + (rise[i] if i < len(rise) else 0))) for i, a in enumerate(whoosh)))
     elif kind == "miss":
         samples = tone(330, 0.12, VOLUME * 0.8) + tone(262, 0.16, VOLUME * 0.8)
     elif kind == "low":
@@ -167,6 +170,29 @@ def sound_bytes(kind: str) -> bytes:
 
 EVENTS = ("count", "go", "low", "gate", "miss", "bump", "finish")
 SOUNDS = EVENTS + ("best",)
+ENGINE_HZ = 96.0                                    # エンジン音の輪（0.5 秒）の基本の高さ（g79 と同じ作り）
+
+
+def engine_bytes() -> bytes:
+    """エンジン音の輪。ノコギリ波に近い倍音の和を 0.5 秒＝ちょうど 48 周期。ブラウザが loop で回し、playbackRate を速さで変える。"""
+    count = int(RATE * 0.5)
+    samples = array("h")
+    for i in range(count):
+        t = i / RATE
+        wave_ = sum(math.sin(math.tau * ENGINE_HZ * n * t) / n for n in range(1, 8))
+        samples.append(int(32767 * 0.2 * wave_))
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as out:
+        out.setnchannels(1)
+        out.setsampwidth(2)
+        out.setframerate(RATE)
+        out.writeframes(samples.tobytes())
+    return buffer.getvalue()
+
+
+def engine_rate(speed: float, throttle: int, boost: bool) -> float:
+    """エンジン音の再生の速さ。スロットルで段が変わり、速さで少し上がり、ブースト中はさらに高く。"""
+    return 0.7 + 0.25 * throttle + (speed - 55.0) / 200.0 + (0.25 if boost else 0.0)
 
 
 # ── 3D の点 ─────────────────────────────────────────────────────────────
@@ -806,6 +832,8 @@ class World:
     roll_in: float = 0.0
     pitch_in: float = 0.0
     turning: float = 0.0                            # いま曲がっている量（-1〜+1）。roll_in に 0.15 秒で追いつく
+    sparks: list[list] = field(default_factory=list)   # くぐった輪の光の粒 [位置, 速さ, 残り秒]
+    spray: list[list] = field(default_factory=list)    # 低空の水しぶき [位置, 速さ, 残り秒]
     hurt: float = 0.0
     bumps: int = 0
     misses: int = 0
@@ -962,7 +990,17 @@ class World:
         if self.collide():
             self.tell("ぶつかった！", 1.0)
             happened = "bump"
+        for bits in (self.sparks, self.spray):      # 粒を飛ばす
+            for bit in bits:
+                bit[0] = bit[0] + bit[1].scale(dt)
+                bit[1] = V(bit[1].x, bit[1].y - 9.8 * dt, bit[1].z)
+                bit[2] -= dt
+            bits[:] = [bit for bit in bits if bit[2] > 0]
         if self.altitude() < LOW_ALT and self.speed > 50:   # 低空：1 秒続けるごとにタイムを引く
+            if ground_at(self.pos.x, self.pos.z) < floor_at(self.hint) + 1.0 and len(self.spray) < 40:   # 川の上なら水しぶき
+                for _ in range(2):
+                    aside = self.frame.right.scale(random.Random(int(self.time * 1000) % 977).uniform(-3, 3))
+                    self.spray.append([self.pos - self.frame.forward.scale(3.0) + aside, V(0, 6.0, 0) - self.frame.forward.scale(8.0), 0.5])
             self.low_time += dt
             if self.low_time >= 1.0:
                 self.low_time -= 1.0
@@ -997,6 +1035,11 @@ class World:
             gate.state = "hit"
             self.combo += 1
             self.boost = min(2.5, BOOST_TIME + 0.3 * (self.combo - 1))   # くぐるとブースト。連続なら長く
+            side, up = gate.basis()
+            for k in range(14):                     # 輪が光の粒になって散る
+                a = k * math.tau / 14
+                out = side.scale(math.cos(a)) + up.scale(math.sin(a))
+                self.sparks.append([gate.pos + out.scale(GATE_R), out.scale(18.0) + gate.dir.scale(self.speed * 0.3), 0.7])
             self.tell(f"輪 {self.next + 1}/{GATES}  ブースト" + (f"  {self.combo} 連続" if self.combo > 1 else ""))
         else:
             gate.state = "miss"
@@ -1361,6 +1404,11 @@ def draw_hud(screen: Screen, world: World) -> None:
         screen.fill([(x0, y1 - bar_h), (x0 + 3 * scale, y1 - bar_h), (x0 + 3 * scale, y1), (x0, y1)], GAUGE_BG)
         fill_h = bar_h * max(0.0, min(1.0, value / top_value))
         screen.fill([(x0, y1 - fill_h), (x0 + 3 * scale, y1 - fill_h), (x0 + 3 * scale, y1), (x0, y1)], color)
+    if world.boost > 0 and world.hurt == 0:         # ブースト中：縁がうっすら橙に
+        thick = int(2 * scale)
+        for quad in (((0, 0), (w, 0), (w, thick), (0, thick)), ((0, h - thick), (w, h - thick), (w, h), (0, h)),
+                     ((0, 0), (thick, 0), (thick, h), (0, h)), ((w - thick, 0), (w, 0), (w, h), (w - thick, h))):
+            screen.fill(list(quad), BOOST_COLOR)
     if world.hurt > 0:
         thick = int(3 * scale)
         screen.fill([(0, 0), (w, 0), (w, thick), (0, thick)], BUMP_RED)
@@ -1406,6 +1454,13 @@ def draw(screen: Screen, world: World) -> None:
             draw_falls(screen, thing, cam)
         else:
             draw_prop(screen, thing, cam)
+    for bits, color, size in ((world.sparks, SPARK, 0.8), (world.spray, FOAM, 0.6)):
+        for pos, _, left in bits:
+            q = view(pos, cam)
+            if q.z > NEAR:
+                x, y = project(q, scale)
+                r = max(1.0, size * scale * (0.5 + left))
+                screen.fill([(x - r, y), (x, y - r), (x + r, y), (x, y + r)], fog(color, q.z))
     draw_plane(screen, world, cam)
     if world.finished_at is None:
         draw_marker(screen, world, cam)
@@ -1811,7 +1866,7 @@ def check() -> None:
     world.hint, world.s = locate(world.pos, 0)
     got = [world.update(STEP) for _ in range(8)]
     assert "gate" in got and world.next == 1 and gate.state == "hit" and world.combo == 1, got
-    assert world.boost > 0.5, "くぐるとブースト"
+    assert world.boost > 0.5 and len(world.sparks) == 14, "くぐるとブースト、輪が光の粒になる"
     speed0 = world.speed
     for _ in range(15):
         world.update(STEP)
@@ -1875,7 +1930,10 @@ def check() -> None:
     assert best.take("海岸", 150.0) and best.of("海岸") == 150.0 and best.of("高原") == 0.0, "コースごとに別"
     assert Best.parse(best.dump()) == best and Best.parse("{x") == Best()
     assert len({sound_bytes(k) for k in SOUNDS}) == len(SOUNDS) and all(k in SOUNDS for k in EVENTS)
-    print(f"  短いタイムだけ更新。音は {len(SOUNDS)} つ全部別")
+    loop_ = engine_bytes()[44:]
+    assert len(loop_) == RATE and abs(int.from_bytes(loop_[:2], "little", signed=True)) < 400
+    assert engine_rate(55, 0, False) < engine_rate(55, 1, False) < engine_rate(80, 1, False) < engine_rate(80, 1, True)
+    print(f"  短いタイムだけ更新。音は {len(SOUNDS)} つ全部別。エンジンの輪は 0.5 秒で切れ目なし、スロットル・速さ・ブーストで高く")
     print("● コース")
     for name in ("海岸", "高原"):
         load_course(name)
