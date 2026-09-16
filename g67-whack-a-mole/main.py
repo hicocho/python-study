@@ -728,9 +728,10 @@ class Hole:
     stay: float = 1.2                               # 顔を出している秒数
     armor: int = 0                                  # 叩く残り回数（ヘルメット 2、メタル 3、王様 4）
     shown_at: float = 0.0                           # 顔を出し始めた時刻（反応時間の起点）
-    index: int = 0                                  # 穴の番号（0〜8。隣を探すのに使う）
+    index: int = 0                                  # 穴の番号（0〜15。隣を探すのに使う）
     jumps: int = 0                                  # ウサギが跳んだ回数
     swarm: int = 0                                  # ネズミの群れの番号（0 は群れでない）
+    lids: bool = False                              # ふた付きの穴か（ステージで決まる）
 
     def enter(self, state: State, now: float) -> None:
         self.state, self.since = state, now
@@ -744,8 +745,6 @@ class Hole:
         if self.state in (State.UP, State.HIT, State.SHELL):
             return 1.0
         return 0.0
-
-    lids: bool = False                              # ふた付きの穴か（ステージで決まる）
 
     def lid_open(self, now: float) -> bool:
         """ふたが開いているか。周期 LID_PERIOD のうち LID_OPEN 秒だけ開く。穴ごとに位相をずらす。"""
@@ -880,7 +879,7 @@ class World:
         hole.enter(State.RISING, self.time)
 
     def pop(self) -> Hole | None:
-        """空いている穴にキャラを出す。種類は表の重みで抽選（砂時計は後半ほど出やすい）。王様は決まった時刻に。
+        """空いている穴にキャラを出す。種類はステージの表の重みで抽選。王様はステージの決まった秒に 1 回。
         ネズミは 3 匹同時に別々の穴から。"""
         empty = [h for h in self.holes if h.state == State.EMPTY]
         if not empty:
