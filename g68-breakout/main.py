@@ -53,7 +53,7 @@ SWAY_PERIOD = 3.0                                   # その周期（秒）
 STAGE_PAUSE = 1.5                                   # 面が変わるときの間
 LAUNCH_ANGLE = math.radians(20)                     # 放したときの角度
 TRAIL = 6                                           # 残像の数
-DROP_RATE = 0.12                                    # ブロックを壊したときにカプセルが落ちる確率
+DROP_RATE = 0.15                                    # ブロックを壊したときにカプセルが落ちる確率
 CAPSULE_SPEED = 22.0                                # カプセルの落ちる速さ
 CAPSULE_W = 7.0
 CAPSULE_H = 3.6
@@ -61,6 +61,11 @@ WIDE_SCALE = 1.5                                    # 広いバー
 SHRINK_SCALE = 0.6                                  # 縮んだバー
 SLOW_SCALE = 0.65                                   # ゆっくり
 SPLIT_ANGLE = math.radians(25)                      # 分裂した玉の開き
+LASER_COOL = 0.35                                   # レーザーの連射間隔
+LASER_SHOW = 0.12                                   # 光線が見えている時間
+MAX_BALLS = 5                                       # 玉の数の上限
+MAX_LIVES = 5                                       # 残機の上限
+BARRIER_Y = HEIGHT - 1.5                            # バリアの線
 
 # パワーアップ。効き目は「切れる時刻」で持つ（split は一度きり）。weight は落ちやすさ
 POWERS = {
@@ -70,6 +75,11 @@ POWERS = {
     "slow": dict(word="ゆっくり", seconds=8.0, weight=16, color=(240, 220, 90)),
     "magnet": dict(word="磁石：拾って狙う", seconds=10.0, weight=14, color=(200, 130, 255)),
     "shrink": dict(word="バーが縮んだ…", seconds=8.0, weight=12, color=(160, 160, 170)),
+    "laser": dict(word="レーザー：タップで撃つ", seconds=8.0, weight=14, color=(255, 80, 120)),
+    "fire": dict(word="火の玉！", seconds=8.0, weight=12, color=(255, 150, 40)),
+    "add": dict(word="玉が 1 つ増えた", seconds=0.0, weight=12, color=(200, 230, 255)),
+    "life": dict(word="1UP！", seconds=0.0, weight=4, color=(255, 230, 80)),
+    "barrier": dict(word="バリア（1 回だけ）", seconds=0.0, weight=12, color=(80, 220, 200)),
 }
 
 # 文字 → ブロックの種類。hits が 0 なら壊れない。points は壊したときの点
@@ -192,6 +202,10 @@ def sound_bytes(kind: str) -> bytes:
         samples = noise(0.35, VOLUME * 1.8, 9.0, 9) + tone(90, 0.2, VOLUME)
     elif kind == "power":                           # パワーアップを拾った（上がる 2 音）
         samples = tone(660, 0.06) + tone(990, 0.1)
+    elif kind == "life":                            # 1UP（ファンファーレ）
+        samples = tone(784, 0.08) + tone(988, 0.08) + tone(1175, 0.08) + tone(1568, 0.2)
+    elif kind == "laser":                           # レーザー（ピュン）
+        samples = array("h", (int(v) for v in tone(1400, 0.08, VOLUME * 0.8))) + tone(900, 0.04, VOLUME * 0.6)
     elif kind == "bad":                             # 悪いのを拾った（下がる 2 音）
         samples = tone(500, 0.06) + tone(330, 0.12)
     elif kind == "launch":                          # 放す（ピッ）
@@ -213,7 +227,7 @@ def sound_bytes(kind: str) -> bytes:
     return buffer.getvalue()
 
 
-EVENTS = ("end", "clear", "lose", "boom", "power", "bad", "brick", "clank", "paddle", "wall", "launch")   # 目立つ順
+EVENTS = ("end", "clear", "lose", "life", "boom", "power", "bad", "brick", "laser", "clank", "paddle", "wall", "launch")   # 目立つ順
 SOUNDS = EVENTS + ("best",)
 
 # ── 色 ────────────────────────────────────────────────────────────────
@@ -234,6 +248,11 @@ PIERCE = (255, 110, 50)
 PIERCE_LIGHT = (255, 200, 150)
 MAGNET = (200, 130, 255)
 SHRUNK = (160, 160, 170)
+FIRE = (255, 90, 30)
+FIRE_LIGHT = (255, 220, 120)
+LASER_BEAM = (255, 120, 160)
+LASER_PAD = (255, 150, 180)
+BARRIER = (80, 220, 200)
 
 
 def shade(color: tuple[int, int, int], k: float) -> tuple[int, int, int]:
@@ -408,6 +427,10 @@ class World:
     shake_until: float = 0.0                        # 画面が揺れる
     shake_size: float = 0.0
     powers: dict[str, float] = field(default_factory=dict)   # 効いているパワーアップ → 切れる時刻
+    barrier: bool = False                           # 1 回だけ跳ね返す線
+    laser_at: float = -9.0                          # 最後にレーザーを撃った時刻
+    laser_x: float = 0.0                            # 光線の x（見せる用）
+    laser_top: float = 0.0                          # 光線の上端
 
     def __post_init__(self):
         self.luck = random.Random(self.seed)
@@ -419,6 +442,7 @@ class World:
         self.bricks = parse_stage(STAGES[index][1])
         self.capsules = []
         self.powers = {}
+        self.barrier = False
         self.reset_ball()
 
     def reset_ball(self) -> None:
@@ -472,9 +496,11 @@ class World:
 
     # ── 入力 ──
     def launch(self) -> str | None:
-        """乗っている玉を放す。乗っていなければ何もしない。"""
+        """乗っている玉を放す。乗っていなければ、レーザーが効いていれば撃つ。"""
         if self.time < self.pause_until:
             return None
+        if not any(b.stuck for b in self.balls) and self.has("laser"):
+            return self.fire_laser()
         launched = False
         for ball in self.balls:
             if not ball.stuck:
@@ -488,6 +514,20 @@ class World:
             ball.offset = 0.0
             launched = True
         return "launch" if launched else None
+
+    def fire_laser(self) -> str | None:
+        """バーの真上に光線。一番下の壊せるブロックを 1 つ削る。鉄で止まる。"""
+        if self.time - self.laser_at < LASER_COOL - 1e-9:
+            return None
+        self.laser_at = self.time
+        self.laser_x = self.paddle_x
+        self.laser_top = 0.0
+        below = [b for b in self.bricks if b.rect(self.time)[0] <= self.paddle_x < b.rect(self.time)[0] + BRICK_W]
+        if below:
+            target = max(below, key=lambda b: b.row)
+            self.laser_top = target.rect(self.time)[1] + BRICK_H
+            self.damage(target)
+        return "laser"
 
     def aim(self, x: float) -> None:
         """バーの目標の中心を決める（指・傾き・自動）。"""
@@ -558,6 +598,12 @@ class World:
                 and abs(ball.x - self.paddle_x) <= self.paddle_w / 2 + BALL_R:
             self.bounce_paddle(ball)
             happened.add("paddle")
+        if self.barrier and ball.vy > 0 and ball.y + BALL_R >= BARRIER_Y:   # バリア：1 回だけ跳ね返す
+            self.barrier = False
+            ball.y, ball.vy = BARRIER_Y - BALL_R, -abs(ball.vy)
+            self.burst(ball.x, BARRIER_Y, BARRIER, 8)
+            self.tell("バリアで跳ね返した", 1.0)
+            happened.add("paddle")
         if ball.y - BALL_R > HEIGHT:                # 落とした
             self.balls.remove(ball)
             if self.balls:
@@ -606,6 +652,10 @@ class World:
             if id(brick) not in hit_now:
                 hit_now.add(id(brick))
                 happened.add(self.damage(brick))
+                if self.has("fire") and brick.breakable:        # 火の玉：上下左右も壊す
+                    for other in list(self.bricks):
+                        if other.breakable and abs(other.col - brick.col) + abs(other.row - brick.row) == 1:
+                            self.destroy(other)
             break                                   # 1 歩で当たるのは 1 つ
         if abs(ball.vy) < self.speed * MIN_RISE:    # 横に走りすぎない
             sign = 1 if ball.vy >= 0 else -1
@@ -672,11 +722,24 @@ class World:
             flying = [b for b in self.balls if not b.stuck]
             source = flying[0] if flying else self.balls[0]
             for turn in (-SPLIT_ANGLE, SPLIT_ANGLE):
+                if len(self.balls) >= MAX_BALLS:
+                    break
                 c, s = math.cos(turn), math.sin(turn)
                 self.balls.append(Ball(source.x, source.y, source.vx * c - source.vy * s, source.vx * s + source.vy * c, stuck=False))
             if source.stuck:                        # 乗っている玉から分けたときは、分身だけ上へ放す
-                for b in self.balls[-2:]:
-                    b.vx, b.vy = self.speed * math.sin(LAUNCH_ANGLE) * (1 if b is self.balls[-1] else -1), -self.speed * math.cos(LAUNCH_ANGLE)
+                for b in self.balls:
+                    if b is not source and not b.stuck and b.vx == 0 and b.vy == 0:
+                        b.vx, b.vy = self.speed * math.sin(LAUNCH_ANGLE), -self.speed * math.cos(LAUNCH_ANGLE)
+            return "power"
+        if kind == "add":                           # 乗った玉を 1 つ足す（上限あり）
+            if len(self.balls) < MAX_BALLS:
+                self.balls.append(Ball(self.paddle_x, PADDLE_Y - BALL_R, stuck=True))
+            return "power"
+        if kind == "life":
+            self.lives = min(MAX_LIVES, self.lives + 1)
+            return "life"
+        if kind == "barrier":
+            self.barrier = True
             return "power"
         if kind == "wide":
             self.powers.pop("shrink", None)
@@ -702,6 +765,7 @@ class World:
     def lose_life(self) -> str:
         self.lives -= 1
         self.powers = {}
+        self.barrier = False
         self.shake(2.0, 0.3)
         if self.lives <= 0:
             self.over = True
@@ -767,12 +831,19 @@ def draw(screen: Screen, world: World) -> None:
         draw_icon(screen, cap.kind, cx, cy, scale)
     for s in world.sparks:
         screen.box(int((s.x + ox) * scale), int((s.y + oy) * scale), scale, scale, s.color)
+    if world.time - world.laser_at < LASER_SHOW:                   # 光線
+        top = int((world.laser_top + oy) * scale)
+        screen.box(int((world.laser_x - 0.5 + ox) * scale), top, scale, int((PADDLE_Y + oy) * scale) - top, LASER_BEAM)
+    if world.barrier:                                              # バリアの線
+        screen.box(0, int((BARRIER_Y + oy) * scale), screen.width, max(1, scale // 2), BARRIER)
     half = world.paddle_w / 2
     px = int((world.paddle_x - half + ox) * scale)                  # バー
     py = int((PADDLE_Y + oy) * scale)
     paddle = SHINE if world.time < world.flash_until else PADDLE
     if world.has("magnet"):
         paddle = MAGNET
+    elif world.has("laser"):
+        paddle = LASER_PAD
     elif world.has("shrink"):
         paddle = SHRUNK
     screen.box(px, py, int(world.paddle_w * scale), PADDLE_H * scale, paddle)
@@ -787,6 +858,8 @@ def draw(screen: Screen, world: World) -> None:
         color, light = (HOT, HOT_LIGHT) if hot else (BALL_SHADE, BALL)
         if world.has("pierce"):
             color, light = PIERCE, PIERCE_LIGHT
+        if world.has("fire"):
+            color, light = FIRE, FIRE_LIGHT
         bx, by = (ball.x + ox) * scale, (ball.y + oy) * scale
         screen.ellipse(bx, by, BALL_R * scale, BALL_R * scale, color)
         screen.ellipse(bx - scale * 0.3, by - scale * 0.3, BALL_R * scale * 0.7, BALL_R * scale * 0.7, light)
@@ -821,6 +894,19 @@ def draw_icon(screen: Screen, kind: str, cx: float, cy: float, scale: int) -> No
         screen.box(int(cx - 1.5 * scale), int(cy - 1.5 * scale), scale, 3 * scale, ink)
         screen.box(int(cx + 0.5 * scale), int(cy - 1.5 * scale), scale, 3 * scale, ink)
         screen.box(int(cx - 1.5 * scale), int(cy + 0.5 * scale), 3 * scale, scale, ink)
+    elif kind == "laser":                                          # 縦の光線 2 本
+        for dx in (-1.2, 0.8):
+            screen.box(int(cx + dx * scale - scale * 0.5), int(cy - 1.5 * scale), scale, 3 * scale, ink)
+    elif kind == "fire":                                           # 炎（三角）
+        screen.box(int(cx - scale * 0.5), int(cy - 1.5 * scale), scale, scale, ink)
+        screen.box(int(cx - 1.5 * scale), int(cy - 0.5 * scale), 3 * scale, 2 * scale, ink)
+    elif kind == "add":                                            # 玉 1 つ
+        screen.ellipse(cx, cy, 1.3 * scale, 1.3 * scale, ink)
+    elif kind == "life":                                           # ＋
+        screen.box(int(cx - scale * 0.5), int(cy - 1.5 * scale), scale, 3 * scale, ink)
+        screen.box(int(cx - 1.5 * scale), int(cy - scale * 0.5), 3 * scale, scale, ink)
+    elif kind == "barrier":                                        # 下線
+        screen.box(int(cx - 2.5 * scale), int(cy + 0.8 * scale), 5 * scale, scale, ink)
 
 
 # ── 端末 ────────────────────────────────────────────────────────────────
@@ -928,6 +1014,8 @@ def status(world: World, best: Best, improved: bool = False) -> str:
     else:
         if world.ball.stuck and not note:
             note = "スペースで放す"
+        elif world.has("laser") and not note:
+            note = "スペースでレーザー"
         tail = f"ベスト {best.score}（面 {best.stage}）q でやめる"
     head = (f" 面 {world.stage + 1}/{len(STAGES)} {world.stage_name} 残り {world.remaining():2d} 点 {world.score:5d} "
             f"×{world.multiplier} 玉 {world.lives} 速さ {world.speed:3.0f} ")
@@ -992,6 +1080,8 @@ def autopilot(world: World) -> str | None:
     if ball.stuck:
         world.aim(world.paddle_x)
         return world.launch()
+    if world.has("laser") and world.time - world.laser_at >= LASER_COOL:
+        return world.fire_laser()
     if ball.vy <= 0:
         good = [c for c in world.capsules if c.kind != "shrink"]
         if good:                                    # 玉が上にいる間はカプセルを拾いに行く
@@ -1210,9 +1300,69 @@ rrrrrrrrrrrr
     for _ in range(10):
         world.update(STEP)
     assert world.ball.vy < 0 and world.ball.y < BRICK_TOP and len(world.bricks) == 22, "貫通は止まらず 2 つ壊す"
+    world = World(seed=1)
+    world.started = True
+    world.bricks = parse_stage("""
+....S......r
+....H.......
+....r.......
+""")
+    world.paddle_x = world.target_x = 45
+    world.powers["laser"] = 99.0
+    world.ball = Ball(x=100, y=40, vx=0, vy=-40, stuck=False)
+    assert world.launch() == "laser" and len(world.bricks) == 3 and world.laser_top == BRICK_TOP + 3 * BRICK_H, "一番下を撃つ"
+    assert world.launch() is None, "連射は間を置く"
+    world.time += LASER_COOL + 0.01
+    assert world.launch() == "laser" and world.bricks[1].left == 1, "硬いのは 1 回で削れる"
+    world.time += LASER_COOL + 0.01
+    world.launch()
+    world.time += LASER_COOL + 0.01
+    assert world.launch() == "laser" and len(world.bricks) == 2 and world.laser_top == BRICK_TOP + BRICK_H, "鉄で止まる"
+    world.balls = [Ball(stuck=True)]
+    world.time += LASER_COOL + 0.01
+    assert world.launch() == "launch", "乗っている玉があれば放すのが先"
+    world = World(seed=1)
+    world.started = True
+    world.bricks = parse_stage("""
+....S.......
+...rrr......
+....r.......
+""")
+    world.powers["fire"] = 99.0
+    world.ball = Ball(x=45, y=BRICK_TOP + 3 * BRICK_H + 3, vx=0, vy=-50, stuck=False)
+    assert until(world) == "brick" and {(b.col, b.row) for b in world.bricks} == {(4, 0), (3, 1), (5, 1)}, "火の玉は上（4,1）も壊す。斜めは残る"
+    world = World(seed=1)
+    world.started = True
+    world.bricks = parse_stage("...........r")
+    world.paddle_x = world.target_x = 60
+    world.ball = Ball(x=10, y=30, vx=0, vy=-40, stuck=False)
+    world.capsules = [Capsule(60, PADDLE_Y - 5, "add")]
+    assert until(world) == "power" and len(world.balls) == 2 and world.balls[1].stuck, "玉が 1 つ足される"
+    world.balls = [Ball(stuck=False, x=10, y=30, vy=-40)] * 1 + [Ball(stuck=True) for _ in range(MAX_BALLS - 1)]
+    world.capsules = [Capsule(60, PADDLE_Y - 5, "add")]
+    until(world)
+    assert len(world.balls) == MAX_BALLS, "上限 5"
+    world.lives = 3
+    world.ball = Ball(x=10, y=30, vx=0, vy=-40, stuck=False)
+    world.capsules = [Capsule(60, PADDLE_Y - 5, "life")]
+    assert until(world) == "life" and world.lives == 4
+    world.lives = MAX_LIVES
+    world.ball = Ball(x=10, y=30, vx=0, vy=-40, stuck=False)
+    world.capsules = [Capsule(60, PADDLE_Y - 5, "life")]
+    until(world)
+    assert world.lives == MAX_LIVES, "残機の上限 5"
+    world.ball = Ball(x=10, y=30, vx=0, vy=-40, stuck=False)
+    world.capsules = [Capsule(60, PADDLE_Y - 5, "barrier")]
+    assert until(world) == "power" and world.barrier
+    world.ball = Ball(x=10, y=HEIGHT - 6, vx=0, vy=50, stuck=False)
+    lives = world.lives
+    assert until(world) == "paddle" and world.ball.vy < 0 and not world.barrier and world.lives == lives, "バリアは 1 回だけ跳ね返す"
+    world.ball = Ball(x=10, y=HEIGHT - 6, vx=0, vy=50, stuck=False)
+    assert until(world, 60) == "lose", "2 回目は落ちる"
     weights = sum(p["weight"] for p in POWERS.values())
     print(f"  {len(POWERS)} 種（" + "、".join(f"{p['word']} {p['weight'] * 100 // weights}%" for p in POWERS.values()) + f"）、落ちる確率 {DROP_RATE:.0%}。"
-          "広い/縮むは入れ替わり、時間で切れる、分裂は 3 つ、1 つ残れば落とさない、磁石は拾った角度で放す、貫通は止まらない")
+          "広い/縮むは入れ替わり、時間で切れる、分裂は 3 つ、1 つ残れば落とさない、磁石は拾った角度で放す、貫通は止まらない、\n"
+          "  レーザーは真上の一番下を撃ち鉄で止まる、火の玉は上下左右も、玉を足す（5 つまで）、1UP（5 つまで）、バリアは 1 回だけ")
 
     print("● 演出")
     world = World(seed=1)
