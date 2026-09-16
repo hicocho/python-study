@@ -30,52 +30,67 @@ WIDTH = 128                                         # 画面の横（ドット�
 HEIGHT = 80                                         # 縦。端末では 2 ドット = 1 行 → 40 行
 CX = WIDTH // 2
 CY = HEIGHT // 2
-FOCUS = 70.0                                        # 焦点距離（視野 85°。広く見えるように）
+FOCUS = 74.0                                        # 焦点距離（視野 82°）
 NEAR = 1.0
-FAR = 1700.0                                        # 地形を描く距離
-FOG_FROM = 600.0
+FAR = 1300.0                                        # 地形を描く距離
+FOG_FROM = 450.0
 STEP = 1 / 30
 
-CELL = 80.0                                         # 地形のマスの一辺（m）
-GRID = 32                                           # マスの数（32 × 32 = 2560 m 四方）
-NEAR_CELLS = 6                                      # ここまでは 1 マスずつ描く
-MID_CELLS = 12                                      # ここまでは 2 × 2 マスをまとめて描く
-FAR_CELLS = 20                                      # ここまでは 4 × 4。それより遠くは描かない（霞に溶ける）
-SEA = 0.0                                           # 水面の高さ
-RING_R = 14.0                                       # 輪の半径（m）
-RINGS = 12
-SPEEDS = (40.0, 65.0, 90.0)                         # スロットル 3 段階の速さ（m/s）
-ROLL_RATE = 1.7                                     # ロールの速さ（ラジアン/秒）
-LEVEL_RATE = 1.1                                    # 手を離したとき水平に戻る速さ
-PITCH_RATE = 0.75
-PITCH_LIMIT = math.radians(55)
-BANK_LIMIT = math.radians(70)                       # これ以上は傾かない（アーケード寄り）
-TURN_PER_BANK = 0.9                                 # 傾き 1 ラジアンあたりの旋回（ラジアン/秒）。アーケード寄り
-CLIMB_DRAG = 0.45                                   # 上昇で失う・降下で得る速さの割合（重力の効き）
-BOUNCE_UP = 0.35                                    # ぶつかったとき機首を上げる量
+CELL = 40.0                                         # 地形のマスの一辺（m）。低く飛ぶので細かく
+GRID = 64                                           # マスの数（64 × 64 = 2560 m 四方）
+NEAR_CELLS = 6                                      # ここまでは 1 マスずつ描く（240 m）
+MID_CELLS = 12                                      # ここまでは 2 × 2（480 m）
+FAR_CELLS = 26                                      # ここまでは 4 × 4（1040 m）。それより遠くは霞
+PATH_STEP = 5.0                                     # 道すじの点の間隔（m）
+FLOOR_BASE = 40.0                                   # 谷底の高さの基準
+FLOOR_W = 45.0                                      # 谷底（平ら）の半分の幅
+WALL_W = 110.0                                      # 谷底から丘の高さへ戻るまでの幅（壁の斜面）
+GATE_R = 16.0                                       # 輪の半径
+GATE_GAP = 130.0                                    # 輪の間隔（m）
+GATE_FIRST = 200.0                                  # 最初の輪までの距離
+MISS_PENALTY = 3.0                                  # 輪を外したときに足す秒数
+SPEEDS = (55.0, 80.0, 110.0)                        # スロットル 3 段階の速さ（m/s）
+ROLL_RATE = 2.8                                     # ロールの速さ（ラジアン/秒）。きびきび
+LEVEL_RATE = 1.6                                    # 手を離したとき水平に戻る速さ
+PITCH_RATE = 1.2
+PITCH_LIMIT = math.radians(50)
+BANK_LIMIT = math.radians(75)
+TURN_PER_BANK = 1.2                                 # 傾き 1 ラジアンあたりの旋回（ラジアン/秒）
+CLIMB_DRAG = 0.35
+CAM_BACK = 22.0                                     # カメラは自機の後ろ何 m か
+CAM_UP = 7.0
 COUNTDOWN = 3.0
 LIGHT_DIR = (-0.45, 0.8, -0.4)
 
 SKY_TOP = (78, 130, 210)
 SKY = (176, 204, 232)
-HAZE = (205, 218, 236)
+HAZE = (200, 214, 232)
 SUN = (255, 246, 210)
 CLOUD = (240, 244, 250)
 WATER = (58, 110, 176)
-SAND = (196, 184, 140)
-GRASS = (78, 140, 66)
+SAND = (186, 176, 136)
+GRASS = (84, 146, 70)
 FOREST = (52, 108, 54)
-ROCK = (128, 118, 108)
+ROCK = (138, 126, 112)
+ROCK_DARK = (96, 88, 80)
 SNOW = (232, 236, 240)
+TRUNK = (92, 64, 38)
+CROWN = (36, 100, 44)
 RING_NEXT = (255, 150, 40)
-RING_LATER = (120, 130, 150)
+RING_LATER = (150, 160, 180)
 RING_DONE = (90, 200, 120)
-PANEL = (42, 44, 50)
-PANEL_EDGE = (70, 72, 80)
+RING_MISS = (220, 70, 60)
+POLE = (120, 116, 110)
+PILLAR = (128, 112, 96)
+BRIDGE = (150, 60, 50)
+BODY_COLOR = (230, 220, 80)
+WING_COLOR = (215, 60, 50)
+TAIL_COLOR = (215, 60, 50)
+NOSE_COLOR = (70, 70, 76)
+PROP_COLOR = (40, 40, 44)
+SHADOW_COLOR = (40, 70, 40)
 GAUGE = (120, 200, 140)
 GAUGE_BG = (28, 30, 34)
-NEEDLE = (255, 230, 120)
-FRAME = (34, 36, 40)
 MARK = (255, 240, 160)
 BUMP_RED = (240, 70, 60)
 RATE = 22050
@@ -105,13 +120,15 @@ def noise(seconds: float, volume: float, decay: float, seed: int = 1) -> array:
 
 
 def sound_bytes(kind: str) -> bytes:
-    """出来事の音。count は 3・2・1、go は出発、ring はくぐった、bump はぶつかった、finish はゴール、best はベスト更新。"""
+    """出来事の音。count は 3・2・1、go は出発、gate はくぐった、miss は外した、bump はぶつかった、finish はゴール、best はベスト更新。"""
     if kind == "count":
         samples = tone(880, 0.12)
     elif kind == "go":
         samples = tone(1320, 0.35)
-    elif kind == "ring":
+    elif kind == "gate":
         samples = tone(1047, 0.07) + tone(1319, 0.07) + tone(1568, 0.14)
+    elif kind == "miss":
+        samples = tone(330, 0.12, VOLUME * 0.8) + tone(262, 0.16, VOLUME * 0.8)
     elif kind == "bump":
         samples = noise(0.3, VOLUME * 1.6, 12.0, 4) + tone(110, 0.2, VOLUME)
     elif kind == "best":
@@ -127,7 +144,7 @@ def sound_bytes(kind: str) -> bytes:
     return buffer.getvalue()
 
 
-EVENTS = ("count", "go", "ring", "bump", "finish")
+EVENTS = ("count", "go", "gate", "miss", "bump", "finish")
 SOUNDS = EVENTS + ("best",)
 
 
@@ -301,26 +318,87 @@ class Screen:
         return "".join(out)
 
 
-# ── 地形（ハイトマップ） ────────────────────────────────────────────────
+# ── 地形（ハイトマップ）と峡谷 ─────────────────────────────────────────
 
-def relief(x: float, z: float) -> float:
-    """地面の高さ（m）。sin をいくつか重ねた決まった形。真ん中を川（低い帯）が横切る。"""
-    u, w = x / 700.0, z / 700.0
-    h = (120 * math.sin(u * 1.3 + 0.4) * math.cos(w * 1.1 - 0.2)
-         + 70 * math.sin(u * 2.9 + w * 1.7) + 40 * math.sin(u * 5.1 - w * 3.3 + 1.0)
-         + 22 * math.sin(u * 9.7 + w * 8.1))
-    river = 90 * math.exp(-((z - 1280 - 300 * math.sin(x / 600.0)) / 140.0) ** 2)   # 川の谷
-    return max(-30.0, h + 60 - river)
+def catmull(p0: V, p1: V, p2: V, p3: V, t: float) -> V:
+    """Catmull-Rom 曲線（g79 と同じ）。"""
+    a = p1.scale(2)
+    b = (p2 - p0).scale(t)
+    c = (p0.scale(2) - p1.scale(5) + p2.scale(4) - p3).scale(t * t)
+    d = (p0.scale(-1) + p1.scale(3) - p2.scale(3) + p3).scale(t * t * t)
+    return (a + b + c + d).scale(0.5)
 
 
-HEIGHTS = [[relief(i * CELL, j * CELL) for i in range(GRID + 1)] for j in range(GRID + 1)]   # [z][x]
+# 峡谷の道すじの制御点 (x, z)。地図（2560 m 四方）を大きく S 字に横切る
+KNOTS = [(200, 300), (500, 700), (400, 1200), (800, 1600), (1300, 1500), (1500, 1000),
+         (1900, 800), (2200, 1200), (2100, 1800), (1700, 2200), (1200, 2300)]
+
+
+def make_path(spacing: float = PATH_STEP) -> list[V]:
+    """道すじを spacing m おきの点にする（y は 0。高さはあとで谷底に合わせる）。"""
+    knots = [V(x, 0.0, z) for x, z in KNOTS]
+    fine = []
+    for k in range(len(knots) - 1):
+        p0 = knots[max(0, k - 1)]
+        p1, p2 = knots[k], knots[k + 1]
+        p3 = knots[min(len(knots) - 1, k + 2)]
+        for i in range(40):
+            fine.append(catmull(p0, p1, p2, p3, i / 40))
+    fine.append(knots[-1])
+    points, walked = [fine[0]], 0.0                 # 等間隔に置き直す
+    for a, b in zip(fine, fine[1:]):
+        seg = (b - a).length()
+        while walked + seg >= spacing:
+            t = (spacing - walked) / seg
+            a = a + (b - a).scale(t)
+            points.append(a)
+            seg -= spacing - walked
+            walked = 0.0
+        walked += seg
+    return points
+
+
+PATH = make_path()
+PATH_LEN = (len(PATH) - 1) * PATH_STEP
+
+
+def hills(x: float, z: float) -> float:
+    """峡谷を掘る前の丘。sin をいくつか重ねた決まった形。100〜260 m。"""
+    u, w = x / 500.0, z / 500.0
+    return (180 + 40 * math.sin(u * 1.3 + 0.4) * math.cos(w * 1.1 - 0.2)
+            + 30 * math.sin(u * 2.9 + w * 1.7) + 18 * math.sin(u * 5.1 - w * 3.3 + 1.0) + 8 * math.sin(u * 9.7 + w * 8.1))
+
+
+def carve() -> list[list[float]]:
+    """丘に峡谷を掘る。道すじに近いマスほど低く：谷底（幅 FLOOR_W）は平ら、そこから WALL_W かけて丘の高さへ戻る。
+    谷底の高さは道すじに沿ってゆっくり上下する（進むほど少し上る）。"""
+    heights = [[hills(i * CELL, j * CELL) for i in range(GRID + 1)] for j in range(GRID + 1)]
+    near: dict[tuple[int, int], tuple[float, float]] = {}   # マス → (道すじまでの距離, 谷底の高さ)
+    reach = int((FLOOR_W + WALL_W) / CELL) + 1
+    for k, p in enumerate(PATH):
+        floor = FLOOR_BASE + 40 * math.sin(k * PATH_STEP / 600.0) + k * PATH_STEP * 0.012
+        ci, cj = int(p.x / CELL), int(p.z / CELL)
+        for j in range(cj - reach, cj + reach + 1):
+            for i in range(ci - reach, ci + reach + 1):
+                if 0 <= i <= GRID and 0 <= j <= GRID:
+                    d = math.hypot(i * CELL - p.x, j * CELL - p.z)
+                    if (i, j) not in near or d < near[(i, j)][0]:
+                        near[(i, j)] = (d, floor)
+    for (i, j), (d, floor) in near.items():
+        t = max(0.0, min(1.0, (d - FLOOR_W) / WALL_W))
+        t = t * t * (3 - 2 * t)                       # なめらかに（smoothstep）
+        heights[j][i] = floor + (heights[j][i] - floor) * t
+    return heights
+
+
+HEIGHTS = carve()                                   # [z][x]
 
 
 def ground_at(x: float, z: float) -> float:
-    """任意の点の地面の高さ。マスの 4 隅から双一次補間（滑らかに）。外は海。"""
+    """任意の点の地面の高さ。マスの 4 隅から双一次補間。外は丘のまま。"""
     fx, fz = x / CELL, z / CELL
     if fx < 0 or fz < 0 or fx >= GRID or fz >= GRID:
-        return SEA
+        return hills(x, z)
     i, j = int(fx), int(fz)
     tx, tz = fx - i, fz - j
     h00, h10 = HEIGHTS[j][i], HEIGHTS[j][i + 1]
@@ -328,59 +406,127 @@ def ground_at(x: float, z: float) -> float:
     return (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz
 
 
-def land_color(height: float, steep: float) -> tuple[int, int, int]:
-    """高さと傾きで地面の色。水 → 砂 → 草 → 森 → 岩 → 雪。急なところは岩。"""
-    if height <= SEA + 1:
-        return WATER
-    if height < 8:
-        return SAND
-    if steep > 0.55 and height > 60:
+def ground_normal(x: float, z: float) -> V:
+    """地面の法線（壁にぶつかったとき跳ね返る向き）。近くの高さの差から。"""
+    gx = (ground_at(x + 2, z) - ground_at(x - 2, z)) / 4
+    gz = (ground_at(x, z + 2) - ground_at(x, z - 2)) / 4
+    return V(-gx, 1.0, -gz).unit()
+
+
+def land_color(height: float, steep: float, floor: float) -> tuple[int, int, int]:
+    """色。谷底は草と川、壁は岩（急なところは暗い岩）、上のほうは森、峰は雪。"""
+    if height < floor + 3:
+        return WATER if height < floor + 1.0 else SAND
+    if steep > 0.6:
+        return ROCK_DARK
+    if steep > 0.35:
         return ROCK
-    if height > 210:
+    if height > 230:
         return SNOW
-    if height > 150:
-        return ROCK
-    if height > 60:
+    if height > floor + 60:
         return FOREST
     return GRASS
 
 
-# ── 輪とコース ──────────────────────────────────────────────────────────
+def floor_at(k: int) -> float:
+    """道すじの点 k の谷底の高さ（carve と同じ式）。"""
+    return FLOOR_BASE + 40 * math.sin(k * PATH_STEP / 600.0) + k * PATH_STEP * 0.012
+
+
+def path_dir(k: int) -> V:
+    a, b = PATH[max(0, k - 1)], PATH[min(len(PATH) - 1, k + 1)]
+    return V(b.x - a.x, 0.0, b.z - a.z).unit()
+
+
+def locate(pos: V, hint: int) -> tuple[int, float]:
+    """道すじの上でどこか。hint の近くから一番近い点を探し、(点の番号, 道のり) を返す。"""
+    lo, hi = max(0, hint - 8), min(len(PATH) - 1, hint + 16)
+    k = min(range(lo, hi + 1), key=lambda i: (PATH[i].x - pos.x) ** 2 + (PATH[i].z - pos.z) ** 2)
+    along = (pos - PATH[k]).dot(path_dir(k))
+    return k, k * PATH_STEP + along
+
+
+# ── 輪・障害物・木 ─────────────────────────────────────────────────────
 
 @dataclass
-class Ring:
+class Gate:
     pos: V
-    dir: V                                          # くぐる向き（単位ベクトル。次の輪のほう）
-    done: bool = False
+    dir: V
+    s: float                                        # 道のり
+    state: str = "next"                             # next / later / hit / miss
 
     def basis(self) -> tuple[V, V]:
-        """輪の面の中の 2 本（横と縦）。"""
         side = V(0, 1, 0).cross(self.dir).unit()
-        up = self.dir.cross(side).unit()
-        return side, up
+        return side, self.dir.cross(side).unit()
 
 
-START = V(GRID * CELL / 2, 0.0, GRID * CELL / 2 + 820 - 500)   # 最初の輪の 500 m 手前（南）
+@dataclass
+class Prop:
+    """障害物。kind は pillar（岩柱）か bridge（橋）。"""
+
+    kind: str
+    pos: V
+    dir: V
+    size: float
 
 
-def make_course() -> list[Ring]:
-    """輪 12 個。地図の真ん中を大きく回る。高さは地面 + 60〜130 m（谷は低く、山は越える）。"""
-    points = []
-    center = V(GRID * CELL / 2, 0, GRID * CELL / 2)
-    for k in range(RINGS):
-        a = k * math.tau / RINGS
-        radius = 820 + 260 * math.sin(a * 2 + 0.7)
-        x, z = center.x + math.sin(a) * radius, center.z + math.cos(a) * radius
-        lift = 70 + 60 * (0.5 + 0.5 * math.sin(a * 3 + 1.3))
-        points.append(V(x, max(ground_at(x, z), SEA) + lift, z))
-    rings = []
-    for k, p in enumerate(points):                  # 輪の向き＝「前の輪から来て、次の輪へ行く」向きの平均（最初の輪の前はスタート）
-        prev = points[k - 1] if k else V(START.x, p.y, START.z)
-        nxt = points[(k + 1) % RINGS]
-        rings.append(Ring(p, ((p - prev).unit() + (nxt - p).unit()).unit()))
-    return rings
+def make_gates() -> list[Gate]:
+    """輪。GATE_GAP おきに、谷底 + 20〜40 m、左右に ±14 m 蛇行。向きは道すじの向き。"""
+    gates = []
+    k = int(GATE_FIRST / PATH_STEP)
+    n = 0
+    while k < len(PATH) - 10:
+        p = PATH[k]
+        d = path_dir(k)
+        side = V(d.z, 0.0, -d.x)
+        lateral = 14.0 * math.sin(n * 1.9)
+        lift = 28 + 12 * math.sin(n * 1.3 + 0.5)
+        gates.append(Gate(V(p.x + side.x * lateral, floor_at(k) + lift, p.z + side.z * lateral), d, k * PATH_STEP))
+        k += int(GATE_GAP / PATH_STEP)
+        n += 1
+    gates[0].state = "next"
+    for g in gates[1:]:
+        g.state = "later"
+    return gates
 
 
+def make_props() -> list[Prop]:
+    """岩柱は輪と輪の間に左右どちらかへ、橋は 5 つに 1 つの輪の上に（輪はその下）。"""
+    props = []
+    n = 0
+    k = int((GATE_FIRST + GATE_GAP / 2) / PATH_STEP)
+    while k < len(PATH) - 10:
+        p = PATH[k]
+        d = path_dir(k)
+        side = V(d.z, 0.0, -d.x)
+        if n % 5 == 2:
+            props.append(Prop("bridge", V(p.x, floor_at(k) + 48, p.z), d, FLOOR_W + 30))
+        else:
+            off = (18.0 if n % 2 else -18.0) * (1 if n % 3 else -1)
+            props.append(Prop("pillar", V(p.x + side.x * off, floor_at(k), p.z + side.z * off), d, 55 + 20 * (n % 3)))
+        k += int(GATE_GAP / PATH_STEP)
+        n += 1
+    return props
+
+
+def make_trees() -> list[tuple[V, float]]:
+    """谷の両岸に木。道すじに沿って 25 m おき、左右 40〜70 m。"""
+    trees = []
+    for k in range(0, len(PATH), int(25 / PATH_STEP)):
+        p = PATH[k]
+        d = path_dir(k)
+        side = V(d.z, 0.0, -d.x)
+        for sign in (-1, 1):
+            off = sign * (40 + 30 * abs(math.sin(k * 0.7 + sign)))
+            x, z = p.x + side.x * off, p.z + side.z * off
+            trees.append((V(x, ground_at(x, z), z), 9 + 5 * abs(math.sin(k * 1.3))))
+    return trees
+
+
+GATES_ALL = make_gates()
+PROPS = make_props()
+TREES = make_trees()
+GATES = len(GATES_ALL)
 
 
 # ── 記録 ────────────────────────────────────────────────────────────────
@@ -408,89 +554,108 @@ class Best:
 
 # ── 世界 ────────────────────────────────────────────────────────────────
 
+def fresh_gates() -> list[Gate]:
+    return [Gate(g.pos, g.dir, g.s, "next" if k == 0 else "later") for k, g in enumerate(GATES_ALL)]
+
+
 @dataclass
 class World:
     seed: int = 0
-    luck: random.Random = field(default_factory=random.Random)
-    pos: V = V(START.x, 0.0, START.z)
+    pos: V = V(0.0, 0.0, 0.0)
     frame: Frame = Frame()
     speed: float = SPEEDS[1]
     throttle: int = 1
-    rings: list[Ring] = field(default_factory=make_course)
-    next: int = 0                                   # 次にくぐる輪
+    gates: list[Gate] = field(default_factory=fresh_gates)
+    next: int = 0
+    hint: int = 0                                   # 道すじの上の位置（探す起点）
+    s: float = 0.0                                  # 道のり
     time: float = 0.0
+    penalty: float = 0.0                            # 外した輪のぶん（秒）
     clock: float = -COUNTDOWN
     started: bool = False
     counted: int = 4
-    roll_in: float = 0.0                            # -1 左、+1 右
-    pitch_in: float = 0.0                           # +1 機首上げ
-    hurt: float = 0.0                               # ぶつかった直後（赤く光る）
+    roll_in: float = 0.0
+    pitch_in: float = 0.0
+    hurt: float = 0.0
     bumps: int = 0
+    misses: int = 0
+    combo: int = 0
     finished_at: float | None = None
     note: str = ""
     note_until: float = -1.0
-    side_before: float = 0.0                        # 次の輪の面に対して、前のコマにどちら側にいたか
+    cam_pos: V = V(0.0, 0.0, 0.0)
+    cam_frame: Frame = Frame()
+    prop_spin: float = 0.0
 
     def __post_init__(self):
-        self.luck = random.Random(self.seed)
-        self.pos = V(START.x, max(ground_at(START.x, START.z), SEA) + 120.0, START.z)
-        self.side_before = self.side(self.rings[0])
-
-    def side(self, ring: Ring) -> float:
-        """輪の面のどちら側にいるか（符号つき距離）。"""
-        return (self.pos - ring.pos).dot(ring.dir)
+        k = 0
+        d = path_dir(k)
+        self.pos = V(PATH[k].x, floor_at(k) + 30.0, PATH[k].z)
+        self.frame = Frame(d, V(0, 1, 0), V(0, 1, 0).cross(d).unit()).tidy()
+        self.cam_pos = self.pos - d.scale(CAM_BACK) + V(0, CAM_UP, 0)
+        self.cam_frame = self.frame
 
     def tell(self, text: str, seconds: float = 1.5) -> None:
         self.note = text
         self.note_until = self.clock + seconds
 
+    def total(self) -> float:
+        return self.time + self.penalty
+
     def fly(self, dt: float) -> None:
-        """飛行機を 1 コマ進める。ロール → 傾きで旋回 → 機首 → 速さ → 位置 → 地面。"""
+        """ロール → 傾きで旋回 → 機首 → 速さ → 位置。"""
         bank = self.frame.bank()
         if self.roll_in:
             want = self.roll_in * ROLL_RATE * dt
-            want = max(-BANK_LIMIT - bank, min(BANK_LIMIT - bank, want))   # 限界で止める
+            want = max(-BANK_LIMIT - bank, min(BANK_LIMIT - bank, want))
             self.frame = self.frame.roll(want)
-        else:                                       # 手を離すと水平へ戻る（アーケード寄り）
+        else:
             back = max(-LEVEL_RATE * dt, min(LEVEL_RATE * dt, -bank))
             self.frame = self.frame.roll(back)
         bank = self.frame.bank()
-        turn = bank * TURN_PER_BANK * dt            # 右に傾けば右へ曲がる（世界の上の軸まわり。正で方位が増える）
+        turn = bank * TURN_PER_BANK * dt
         self.frame = Frame(spin(self.frame.forward, V(0, 1, 0), turn), spin(self.frame.up, V(0, 1, 0), turn),
                            spin(self.frame.right, V(0, 1, 0), turn))
         climb = self.frame.climb()
         want = self.pitch_in * PITCH_RATE * dt
+        if not self.pitch_in:                        # 手を離すと機首も水平へ
+            want = max(-LEVEL_RATE * 0.5 * dt, min(LEVEL_RATE * 0.5 * dt, -climb))
         if climb + want > PITCH_LIMIT or climb + want < -PITCH_LIMIT:
             want = 0.0
         if want:
             self.frame = self.frame.pitch(want)
         self.frame = self.frame.tidy()
         target = SPEEDS[self.throttle]
-        self.speed += (target - self.speed) * min(1.0, 0.6 * dt)
-        self.speed -= 9.8 * self.frame.forward.y * CLIMB_DRAG * dt   # 上昇で遅く、降下で速く
-        self.speed = max(25.0, min(120.0, self.speed))
+        self.speed += (target - self.speed) * min(1.0, 0.8 * dt)
+        self.speed -= 9.8 * self.frame.forward.y * CLIMB_DRAG * dt
+        self.speed = max(30.0, min(130.0, self.speed))
         self.pos = self.pos + self.frame.forward.scale(self.speed * dt)
+        self.prop_spin += self.speed * 0.4 * dt
 
-    def touch_ground(self) -> bool:
-        """地面より下に来たら跳ね返す。ぶつかったら True。"""
-        floor = max(ground_at(self.pos.x, self.pos.z), SEA) + 3.0
+    def collide(self) -> bool:
+        """地面や壁にめり込んだら、法線の向きに押し出して、進む向きを跳ね返す。"""
+        floor = ground_at(self.pos.x, self.pos.z) + 2.5
         if self.pos.y >= floor:
             return False
-        self.pos = V(self.pos.x, floor, self.pos.z)
-        if self.frame.forward.y < BOUNCE_UP:        # 機首を上へ
-            self.frame = Frame(V(self.frame.forward.x, BOUNCE_UP, self.frame.forward.z).unit(), self.frame.up, self.frame.right).tidy()
-            self.frame = Frame(self.frame.forward, self.frame.forward.cross(self.frame.right).unit(), self.frame.right).tidy()
-        self.speed *= 0.6
+        n = ground_normal(self.pos.x, self.pos.z)
+        f = self.frame.forward
+        bounced = (f - n.scale(2 * f.dot(n))).scale(0.6) + n.scale(0.4)   # 反射して、少し法線の向きへ
+        self.frame = Frame(bounced.unit(), V(0, 1, 0), V(0, 1, 0).cross(bounced).unit()).tidy()
+        self.pos = V(self.pos.x, floor, self.pos.z) + n.scale(3.0)
+        self.speed *= 0.5
         self.hurt = 0.8
         self.bumps += 1
+        self.combo = 0
         return True
 
     def update(self, dt: float) -> str | None:
         if not self.started:
+            self.follow(dt)
             return None
         happened = None
         self.clock += dt
-        if self.clock < 0:                          # カウントダウン
+        if self.clock < 0:
+            self.follow(dt)
             due = int(-self.clock) + 1
             if due < self.counted:
                 self.counted = due
@@ -500,48 +665,67 @@ class World:
             happened = "go"
             self.tell("GO!", 1.0)
         if self.finished_at is not None:
-            self.fly(dt)                            # ゴール後も飛び続ける（操作は効く）
-            self.touch_ground()
+            self.fly(dt)
+            self.collide()
+            self.follow(dt)
             return None
         self.time += dt
         self.hurt = max(0.0, self.hurt - dt)
+        before = self.pos
         self.fly(dt)
-        if self.touch_ground():
+        if self.collide():
             self.tell("ぶつかった！", 1.0)
             happened = "bump"
-        ring = self.rings[self.next]
-        now = self.side(ring)
-        if self.side_before < 0 <= now:              # 輪の面をまたいだ
-            t = self.side_before / (self.side_before - now)   # またいだ瞬間の位置（前と今の間）
-            at = self.pos_before + (self.pos - self.pos_before).scale(t)
-            if (at - ring.pos).length() <= RING_R:
-                ring.done = True
-                self.next += 1
-                if self.next >= RINGS:
-                    self.finished_at = self.time
-                    self.tell(f"ゴール！ {clock_text(self.time)}", 5.0)
-                    happened = "finish"
-                else:
-                    self.tell(f"輪 {self.next}/{RINGS}")
-                    happened = "ring"
-                    self.side_before = self.side(self.rings[self.next])
-                    self.pos_before = self.pos
-                    return happened
-            else:
-                self.tell("外した… 戻ってくぐる", 1.5)
-        self.side_before = now
-        self.pos_before = self.pos
+        self.hint, self.s = locate(self.pos, self.hint)
+        gate = self.gates[self.next]
+        side_before = (before - gate.pos).dot(gate.dir)
+        side_now = (self.pos - gate.pos).dot(gate.dir)
+        if side_before < 0 <= side_now:              # 輪の面をまたいだ
+            t = side_before / (side_before - side_now)
+            at = before + (self.pos - before).scale(t)
+            self.settle(gate, (at - gate.pos).length() <= GATE_R)
+            happened = happened or ("gate" if gate.state == "hit" else "miss")
+        elif self.s > gate.s + 60:                  # 面をまたがずに通り過ぎた（横や上を回った）
+            self.settle(gate, False)
+            happened = happened or "miss"
+        if self.next >= GATES and self.finished_at is None:
+            self.finished_at = self.total()
+            self.tell(f"ゴール！ {clock_text(self.finished_at)}", 5.0)
+            happened = "finish"
+        self.follow(dt)
         return happened
 
-    pos_before: V = V(0.0, 0.0, 0.0)
+    def settle(self, gate: Gate, hit: bool) -> None:
+        """輪の結果。外したら罰の秒数を足して、戻らず次へ。"""
+        if hit:
+            gate.state = "hit"
+            self.combo += 1
+            self.tell(f"輪 {self.next + 1}/{GATES}" + (f"  {self.combo} 連続" if self.combo > 1 else ""))
+        else:
+            gate.state = "miss"
+            self.misses += 1
+            self.combo = 0
+            self.penalty += MISS_PENALTY
+            self.tell(f"外した… +{MISS_PENALTY:.0f} 秒", 1.5)
+        self.next += 1
+        if self.next < GATES:
+            self.gates[self.next].state = "next"
+
+    def follow(self, dt: float) -> None:
+        """カメラは自機の後ろ・少し上。位置はなめらかに追い、向きは自機を見て、傾きは自機の半分だけ付き合う。"""
+        want = self.pos - V(self.frame.forward.x, 0.0, self.frame.forward.z).unit().scale(CAM_BACK) + V(0, CAM_UP, 0)
+        ease = min(1.0, 8 * dt)
+        self.cam_pos = self.cam_pos + (want - self.cam_pos).scale(ease)
+        look = (self.pos + self.frame.forward.scale(12.0) - self.cam_pos).unit()
+        up_hint = spin(V(0, 1, 0), look, -self.frame.bank() * 0.25)
+        right = up_hint.cross(look).unit()
+        self.cam_frame = Frame(look, look.cross(right).unit(), right)
 
     def camera(self) -> Camera:
-        """コックピット：機首の少し後ろ・上。向きは機体そのもの。"""
-        eye = self.pos + self.frame.forward.scale(1.2) + self.frame.up.scale(0.9)
-        return Camera(eye, self.frame)
+        return Camera(self.cam_pos, self.cam_frame)
 
     def altitude(self) -> float:
-        return self.pos.y - max(ground_at(self.pos.x, self.pos.z), SEA)
+        return self.pos.y - ground_at(self.pos.x, self.pos.z)
 
 
 def clock_text(seconds: float) -> str:
@@ -561,37 +745,111 @@ def shade(base: tuple[int, int, int], normal: V, z: float) -> tuple[int, int, in
     return fog(tuple(min(255, int(c * bright)) for c in base), z)
 
 
+def draw_solid(screen: Screen, points: list[V], faces: list[tuple[int, ...]], color: tuple[int, int, int],
+               colors: list[tuple[int, int, int]] | None = None) -> None:
+    """立体をひとつ（g79 と同じ）。"""
+    if max(p.z for p in points) < NEAR:
+        return
+    scale = screen.width / WIDTH
+    drawn = []
+    for k, face in enumerate(faces):
+        a, b, c = points[face[0]], points[face[1]], points[face[2]]
+        normal = (b - a).cross(c - a).unit()
+        if normal.dot(a) >= 0:
+            continue
+        poly = clip_near([points[i] for i in face])
+        if len(poly) < 3:
+            continue
+        depth = sum(p.z for p in poly) / len(poly)
+        drawn.append((depth, [project(p, scale) for p in poly], shade(colors[k] if colors else color, normal, depth)))
+    for _, flat, painted in sorted(drawn, key=lambda item: -item[0]):
+        screen.fill(flat, painted)
+
+
+def draw_quad(screen: Screen, quad: list[V], color: tuple[int, int, int], scale: float) -> None:
+    if max(p.z for p in quad) < NEAR:
+        return
+    poly = clip_near(quad) if min(p.z for p in quad) < NEAR else quad
+    if len(poly) >= 3:
+        screen.fill([project(p, scale) for p in poly], color)
+
+
+def outward(points: list[V], faces: list[tuple[int, ...]]) -> list[tuple[int, ...]]:
+    center = V(sum(p.x for p in points), sum(p.y for p in points), sum(p.z for p in points)).scale(1 / len(points))
+    fixed = []
+    for face in faces:
+        a, b, c = points[face[0]], points[face[1]], points[face[2]]
+        normal = (b - a).cross(c - a)
+        fixed.append(face if normal.dot(a - center) >= 0 else tuple(reversed(face)))
+    return fixed
+
+
+def box(w: float, h: float, length: float, at: V = V(0, 0, 0)) -> tuple[list[V], list[tuple[int, ...]]]:
+    points = [at + V(x * w / 2, y * h / 2, z * length / 2) for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)]
+    faces = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)]
+    return points, outward(points, faces)
+
+
+# 自機（機体座標：x 右、y 上、z 前）。胴・主翼・尾翼・垂直尾翼・エンジン
+PLANE_PARTS = [
+    (box(1.1, 1.0, 6.0, V(0, 0, 0)), BODY_COLOR),
+    (box(9.0, 0.16, 1.5, V(0, 0.1, 0.4)), WING_COLOR),
+    (box(3.2, 0.12, 0.9, V(0, 0.2, -2.7)), WING_COLOR),
+    (box(0.12, 1.3, 1.1, V(0, 0.9, -2.6)), TAIL_COLOR),
+    (box(0.9, 0.8, 1.0, V(0, 0.0, 3.2)), NOSE_COLOR),
+]
+
+
+def draw_plane(screen: Screen, world: World, cam: Camera) -> None:
+    """自機。部品ごとに機体の向きへ回して置く（前・上・右の 3 本で座標を組み立てる）。プロペラは回る円盤。"""
+    f, u, r = world.frame
+    place = lambda p: view(world.pos + r.scale(p.x) + u.scale(p.y) + f.scale(p.z), cam)   # noqa: E731
+    parts = sorted(PLANE_PARTS, key=lambda part: -view(world.pos + f.scale(part[0][0][0].z), cam).z)
+    for (points, faces), color in parts:
+        draw_solid(screen, [place(p) for p in points], faces, color)
+    scale = screen.width / WIDTH
+    blades = []
+    for k in range(3):
+        a = world.prop_spin + k * math.tau / 3
+        blades.append([place(V(0, 0, 3.75)), place(V(math.cos(a) * 1.6, math.sin(a) * 1.6, 3.75)),
+                       place(V(math.cos(a + 0.35) * 1.5, math.sin(a + 0.35) * 1.5, 3.75))])
+    for tri in blades:
+        if min(p.z for p in tri) > NEAR:
+            screen.fill([project(p, scale) for p in tri], fog(PROP_COLOR, tri[0].z))
+    shadow = [world.pos + r.scale(4.5 * math.cos(a)) + f.scale(3.0 * math.sin(a)) for a in (i * math.tau / 8 for i in range(8))]
+    ground = [view(V(p.x, ground_at(p.x, p.z) + 0.3, p.z), cam) for p in shadow]
+    if world.altitude() < 60 and max(p.z for p in ground) > NEAR:
+        draw_quad(screen, ground, fog(SHADOW_COLOR, ground[0].z), scale)
+
+
 def draw_sky(screen: Screen, cam: Camera) -> None:
-    """空と地平線。地平線は「水平で無限に遠い方向」を 2 つ投影した直線——傾けば傾く。
-    空はその線より上の半平面（大きな多角形で塗る）。地平線の近くは薄い帯。"""
+    """空と地平線（傾く）。"""
     scale = screen.width / WIDTH
     f = cam.frame.forward
     flat = V(f.x, 0.0, f.z).unit() if math.hypot(f.x, f.z) > 1e-6 else V(cam.frame.up.x, 0.0, cam.frame.up.z).unit()
     side = V(flat.z, 0.0, -flat.x)
     ends = []
     for k in (-1, 1):
-        d = (flat + side.scale(k * 0.9)).unit()     # 前方の左右 42° の水平な向き
+        d = (flat + side.scale(k * 0.9)).unit()
         q = V(d.dot(cam.frame.right), d.dot(cam.frame.up), d.dot(cam.frame.forward))
-        if q.z < 0.05:                              # 真上や真下を向いている：地平線が画面に無い
-            up_on_screen = cam.frame.up.y > 0
-            screen.clear(SKY_TOP if (f.y > 0) == up_on_screen or f.y > 0 else FOREST)
+        if q.z < 0.05:
+            screen.clear(SKY_TOP if f.y > 0 else FOREST)
             return
         ends.append(project(q, scale))
     (x1, y1), (x2, y2) = ends
     dx, dy = x2 - x1, y2 - y1
     length = math.hypot(dx, dy) or 1.0
-    nx, ny = -dy / length, dx / length              # 線に直角な向き。空の側へ向ける
+    nx, ny = -dy / length, dx / length
     u = cam.frame.up
     q = V(u.dot(cam.frame.right), u.dot(cam.frame.up), u.dot(cam.frame.forward))
-    sky_side = nx * q.x - ny * q.y                  # 画面の「上」は y の負。カメラの上の向き (q.x, -q.y) と同じ側か
-    if sky_side < 0:
+    if nx * q.x - ny * q.y < 0:
         nx, ny = -nx, -ny
     big = 4000 * scale
     ax, ay = x1 - dx * 20, y1 - dy * 20
     bx, by = x2 + dx * 20, y2 + dy * 20
-    screen.clear(FOREST)
+    screen.clear(HAZE)
     screen.fill([(ax, ay), (bx, by), (bx + nx * big, by + ny * big), (ax + nx * big, ay + ny * big)], SKY_TOP)
-    for depth, color in ((14 * scale, SKY), (5 * scale, HAZE)):   # 地平線に近い帯ほど明るく
+    for depth, color in ((14 * scale, SKY), (5 * scale, HAZE)):
         screen.fill([(ax, ay), (bx, by), (bx + nx * depth, by + ny * depth), (ax + nx * depth, ay + ny * depth)], color)
     sun = V(*LIGHT_DIR).unit()
     q = V(sun.dot(cam.frame.right), sun.dot(cam.frame.up), sun.dot(cam.frame.forward))
@@ -601,11 +859,10 @@ def draw_sky(screen: Screen, cam: Camera) -> None:
         screen.fill([(sx + r * math.cos(a), sy + r * math.sin(a)) for a in (i * math.tau / 12 for i in range(12))], SUN)
 
 
-CLOUDS = [(V(400 + 700 * i, 620 + 80 * math.sin(i * 2.3), 300 + 640 * ((i * 7) % 5)), 90 + 40 * math.sin(i * 1.7)) for i in range(9)]
+CLOUDS = [(V(300 + 600 * i, 520 + 60 * math.sin(i * 2.3), 300 + 500 * ((i * 7) % 5)), 80 + 40 * math.sin(i * 1.7)) for i in range(9)]
 
 
 def draw_clouds(screen: Screen, cam: Camera) -> None:
-    """雲。空の高いところに置いた平らな楕円（ビルボード）。"""
     scale = screen.width / WIDTH
     for pos, size in CLOUDS:
         q = view(pos, cam)
@@ -615,16 +872,14 @@ def draw_clouds(screen: Screen, cam: Camera) -> None:
         rx, ry = FOCUS * size / q.z * scale, FOCUS * size * 0.28 / q.z * scale
         if rx < 1:
             continue
-        ring = [(cx + rx * math.cos(a), cy + ry * math.sin(a)) for a in (i * math.tau / 12 for i in range(12))]
-        screen.fill(ring, fog(CLOUD, q.z))
+        screen.fill([(cx + rx * math.cos(a), cy + ry * math.sin(a)) for a in (i * math.tau / 12 for i in range(12))], fog(CLOUD, q.z))
 
 
-def draw_terrain(screen: Screen, cam: Camera) -> None:
-    """地形。飛行機の近くのマスを 1 マスずつ、遠くは 2 × 2 をまとめて、奥から順に塗る。"""
+def draw_terrain(screen: Screen, cam: Camera, floor: float) -> None:
+    """地形。近くは 1 マス、中くらいは 2 × 2、遠くは 4 × 4 をまとめて、奥から。"""
     scale = screen.width / WIDTH
     ci, cj = int(cam.pos.x / CELL), int(cam.pos.z / CELL)
-    quads = []                                      # (奥行き, 4 隅の世界座標, 色)
-    light = V(*LIGHT_DIR).unit()
+    quads = []
 
     def add(i: int, j: int, step: int) -> None:
         if i < 0 or j < 0 or i + step > GRID or j + step > GRID:
@@ -633,15 +888,13 @@ def draw_terrain(screen: Screen, cam: Camera) -> None:
                    V((i + step) * CELL, HEIGHTS[j + step][i + step], (j + step) * CELL), V(i * CELL, HEIGHTS[j + step][i], (j + step) * CELL)]
         mid = V(sum(c.x for c in corners) / 4, sum(c.y for c in corners) / 4, sum(c.z for c in corners) / 4)
         q = view(mid, cam)
-        if q.z < -CELL * step or q.z > FAR or abs(q.x) > q.z * 1.4 + CELL * step:   # 後ろ・遠すぎ・視野の外
+        reach = CELL * step * 1.2
+        if q.z < -reach or q.z > FAR or abs(q.x) > q.z * 1.1 + reach or abs(q.y) > q.z * 0.8 + reach:
             return
         normal = (corners[2] - corners[0]).cross(corners[3] - corners[1]).unit()
         if normal.y < 0:
             normal = normal.scale(-1)
-        steep = 1 - normal.y
-        height = max(c.y for c in corners)
-        base = land_color(mid.y if height > SEA + 1 else SEA, steep)
-        quads.append((q.z, corners, shade(base, normal, q.z)))
+        quads.append((q.z, corners, shade(land_color(mid.y, 1 - normal.y, floor), normal, q.z)))
 
     for j in range(cj - FAR_CELLS, cj + FAR_CELLS + 1):
         for i in range(ci - FAR_CELLS, ci + FAR_CELLS + 1):
@@ -653,7 +906,7 @@ def draw_terrain(screen: Screen, cam: Camera) -> None:
                     add(i, j, 2)
             elif i % 4 == 0 and j % 4 == 0:
                 add(i, j, 4)
-    for _, corners, color in sorted(quads, key=lambda t: -t[0]):   # 奥から
+    for _, corners, color in sorted(quads, key=lambda t: -t[0]):
         placed = [view(c, cam) for c in corners]
         if max(p.z for p in placed) < NEAR:
             continue
@@ -662,43 +915,71 @@ def draw_terrain(screen: Screen, cam: Camera) -> None:
             screen.fill([project(p, scale) for p in poly], color)
 
 
-def draw_ring(screen: Screen, ring: Ring, cam: Camera, color: tuple[int, int, int]) -> None:
-    """輪。面の中の 2 本の基底で 16 角形を 2 つ（外と内）作り、その間を 16 枚の四角で塗る。"""
+def draw_gate(screen: Screen, gate: Gate, cam: Camera) -> None:
+    """輪。16 角形の外と内の間を塗る。次は橙、あとは灰、くぐった輪は緑、外した輪は赤。"""
     scale = screen.width / WIDTH
-    side, up = ring.basis()
+    color = {"next": RING_NEXT, "later": RING_LATER, "hit": RING_DONE, "miss": RING_MISS}[gate.state]
+    side, up = gate.basis()
     outer, inner = [], []
-    for k in range(16):
-        a = k * math.tau / 16
-        outer.append(view(ring.pos + side.scale(RING_R * math.cos(a)) + up.scale(RING_R * math.sin(a)), cam))
-        inner.append(view(ring.pos + side.scale(RING_R * 0.82 * math.cos(a)) + up.scale(RING_R * 0.82 * math.sin(a)), cam))
-    depth = view(ring.pos, cam).z
-    paint = fog(color, depth)
-    for k in range(16):
-        quad = [outer[k], outer[(k + 1) % 16], inner[(k + 1) % 16], inner[k]]
-        if max(p.z for p in quad) < NEAR:
-            continue
-        poly = clip_near(quad) if min(p.z for p in quad) < NEAR else quad
-        if len(poly) >= 3:
-            screen.fill([project(p, scale) for p in poly], paint)
+    for k in range(12):
+        a = k * math.tau / 12
+        outer.append(view(gate.pos + side.scale(GATE_R * math.cos(a)) + up.scale(GATE_R * math.sin(a)), cam))
+        inner.append(view(gate.pos + side.scale(GATE_R * 0.82 * math.cos(a)) + up.scale(GATE_R * 0.82 * math.sin(a)), cam))
+    paint = fog(color, view(gate.pos, cam).z)
+    for k in range(12):
+        draw_quad(screen, [outer[k], outer[(k + 1) % 12], inner[(k + 1) % 12], inner[k]], paint, scale)
+    foot = view(V(gate.pos.x, ground_at(gate.pos.x, gate.pos.z), gate.pos.z), cam)   # 柱
+    low = view(gate.pos - V(0, GATE_R, 0), cam)
+    if foot.z > 25 and low.z > 25:                  # 近すぎる柱は描かない（画面いっぱいの線になる）
+        w = 0.5
+        draw_quad(screen, [V(foot.x - w, foot.y, foot.z), V(foot.x + w, foot.y, foot.z), V(low.x + w, low.y, low.z), V(low.x - w, low.y, low.z)], fog(POLE, foot.z), scale)
+
+
+def draw_prop(screen: Screen, prop: Prop, cam: Camera) -> None:
+    if prop.kind == "pillar":
+        points, faces = box(9.0, prop.size, 9.0, prop.pos + V(0, prop.size / 2, 0))
+        draw_solid(screen, [view(p, cam) for p in points], faces, PILLAR)
+    else:                                            # 橋：谷を渡る梁と、両端の柱
+        side = V(prop.dir.z, 0.0, -prop.dir.x)
+        f, u, r = prop.dir, V(0, 1, 0), side
+        half = prop.size / 2
+        points = [prop.pos + r.scale(x * half) + u.scale(y * 2.0) + f.scale(z * 3.0) for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)]
+        faces = outward(points, [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)])
+        draw_solid(screen, [view(p, cam) for p in points], faces, BRIDGE)
+        for sign in (-1, 1):
+            foot = prop.pos + r.scale(sign * half)
+            g = ground_at(foot.x, foot.z)
+            column, cf = box(4.0, max(4.0, prop.pos.y - g), 4.0, V(foot.x, (prop.pos.y + g) / 2, foot.z))
+            draw_solid(screen, [view(p, cam) for p in column], cf, PILLAR)
+
+
+def draw_tree(screen: Screen, base: V, size: float, scale: float) -> None:
+    z = base.z
+    if z < NEAR + 2:
+        return
+    trunk = [V(base.x - 0.5, base.y, z), V(base.x + 0.5, base.y, z), V(base.x + 0.5, base.y + size * 0.3, z), V(base.x - 0.5, base.y + size * 0.3, z)]
+    screen.fill([project(p, scale) for p in trunk], fog(TRUNK, z))
+    for w, y0, y1, tone_ in ((0.42, 0.2, 0.6, 0.7), (0.32, 0.45, 0.85, 0.85), (0.2, 0.7, 1.05, 1.0)):
+        tri = [V(base.x - w * size, base.y + y0 * size, z), V(base.x + w * size, base.y + y0 * size, z), V(base.x, base.y + y1 * size, z)]
+        screen.fill([project(p, scale) for p in tri], fog(tuple(int(c * tone_) for c in CROWN), z))
 
 
 def draw_marker(screen: Screen, world: World, cam: Camera) -> None:
-    """次の輪の印。画面の中なら輪のまわりに菱形、外なら縁に矢印。"""
+    """次の輪の印。画面の中なら菱形、外なら縁に矢印。"""
+    if world.next >= GATES:
+        return
     scale = screen.width / WIDTH
-    ring = world.rings[world.next]
-    q = view(ring.pos, cam)
-    w, h = screen.width, screen.height * 0.72        # 計器板の上まで
+    gate = world.gates[world.next]
+    q = view(gate.pos, cam)
+    w, h = screen.width, screen.height
     if q.z > NEAR:
         x, y = project(q, scale)
         if 0 <= x < w and 0 <= y < h:
-            r = max(3.0, FOCUS * RING_R * 1.5 / q.z * scale)
+            r = max(3.0, FOCUS * GATE_R * 1.4 / q.z * scale)
             for a, b in (((x - r, y), (x, y - r)), ((x, y - r), (x + r, y)), ((x + r, y), (x, y + r)), ((x, y + r), (x - r, y))):
                 screen.line(a, b, MARK)
             return
-    # 画面の外：向きを矢印で。前後どちらでも「右か左か・上か下か」で決める
-    ax, ay = q.x, q.y
-    if q.z <= NEAR:
-        ax, ay = -ax, -ay                            # 後ろにあるなら反対側の縁へ
+    ax, ay = (q.x, q.y) if q.z > NEAR else (-q.x, -q.y)
     length = math.hypot(ax, ay) or 1.0
     ux, uy = ax / length, -ay / length
     cx, cy = w / 2, h / 2
@@ -708,98 +989,54 @@ def draw_marker(screen: Screen, world: World, cam: Camera) -> None:
     screen.fill([tip, (back[0] + px * 4 * scale, back[1] + py * 4 * scale), (back[0] - px * 4 * scale, back[1] - py * 4 * scale)], MARK)
 
 
-def draw_cockpit(screen: Screen, world: World) -> None:
-    """計器板。姿勢指示器（人工水平儀）・速度計・高度計・輪の数・窓の柱。"""
+def draw_hud(screen: Screen, world: World) -> None:
+    """板の中の表示：速さの棒（左下）、高度の棒（右下）、ぶつかった直後の赤い縁。文字は HTML と端末の行に任せる。"""
     scale = screen.width / WIDTH
     w, h = screen.width, screen.height
-    top = int(h * 0.74)
-    screen.fill([(0, top), (w, top), (w, h), (0, h)], PANEL)
-    screen.fill([(0, top), (w, top), (w, top + 2 * scale), (0, top + 2 * scale)], PANEL_EDGE)
-    for x0 in (0, w - 5 * scale):                   # 窓の柱
-        screen.fill([(x0, 0), (x0 + 5 * scale, 0), (x0 + 5 * scale, top), (x0, top)], FRAME)
-    # 姿勢指示器：丸の中に地平線。傾き＝ロール、上下＝機首
-    cx, cy, r = w / 2, top + (h - top) / 2, (h - top) * 0.42
-    bank, climb = world.frame.bank(), world.frame.climb()
-    screen.fill([(cx + r * math.cos(a), cy + r * math.sin(a)) for a in (i * math.tau / 16 for i in range(16))], GAUGE_BG)
-    shift = climb / PITCH_LIMIT * r * 0.8
-    hx, hy = math.cos(bank), math.sin(bank)         # 地平線の向き（画面。ロールで回る）
-    ox, oy = -hy * shift, hx * shift                # 機首を上げると地平線は下がる
-    ground = [(cx + ox - hx * r * 1.5, cy + oy - hy * r * 1.5), (cx + ox + hx * r * 1.5, cy + oy + hy * r * 1.5),
-              (cx + ox + hx * r * 1.5 - hy * r * 2, cy + oy + hy * r * 1.5 + hx * r * 2), (cx + ox - hx * r * 1.5 - hy * r * 2, cy + oy - hy * r * 1.5 + hx * r * 2)]
-    sky = [(cx + ox - hx * r * 1.5, cy + oy - hy * r * 1.5), (cx + ox + hx * r * 1.5, cy + oy + hy * r * 1.5),
-           (cx + ox + hx * r * 1.5 + hy * r * 2, cy + oy + hy * r * 1.5 - hx * r * 2), (cx + ox - hx * r * 1.5 + hy * r * 2, cy + oy - hy * r * 1.5 - hx * r * 2)]
-    clipped_sky = clip_circle(sky, cx, cy, r)
-    clipped_ground = clip_circle(ground, cx, cy, r)
-    if len(clipped_sky) >= 3:
-        screen.fill(clipped_sky, (90, 150, 220))
-    if len(clipped_ground) >= 3:
-        screen.fill(clipped_ground, (150, 100, 60))
-    screen.line((cx - r * 0.6, cy), (cx - r * 0.2, cy), NEEDLE)   # 機体の印（固定）
-    screen.line((cx + r * 0.2, cy), (cx + r * 0.6, cy), NEEDLE)
-    screen.plot(int(cx), int(cy), NEEDLE)
-    # 速度計（左）と高度計（右）：縦の棒
-    for x0, value, top_value, label_color in ((w * 0.16, world.speed, 120.0, GAUGE), (w * 0.84, world.altitude(), 400.0, GAUGE)):
-        bar_h = (h - top) * 0.8
-        y0 = top + (h - top) * 0.1
-        screen.fill([(x0 - 4 * scale, y0), (x0 + 4 * scale, y0), (x0 + 4 * scale, y0 + bar_h), (x0 - 4 * scale, y0 + bar_h)], GAUGE_BG)
+    for x0, value, top_value in ((4 * scale, world.speed, 130.0), (w - 7 * scale, world.altitude(), 150.0)):
+        bar_h, y1 = 24 * scale, h - 4 * scale
+        screen.fill([(x0, y1 - bar_h), (x0 + 3 * scale, y1 - bar_h), (x0 + 3 * scale, y1), (x0, y1)], GAUGE_BG)
         fill_h = bar_h * max(0.0, min(1.0, value / top_value))
-        screen.fill([(x0 - 3 * scale, y0 + bar_h - fill_h), (x0 + 3 * scale, y0 + bar_h - fill_h), (x0 + 3 * scale, y0 + bar_h), (x0 - 3 * scale, y0 + bar_h)], label_color)
-    # スロットル（速度計の横）と、くぐった輪の数（高度計の横）
-    for k in range(3):
-        color = NEEDLE if k <= world.throttle else GAUGE_BG
-        x0, y0 = w * 0.16 + (8 + k * 4) * scale, top + (h - top) * 0.5
-        screen.fill([(x0, y0 - 3 * scale), (x0 + 3 * scale, y0 - 3 * scale), (x0 + 3 * scale, y0 + 3 * scale), (x0, y0 + 3 * scale)], color)
-    for k in range(RINGS):
-        color = RING_DONE if k < world.next else (RING_NEXT if k == world.next else GAUGE_BG)
-        x0, y0 = w * 0.84 - (8 + (k % 6) * 4) * scale, top + (h - top) * (0.35 if k < 6 else 0.6)
-        screen.fill([(x0, y0 - 1.5 * scale), (x0 + 3 * scale, y0 - 1.5 * scale), (x0 + 3 * scale, y0 + 1.5 * scale), (x0, y0 + 1.5 * scale)], color)
-    if world.hurt > 0:                              # ぶつかった直後：窓の縁が赤く
+        screen.fill([(x0, y1 - fill_h), (x0 + 3 * scale, y1 - fill_h), (x0 + 3 * scale, y1), (x0, y1)], GAUGE)
+    if world.hurt > 0:
         thick = int(3 * scale)
         screen.fill([(0, 0), (w, 0), (w, thick), (0, thick)], BUMP_RED)
-        screen.fill([(0, 0), (thick, 0), (thick, top), (0, top)], BUMP_RED)
-        screen.fill([(w - thick, 0), (w, 0), (w, top), (w - thick, top)], BUMP_RED)
-
-
-def clip_circle(points: list[tuple[float, float]], cx: float, cy: float, r: float) -> list[tuple[float, float]]:
-    """多角形を円で切る（近似：円を 16 角形とみなし、各辺で Sutherland–Hodgman）。計器の丸の中だけ塗るため。"""
-    poly = points
-    for k in range(16):
-        a = k * math.tau / 16
-        nx, ny = math.cos(a), math.sin(a)          # 辺の外向きの法線
-        d = r * math.cos(math.pi / 16)
-        kept = []
-        for i in range(len(poly)):
-            p, q = poly[i], poly[(i + 1) % len(poly)]
-            sp = (p[0] - cx) * nx + (p[1] - cy) * ny - d
-            sq = (q[0] - cx) * nx + (q[1] - cy) * ny - d
-            if sp <= 0:
-                kept.append(p)
-            if (sp <= 0) != (sq <= 0):
-                t = sp / (sp - sq)
-                kept.append((p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t))
-        poly = kept
-        if not poly:
-            return []
-    return poly
+        screen.fill([(0, h - thick), (w, h - thick), (w, h), (0, h)], BUMP_RED)
+        screen.fill([(0, 0), (thick, 0), (thick, h), (0, h)], BUMP_RED)
+        screen.fill([(w - thick, 0), (w, 0), (w, h), (w - thick, h)], BUMP_RED)
 
 
 def draw(screen: Screen, world: World) -> None:
-    """空 → 雲 → 地形（奥から）→ 輪（奥から）→ 次の輪の印 → 計器板。"""
+    """空 → 雲 → 地形 → 木・輪・障害物（奥から）→ 自機 → 印と HUD。"""
     cam = world.camera()
+    scale = screen.width / WIDTH
     draw_sky(screen, cam)
     draw_clouds(screen, cam)
-    draw_terrain(screen, cam)
-    order = sorted(range(RINGS), key=lambda k: -view(world.rings[k].pos, cam).z)
-    for k in order:
-        ring = world.rings[k]
-        if view(ring.pos, cam).z < NEAR - RING_R:
-            continue
-        color = RING_DONE if ring.done else (RING_NEXT if k == world.next else RING_LATER)
-        if world.finished_at is None or not ring.done:
-            draw_ring(screen, ring, cam, color)
+    draw_terrain(screen, cam, floor_at(world.hint))
+    things = []
+    for base, size in TREES:
+        q = view(base, cam)
+        if NEAR < q.z < 450 and abs(q.x) < q.z * 1.3 + 30:
+            things.append((q.z, "tree", (q, size)))
+    for k, gate in enumerate(world.gates):
+        q = view(gate.pos, cam)
+        if -GATE_R < q.z < 750 and abs(q.x) < q.z * 1.3 + GATE_R * 2:
+            things.append((q.z, "gate", gate))
+    for prop in PROPS:
+        q = view(prop.pos, cam)
+        if -60 < q.z < 900 and abs(q.x) < q.z * 1.3 + 80:
+            things.append((q.z, "prop", prop))
+    for z, kind, thing in sorted(things, key=lambda t: -t[0]):
+        if kind == "tree":
+            draw_tree(screen, thing[0], thing[1], scale)
+        elif kind == "gate":
+            draw_gate(screen, thing, cam)
+        else:
+            draw_prop(screen, thing, cam)
+    draw_plane(screen, world, cam)
     if world.finished_at is None:
         draw_marker(screen, world, cam)
-    draw_cockpit(screen, world)
+    draw_hud(screen, world)
 
 
 # ── 入力 ────────────────────────────────────────────────────────────────
@@ -892,9 +1129,8 @@ def status(world: World, best: Best, improved: bool = False) -> str:
         tail = ""
     else:
         tail = f"ベスト {clock_text(best.total) if best.total else '--:--.--'}  q でやめる"
-    heading = int((math.degrees(world.frame.heading()) + 360) % 360)
-    return (f" {clock_text(world.time)}  輪 {world.next:2d}/{RINGS}  速さ {world.speed:3.0f}  高度 {world.altitude():4.0f}  "
-            f"方位 {heading:3d}°  傾き {int(round(math.degrees(world.frame.bank()))):4d}°  {note:<18} " + tail)
+    return (f" {clock_text(world.total())}  輪 {world.next:2d}/{GATES}  外し {world.misses:2d}  連続 {world.combo:2d}  "
+            f"速さ {world.speed:3.0f}  高度 {world.altitude():3.0f}  {note:<20} " + tail)
 
 
 def run() -> None:
@@ -967,6 +1203,26 @@ def autopilot(world: World) -> None:
     world.throttle = 1
 
 
+def autopilot(world: World) -> None:
+    """自動操縦。次の輪（近ければ）か、道すじの少し先を狙う。"""
+    if world.finished_at is not None:
+        return
+    gate = world.gates[world.next] if world.next < GATES else None
+    k = min(len(PATH) - 1, world.hint + int(90 / PATH_STEP))
+    target = V(PATH[k].x, floor_at(k) + 30.0, PATH[k].z)
+    if gate is not None and (gate.pos - world.pos).length() < 220:
+        target = gate.pos
+    d = target - world.pos
+    flat = math.hypot(d.x, d.z) or 1.0
+    turn = math.remainder(math.atan2(d.x, d.z) - world.frame.heading(), math.tau)
+    want_bank = max(-1.0, min(1.0, turn * 2.5))
+    world.roll_in = 1.0 if want_bank > world.frame.bank() + 0.04 else (-1.0 if want_bank < world.frame.bank() - 0.04 else 0.0)
+    want_climb = math.atan2(d.y, flat)
+    err = want_climb - world.frame.climb()
+    world.pitch_in = 1.0 if err > 0.02 else (-1.0 if err < -0.02 else 0.0)
+    world.throttle = 1
+
+
 def check() -> None:
     print("● 3 軸の回転")
     f = Frame()
@@ -982,41 +1238,51 @@ def check() -> None:
     assert abs(spin(V(1, 0, 0), V(0, 1, 0), math.pi / 2).z + 1) < 1e-9, "x 軸の点を y 軸まわりに 90° → −z（g78 の rotate と同じ）"
     print("  ロール・ピッチ・ヨーはそれぞれ 1 本を固定して 2 本を回す。混ぜても 3 本は直角で長さ 1")
     print("● 基底で見るカメラ")
-    cam = Camera(V(0, 0, 0), Frame().yaw(math.pi / 2))          # 東を向く
+    cam = Camera(V(0, 0, 0), Frame().yaw(math.pi / 2))
     q = view(V(10, 0, 0), cam)
     assert abs(q.z - 10) < 1e-9 and abs(q.x) < 1e-9, q
-    q = view(V(0, 0, 10), cam)                                   # 北は、東を向いたカメラの左
+    q = view(V(0, 0, 10), cam)
     assert abs(q.x + 10) < 1e-9, q
-    cam = Camera(V(0, 0, 0), Frame().roll(math.pi / 2))          # 右へ 90° 傾く
-    q = view(V(0, 10, 0), cam)                                   # 世界の上は、下がった右の翼と反対＝左に
+    cam = Camera(V(0, 0, 0), Frame().roll(math.pi / 2))
+    q = view(V(0, 10, 0), cam)
     assert abs(q.x + 10) < 1e-6 and abs(q.y) < 1e-6, q
     print("  東を向けば +x が正面で +z は左。右へ 90° 傾けば、世界の上が左に見える")
-    print("● 地形")
-    assert len(HEIGHTS) == GRID + 1 and all(len(row) == GRID + 1 for row in HEIGHTS)
-    lo, hi = min(min(row) for row in HEIGHTS), max(max(row) for row in HEIGHTS)
-    assert lo < SEA + 5 and hi > 150, (lo, hi)
-    assert abs(ground_at(3 * CELL, 5 * CELL) - HEIGHTS[5][3]) < 1e-9, "マスの角ではその高さ"
-    mid = ground_at(3.5 * CELL, 5 * CELL)
-    assert abs(mid - (HEIGHTS[5][3] + HEIGHTS[5][4]) / 2) < 1e-9, "辺の真ん中は両端の平均（双一次補間）"
-    assert ground_at(-10, 0) == SEA and ground_at(GRID * CELL + 10, 0) == SEA
-    water = sum(1 for row in HEIGHTS for h in row if h <= SEA)
-    print(f"  {GRID}×{GRID} マス（{GRID * CELL:.0f} m 四方）、高さ {lo:.0f}〜{hi:.0f} m、水面の角 {water} 個。外は海")
-    print("● コース")
-    rings = make_course()
-    assert len(rings) == RINGS
-    for k, ring in enumerate(rings):
-        clearance = ring.pos.y - max(ground_at(ring.pos.x, ring.pos.z), SEA)
-        assert 60 <= clearance <= 140, (k, clearance)
-        assert abs(ring.dir.length() - 1) < 1e-9
-        gap = (rings[(k + 1) % RINGS].pos - ring.pos).length()
-        assert 250 < gap < 900, (k, gap)
-    print(f"  輪 {RINGS} 個。地面から 60〜140 m、間隔 {min((rings[(k + 1) % RINGS].pos - r.pos).length() for k, r in enumerate(rings)):.0f}〜"
-          f"{max((rings[(k + 1) % RINGS].pos - r.pos).length() for k, r in enumerate(rings)):.0f} m")
+    print("● 峡谷")
+    assert len(PATH) > 400 and abs(PATH_LEN - (len(PATH) - 1) * PATH_STEP) < 1e-9
+    gaps = [(b - a).length() for a, b in zip(PATH, PATH[1:])]
+    assert max(gaps) - min(gaps) < 0.5, "道すじの点は等間隔"
+    deeper = 0
+    for k in range(0, len(PATH), 20):
+        p = PATH[k]
+        d = path_dir(k)
+        side = V(d.z, 0.0, -d.x)
+        mid = ground_at(p.x, p.z)
+        wall = max(ground_at(p.x + side.x * 150, p.z + side.z * 150), ground_at(p.x - side.x * 150, p.z - side.z * 150))
+        if wall - mid > 40:
+            deeper += 1
+        assert abs(mid - floor_at(k)) < 8, (k, mid, floor_at(k))
+    assert deeper > len(range(0, len(PATH), 20)) * 0.8, deeper
+    n = ground_normal(PATH[0].x, PATH[0].z)
+    assert n.y > 0.9, "谷底の法線はほぼ上向き"
+    print(f"  道すじ {PATH_LEN:.0f} m（{len(PATH)} 点）。谷底は式どおりの高さで、両岸は 150 m 先で 40 m 以上高い（{deeper} / {len(range(0, len(PATH), 20))} 箇所）")
+    print("● 輪と障害物")
+    assert GATES >= 20
+    for k, gate in enumerate(GATES_ALL):
+        clearance = gate.pos.y - ground_at(gate.pos.x, gate.pos.z)
+        assert 10 <= clearance <= 60, (k, clearance)
+        assert abs(gate.dir.length() - 1) < 1e-9
+    bridges = [p for p in PROPS if p.kind == "bridge"]
+    pillars = [p for p in PROPS if p.kind == "pillar"]
+    assert bridges and pillars
+    for b in bridges:
+        assert b.pos.y - ground_at(b.pos.x, b.pos.z) > 30
+    print(f"  輪 {GATES} 個を {GATE_GAP:.0f} m おき、谷底から 10〜60 m。岩柱 {len(pillars)} 本、橋 {len(bridges)} 本、木 {len(TREES)} 本")
     print("● 飛行機の動き")
     world = World(seed=1)
     world.started = True
     world.clock = 0.0
     world.time = 0.001
+    world.pos = V(1280.0, 600.0, 1280.0)             # 高いところで（壁に当たらないように）
     head0 = world.frame.heading()
     world.roll_in = 1.0
     for _ in range(30):
@@ -1027,63 +1293,48 @@ def check() -> None:
     for _ in range(30):
         world.update(STEP)
     turned = math.remainder(world.frame.heading() - head0, math.tau)
-    assert turned > 0.2, "右へ傾けば右へ曲がる"
-    assert abs(world.frame.bank()) < bank, "手を離すと水平へ戻る"
+    assert turned > 0.3, "右へ傾けば右へ曲がる"
     for _ in range(60):
         world.update(STEP)
-    assert abs(world.frame.bank()) < 0.05, "2 秒で水平"
-    alt0 = world.pos.y
-    speed0 = world.speed
-    world.pitch_in = 1.0
-    for _ in range(45):
-        world.update(STEP)
-    assert world.pos.y > alt0 + 20 and world.speed < speed0, "機首を上げれば上昇し、速さは落ちる"
-    world.pitch_in = 0.0
-    world.throttle = 2
-    for _ in range(90):
-        world.update(STEP)
-    assert world.speed > 75, world.speed
-    print(f"  右ロール 1 秒で傾き {math.degrees(bank):.0f}°、離すと 2 秒で水平。機首上げで上昇、スロットル最大で {world.speed:.0f} m/s")
-    print("● 地面との当たり")
+    assert abs(world.frame.bank()) < 0.05, "手を離せば 2 秒で水平"
+    print(f"  右ロール 1 秒で傾き {math.degrees(bank):.0f}°、2 秒で方位 {math.degrees(turned):.0f}° 変わる。離すと水平に戻る")
+    print("● 壁に跳ね返る")
     world = World(seed=1)
     world.started = True
     world.clock = 0.0
     world.time = 0.001
-    world.pitch_in = -1.0
-    events = []
-    for _ in range(30 * 40):
+    world.frame = world.frame.yaw(math.pi / 2)      # 道すじの右の壁へ真横に
+    for _ in range(30 * 20):
         got = world.update(STEP)
-        if got:
-            events.append(got)
-        if world.bumps:
+        if got == "bump":
             break
-    assert "bump" in events and world.altitude() >= 2.9 and world.frame.forward.y > 0, (events, world.altitude())
-    print(f"  機首を下げ続けると {world.time:.1f} 秒で地面。跳ね返って機首が上を向き、速さが落ちる")
-    print("● 輪をくぐる判定")
+    assert world.bumps == 1 and world.altitude() >= 2.4, (world.bumps, world.altitude())
+    away = world.frame.forward.dot(ground_normal(world.pos.x, world.pos.z))
+    assert away > 0, "跳ね返ったあとは壁から離れる向き"
+    print(f"  {world.time:.1f} 秒で壁。法線の向きに押し出され、進む向きが反射する。速さは半分")
+    print("● 輪の判定")
     world = World(seed=1)
     world.started = True
     world.clock = 0.0
     world.time = 0.001
-    ring = world.rings[0]
-    world.pos = ring.pos - ring.dir.scale(5.0) + V(0, RING_R * 0.5, 0)   # 中心から 7 m 上、5 m 手前
-    world.frame = Frame(ring.dir, V(0, 1, 0), V(0, 1, 0).cross(ring.dir).unit()).tidy()
-    world.pos_before = world.pos
-    world.side_before = world.side(ring)
-    got = [world.update(STEP) for _ in range(8)]                 # 5 m 手前から 2 m/コマで進む
-    assert "ring" in got and world.next == 1 and ring.done, got
-    ring2 = world.rings[1]
-    world.pos = ring2.pos - ring2.dir.scale(5.0) + V(0, RING_R * 1.3, 0)  # 中心から 18 m 上 → 外れ
-    world.frame = Frame(ring2.dir, V(0, 1, 0), V(0, 1, 0).cross(ring2.dir).unit()).tidy()
-    world.pos_before = world.pos
-    world.side_before = world.side(ring2)
+    gate = world.gates[0]
+    world.pos = gate.pos - gate.dir.scale(5.0) + V(0, GATE_R * 0.5, 0)
+    world.frame = Frame(gate.dir, V(0, 1, 0), V(0, 1, 0).cross(gate.dir).unit()).tidy()
+    world.hint, world.s = locate(world.pos, 0)
     got = [world.update(STEP) for _ in range(8)]
-    assert "ring" not in got and world.next == 1 and world.note.startswith("外した"), got
-    print("  面をまたいだ瞬間の位置が中心から半径以内なら「くぐった」。外れたら戻る")
-    print("● 自動操縦で 1 周")
+    assert "gate" in got and world.next == 1 and gate.state == "hit" and world.combo == 1, got
+    gate2 = world.gates[1]
+    world.pos = gate2.pos - gate2.dir.scale(5.0) + V(0, GATE_R * 1.3, 0)
+    world.frame = Frame(gate2.dir, V(0, 1, 0), V(0, 1, 0).cross(gate2.dir).unit()).tidy()
+    world.hint, world.s = locate(world.pos, world.hint)
+    got = [world.update(STEP) for _ in range(8)]
+    assert "miss" in got and world.next == 2 and gate2.state == "miss" and world.penalty == MISS_PENALTY and world.combo == 0, got
+    print(f"  中なら「くぐった」で連続が伸び、外したら +{MISS_PENALTY:.0f} 秒で次へ（戻らない）")
+    print("● 自動操縦で 1 本")
     world = World(seed=2)
     world.started = True
     events = []
-    for _ in range(30 * 400):
+    for _ in range(30 * 600):
         autopilot(world)
         got = world.update(STEP)
         if got:
@@ -1091,23 +1342,25 @@ def check() -> None:
         if world.finished_at is not None:
             break
     assert world.finished_at is not None, (world.next, world.time)
-    assert events.count("ring") == RINGS - 1 and events.count("finish") == 1 and events.count("count") == 3
-    print(f"  {clock_text(world.finished_at)} で {RINGS} 個全部（ぶつかった {world.bumps} 回）")
+    states = [g.state for g in world.gates]
+    assert world.next == GATES and events.count("finish") == 1 and all(st in ("hit", "miss") for st in states)
+    assert states.count("hit") >= GATES * 0.6 and states.count("miss") == world.misses, states
+    print(f"  {clock_text(world.finished_at)}（走行 {clock_text(world.time)} + 罰 {world.penalty:.0f} 秒）。くぐった {GATES - world.misses}、外した {world.misses}、ぶつかった {world.bumps}")
     print("● 板の大きさ")
     world = World(seed=2)
     world.started = True
-    for _ in range(30 * 20):
+    for _ in range(30 * 15):
         autopilot(world)
         world.update(STEP)
-    small, big = Screen(), Screen(WIDTH * 3, HEIGHT * 3)
+    small, big = Screen(), Screen(WIDTH * 4, HEIGHT * 4)
     started = time.perf_counter()
     draw(small, world)
     took_small = time.perf_counter() - started
     started = time.perf_counter()
     draw(big, world)
     took_big = time.perf_counter() - started
-    same = sum(1 for y in range(HEIGHT) for x in range(WIDTH) if small.pixel(x, y) == big.pixel(x * 3, y * 3))
-    print(f"  128×80 を描くのに {took_small * 1000:.1f} ms、384×240 は {took_big * 1000:.1f} ms。一致 {same / (WIDTH * HEIGHT):.0%}")
+    same = sum(1 for y in range(HEIGHT) for x in range(WIDTH) if small.pixel(x, y) == big.pixel(x * 4, y * 4))
+    print(f"  128×80 を描くのに {took_small * 1000:.1f} ms、512×320 は {took_big * 1000:.1f} ms。一致 {same / (WIDTH * HEIGHT):.0%}")
     assert same / (WIDTH * HEIGHT) > 0.85
     print("● 記録と音")
     best = Best.parse("")
@@ -1136,7 +1389,7 @@ def png_bytes(screen: Screen, scale: int = 1) -> bytes:
             + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b""))
 
 
-def shot(path: str, seconds: float = 12.0) -> None:
+def shot(path: str, seconds: float = 8.0) -> None:
     world = World(seed=3)
     world.started = True
     world.clock = 0.0
@@ -1151,25 +1404,23 @@ def shot(path: str, seconds: float = 12.0) -> None:
 
 
 def terrain_map(path: str) -> None:
-    """地形を真上から。高さの色と、輪と、スタート。"""
+    """地形を真上から。高さの色と、道すじ、輪。"""
     size = 256
     screen = Screen(size, size)
+    lo = min(min(row) for row in HEIGHTS)
     for y in range(size):
         for x in range(size):
             h = ground_at(x / size * GRID * CELL, (size - 1 - y) / size * GRID * CELL)
-            screen.plot(x, y, land_color(h, 0.0))
-    for k, ring in enumerate(make_course()):
-        px, py = int(ring.pos.x / (GRID * CELL) * size), int(size - 1 - ring.pos.z / (GRID * CELL) * size)
-        for dx in range(-2, 3):
-            for dy in range(-2, 3):
-                screen.plot(px + dx, py + dy, RING_NEXT if k == 0 else RING_LATER)
-    px, py = int(START.x / (GRID * CELL) * size), int(size - 1 - START.z / (GRID * CELL) * size)
-    for dx in range(-2, 3):
-        screen.plot(px + dx, py, MARK)
-        screen.plot(px, py + dx, MARK)
+            t = (h - lo) / 260
+            screen.plot(x, y, (int(40 + 180 * t), int(90 + 120 * t), int(40 + 60 * t)))
+    for k, gate in enumerate(GATES_ALL):
+        px, py = int(gate.pos.x / (GRID * CELL) * size), int(size - 1 - gate.pos.z / (GRID * CELL) * size)
+        for dx in range(-1, 2):
+            for dy in range(-1, 2):
+                screen.plot(px + dx, py + dy, RING_NEXT if k == 0 else (255, 255, 255))
     with open(path, "wb") as out:
         out.write(png_bytes(screen, 2))
-    print(f"{path} に書き出した")
+    print(f"{path} に書き出した（道すじ {PATH_LEN:.0f} m、輪 {GATES} 個）")
 
 
 def main() -> None:

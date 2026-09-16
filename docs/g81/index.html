@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>軽飛行機で輪をくぐる — python-study</title>
-<meta name="description" content="山と谷の上の 12 個の輪を順にくぐる 3D フライト。3 軸の回転・基底で見るカメラ・ハイトマップの地形を自分で書いた。">
+<meta name="description" content="峡谷を低空で縫い、40 個の輪を順にくぐる 3D フライトレース。3 軸の回転・基底で見るカメラ・ハイトマップの地形と峡谷を自分で書いた。">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#9992;&#65039;</text></svg>">
 <link rel="stylesheet" href="https://pyscript.net/releases/2025.8.1/core.css">
 <script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
@@ -160,11 +160,11 @@
 <main>
   <p class="back"><a href="../">← 課題一覧</a></p>
   <h1>軽飛行機で輪をくぐる</h1>
-  <p class="sub">山と谷の上に浮かぶ 12 個の輪を、順にくぐってタイムを競います。コックピット視点。<strong>3D はライブラリを使わず自分で書きました</strong>——向きを 3 本のベクトルで持つ 3 軸の回転、内積だけで見るカメラ、高さの表から作る地形、傾く地平線。<strong>音を出してお使いください。</strong></p>
+  <p class="sub">峡谷を低空で縫い、130 m おきの輪 40 個を順にくぐってタイムを競います。岩柱をよけ、橋の下をくぐる。<strong>3D はライブラリを使わず自分で書きました</strong>——向きを 3 本のベクトルで持つ 3 軸の回転、内積だけで見るカメラ、高さの表から作る地形、傾く地平線。<strong>音を出してお使いください。</strong></p>
 
   <div class="card">
     <div class="status">
-      <span><b id="time">0:00.00</b> ・ 輪 <b id="ring">0/12</b> ・ ベスト <b id="best">--:--.--</b></span>
+      <span><b id="time">0:00.00</b> ・ 輪 <b id="ring">0/40</b> ・ 外し <b id="miss">0</b> ・ 連続 <b id="combo">0</b> ・ ベスト <b id="best">--:--.--</b></span>
       <span>速さ <b id="speed">65</b> m/s ・ 高度 <b id="alt">120</b> m ・ 方位 <b id="heading">000</b> ・ <b id="fps">–</b> コマ/秒</span>
     </div>
 
@@ -188,11 +188,11 @@
     </div>
 
     <div class="howto">
-      <b>やること</b>：「スタート」で 3・2・1 のあと出発。← → で翼を傾けると曲がり（離すと水平に戻る）、↑ ↓ で機首の上げ下げ、▲ ▼ でスロットル 3 段階。<b>橙の輪</b>を順にくぐる。菱形の印が次の輪、画面の外なら縁の矢印。
+      <b>やること</b>：「スタート」で 3・2・1 のあと出発。← → で翼を傾けると曲がり（離すと水平に戻る）、↑ ↓ で機首の上げ下げ、▲ ▼ でスロットル 3 段階。峡谷を縫って<b>橙の輪</b>を順にくぐる。菱形の印が次の輪、画面の外なら縁の矢印。
       <ol>
-        <li>輪の面をまたいだとき中心から 14 m 以内なら「くぐった」。外したら戻ってくぐる。</li>
-        <li>山や地面にぶつかると跳ね返って減速（窓の縁が赤く）。タイムのロスが罰。</li>
-        <li>12 個全部くぐったタイムがベストとしてこのブラウザに残ります。</li>
+        <li>輪の面をまたいだとき中心から 16 m 以内なら「くぐった」。外したら <b>+3 秒</b>で次へ（戻らない）。連続でくぐると連続数が出ます。</li>
+        <li>岩柱をよけ、赤い橋の下をくぐる。谷の壁や地面にぶつかると跳ね返って減速（画面の縁が赤く）。</li>
+        <li>40 個の合計タイム（走行＋罰）がベストとしてこのブラウザに残ります。</li>
       </ol>
       <div class="cues">
         <span><b>3 軸の回転</b>：前・上・右の 3 本を機体の軸まわりで回す</span>
@@ -221,6 +221,6 @@
   </footer>
 </main>
 
-<script type="py" src="./game.py?v=25c483c0"></script>
+<script type="py" src="./game.py?v=83321f00"></script>
 </body>
 </html>
