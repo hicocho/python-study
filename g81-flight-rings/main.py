@@ -7,7 +7,8 @@
   ハイトマップ     マスごとの高さの表から地形の網（メッシュ）を作り、法線で陰影、高さで色
   輪をくぐる判定   輪の面をまたいだ瞬間に、中心からの距離が半径以内か
 
-    python3 main.py            遊ぶ（スペースで始める。← → ロール、↑ ↓ 機首、w / s スロットル。q でやめる）
+    python3 main.py            遊ぶ（スペースで始める。← → ロール、↑ ↓ 機首、w / s スロットル。c でコース。q でやめる）
+    python3 main.py --course 海岸        コースを選んで（峡谷 / 海岸 / 高原 / ランダム）。--seed 42 で種
     python3 main.py --check    決まりを確かめる
     python3 main.py --shot     場面を PNG に書き出す（見た目の確認用）
     python3 main.py --map      地形と輪を真上から PNG に
@@ -346,18 +347,81 @@ def catmull(p0: V, p1: V, p2: V, p3: V, t: float) -> V:
     return (a + b + c + d).scale(0.5)
 
 
-# 峡谷の道すじの制御点 (x, z)。地図（2560 m 四方）を大きく S 字に横切る。真ん中あたりで急な S 字
-KNOTS = [(200, 300), (500, 700), (400, 1200), (800, 1600), (1300, 1500), (1450, 1150), (1600, 1350), (1750, 1000),
-         (1950, 800), (2200, 1200), (2100, 1800), (1700, 2200), (1200, 2300)]
-
-# 区間（道のり m で区切る）。name は表示、kind で谷の幅・障害物・輪の並びが変わる
+# 区間の種類。kind で谷の幅・障害物・輪の並びが変わる
 #   canyon: ふつうの谷     narrow: 狭い峡谷（幅半分）     bridges: 橋が 3 本連続     snake: 急な S 字（輪が大きく左右）
 #   tunnel: 山を貫くトンネル（暗い筒）     climb: 滝の脇を急上昇（谷底が上る）
-SECTIONS = [("谷", "canyon", 0, 900), ("狭い峡谷", "narrow", 900, 1500), ("三連橋", "bridges", 1500, 2100),
-            ("S 字", "snake", 2100, 2900), ("谷", "canyon", 2900, 3400), ("トンネル", "tunnel", 3400, 3800),
-            ("谷", "canyon", 3800, 4500), ("滝の上昇", "climb", 4500, 5400)]
+SECTION_NAMES = {"canyon": "谷", "narrow": "狭い峡谷", "bridges": "三連橋", "snake": "S 字", "tunnel": "トンネル", "climb": "滝の上昇"}
+
+# コース。knots は道すじの制御点 (x, z)、plan は区間の種類と長さ（m）の並び、floor は谷底の高さの基準、
+# hill は丘の高さの基準と起伏の倍率。「ランダム」は種から作る（random_course）
+COURSES = {
+    "峡谷": dict(knots=[(200, 300), (500, 700), (400, 1200), (800, 1600), (1300, 1500), (1450, 1150), (1600, 1350), (1750, 1000),
+                       (1950, 800), (2200, 1200), (2100, 1800), (1700, 2200), (1200, 2300)],
+                plan=[("canyon", 900), ("narrow", 600), ("bridges", 600), ("snake", 800), ("canyon", 500), ("tunnel", 400),
+                      ("canyon", 700), ("climb", 900)],
+                floor=40.0, hill=(180.0, 1.0)),
+    "海岸": dict(knots=[(300, 200), (700, 500), (1200, 450), (1600, 750), (1500, 1250), (1000, 1400), (600, 1750),
+                       (900, 2150), (1500, 2250), (2000, 2000), (2300, 1500), (2250, 900)],
+                plan=[("canyon", 700), ("bridges", 700), ("canyon", 600), ("snake", 700), ("bridges", 500), ("canyon", 700),
+                      ("narrow", 600), ("canyon", 800)],
+                floor=12.0, hill=(120.0, 0.7)),
+    "高原": dict(knots=[(2300, 300), (1900, 600), (2100, 1000), (1700, 1350), (1300, 1150), (1000, 1500), (1250, 1900),
+                       (800, 2200), (400, 1900), (350, 1400), (600, 1000), (300, 600)],
+                plan=[("narrow", 700), ("tunnel", 400), ("canyon", 500), ("snake", 700), ("tunnel", 350), ("narrow", 600),
+                      ("canyon", 500), ("climb", 1000)],
+                floor=150.0, hill=(270.0, 1.1)),
+}
+COURSE_ORDER = ("峡谷", "海岸", "高原", "ランダム")
 TUNNEL_R = 28.0                                     # トンネルの筒の半径
 TUNNEL_DARK = 0.45                                  # トンネルの中の暗さ
+
+# いま読み込んでいるコース。load_course() が書き換える（描く側・世界はこれを読む）
+COURSE_NAME = "峡谷"
+COURSE_SEED = 0
+KNOTS = COURSES["峡谷"]["knots"]
+SECTIONS: list[tuple[str, str, float, float]] = []  # (表示名, 種類, 道のりの始まり, 終わり)
+FLOOR_BASE = 40.0
+HILL_BASE = 180.0
+HILL_AMP = 1.0
+
+
+def random_course(seed: int) -> dict:
+    """種から作るコース。道すじは向きを少しずつ変えながら 420 m ほどの歩幅で 12 歩、地図の中に収める。
+    区間は 4 種を混ぜて並べ、最後は 2 回に 1 回「滝の上昇」。"""
+    luck = random.Random(seed)
+    x, z = luck.uniform(400, 2100), 280.0
+    heading = luck.uniform(-0.4, 0.4)
+    knots = [(x, z)]
+    for _ in range(12):
+        best = None                                  # 候補を何度か作り、地図の中で前の点から一番離れたものを採る
+        for attempt in range(40):
+            step = luck.uniform(340, 500)
+            if attempt < 20:
+                nh = heading + luck.uniform(0.3, 1.3) * luck.choice((-1, 1))   # 少し曲がる
+            else:
+                nh = math.atan2(1280 - x, 1280 - z) + luck.uniform(-1.2, 1.2)   # 真ん中のほうへ
+            nx, nz = x + math.sin(nh) * step, z + math.cos(nh) * step
+            if not (220 < nx < 2340 and 220 < nz < 2340):
+                continue
+            gap = min(math.hypot(nx - kx, nz - kz) for kx, kz in knots)
+            if best is None or gap > best[0]:
+                best = (gap, nh, nx, nz)
+            if gap > 330:
+                break
+        _, heading, x, z = best
+        knots.append((x, z))
+    kinds = ["narrow", "bridges", "snake", "tunnel"]
+    luck.shuffle(kinds)
+    plan = [("canyon", 700)]
+    for kind in kinds:
+        plan.append((kind, luck.choice((500, 600, 700))))
+        if luck.random() < 0.6:
+            plan.append(("canyon", luck.choice((400, 500, 600))))
+    if luck.random() < 0.5:
+        plan.append(("climb", 900))
+    else:
+        plan.append(("canyon", 800))
+    return dict(knots=knots, plan=plan, floor=luck.uniform(20, 120), hill=(luck.uniform(150, 260), luck.uniform(0.7, 1.2)))
 
 
 def make_path(spacing: float = PATH_STEP) -> list[V]:
@@ -384,8 +448,8 @@ def make_path(spacing: float = PATH_STEP) -> list[V]:
     return points
 
 
-PATH = make_path()
-PATH_LEN = (len(PATH) - 1) * PATH_STEP
+PATH: list[V] = []
+PATH_LEN = 0.0
 
 
 def section_at(s: float) -> tuple[str, str]:
@@ -404,10 +468,21 @@ def floor_width(k: int) -> float:
     return FLOOR_W
 
 
+def section_span(kind: str) -> tuple[float, float] | None:
+    """その種類の区間の (始まり, 終わり)。無ければ None。"""
+    for _, k, lo, hi in SECTIONS:
+        if k == kind:
+            return lo, hi
+    return None
+
+
 def climb_lift(k: int) -> float:
     """滝の上昇の区間で足す高さ（900 m で 180 m）。谷底だけでなく、まわりの山も一緒に持ち上げる。"""
+    span = section_span("climb")
+    if span is None:
+        return 0.0
     s = k * PATH_STEP
-    lo, hi = SECTIONS[-1][2], SECTIONS[-1][3]
+    lo, hi = span
     if s <= lo:
         return 0.0
     t = min(1.0, (s - lo) / (hi - lo))
@@ -415,9 +490,9 @@ def climb_lift(k: int) -> float:
 
 
 def floor_at(k: int) -> float:
-    """道すじの点 k の谷底の高さ。ゆっくり上下し、滝の上昇の区間では上る。"""
+    """道すじの点 k の谷底の高さ。ゆっくり上下し、滝の上昇の区間では上る。水面（0）より下には行かない。"""
     s = k * PATH_STEP
-    return FLOOR_BASE + 40 * math.sin(s / 600.0) + s * 0.012 + climb_lift(k)
+    return max(6.0, FLOOR_BASE + 40 * math.sin(s / 600.0) + s * 0.012) + climb_lift(k)
 
 
 def in_tunnel(s: float) -> bool:
@@ -425,10 +500,11 @@ def in_tunnel(s: float) -> bool:
 
 
 def hills(x: float, z: float) -> float:
-    """峡谷を掘る前の丘。sin をいくつか重ねた決まった形。100〜260 m。"""
-    u, w = x / 500.0, z / 500.0
-    return (180 + 40 * math.sin(u * 1.3 + 0.4) * math.cos(w * 1.1 - 0.2)
-            + 30 * math.sin(u * 2.9 + w * 1.7) + 18 * math.sin(u * 5.1 - w * 3.3 + 1.0) + 8 * math.sin(u * 9.7 + w * 8.1))
+    """峡谷を掘る前の丘。sin をいくつか重ねた決まった形。基準と倍率はコースで違う。"""
+    u, w = x / 500.0 + COURSE_SEED * 0.37, z / 500.0 + COURSE_SEED * 0.61   # 種で模様をずらす
+    return HILL_BASE + HILL_AMP * (40 * math.sin(u * 1.3 + 0.4) * math.cos(w * 1.1 - 0.2)
+                                   + 30 * math.sin(u * 2.9 + w * 1.7) + 18 * math.sin(u * 5.1 - w * 3.3 + 1.0)
+                                   + 8 * math.sin(u * 9.7 + w * 8.1))
 
 
 def carve() -> list[list[float]]:
@@ -457,7 +533,7 @@ def carve() -> list[list[float]]:
     return heights
 
 
-HEIGHTS = carve()                                   # [z][x]
+HEIGHTS: list[list[float]] = []                     # [z][x]
 
 
 def ground_at(x: float, z: float) -> float:
@@ -589,17 +665,21 @@ def make_props() -> list[Prop]:
     return props
 
 
-def tunnel_rings() -> list[tuple[V, V]]:
-    """トンネルの筒の軸の点と向き。区間の少し外まで、20 m おき。"""
-    lo, hi = next((a, b) for _, kind, a, b in SECTIONS if kind == "tunnel")
-    rings = []
-    for s_at in range(int(lo) - 20, int(hi) + 21, 20):
-        k = max(0, min(len(PATH) - 1, int(s_at / PATH_STEP)))
-        rings.append((V(PATH[k].x, floor_at(k) + TUNNEL_R, PATH[k].z), path_dir(k)))
-    return rings
+def tunnel_rings() -> list[list[tuple[V, V]]]:
+    """トンネルごとの、筒の軸の点と向き。区間の少し外まで、20 m おき。"""
+    tunnels = []
+    for _, kind, lo, hi in SECTIONS:
+        if kind != "tunnel":
+            continue
+        rings = []
+        for s_at in range(int(lo) - 20, int(hi) + 21, 20):
+            k = max(0, min(len(PATH) - 1, int(s_at / PATH_STEP)))
+            rings.append((V(PATH[k].x, floor_at(k) + TUNNEL_R, PATH[k].z), path_dir(k)))
+        tunnels.append(rings)
+    return tunnels
 
 
-TUNNEL = tunnel_rings()
+TUNNELS: list[list[tuple[V, V]]] = []
 
 
 def make_trees() -> list[tuple[V, float]]:
@@ -619,9 +699,12 @@ def make_trees() -> list[tuple[V, float]]:
 
 
 def make_falls() -> list[Prop]:
-    """滝。上昇の区間の入口の右の壁に 2 本。"""
+    """滝。上昇の区間の入口の右の壁に 2 本（上昇の区間が無ければ無し）。"""
     falls = []
-    lo = SECTIONS[-1][2]
+    span = section_span("climb")
+    if span is None:
+        return falls
+    lo = span[0]
     for s_at in (lo + 150, lo + 520):
         k = int(s_at / PATH_STEP)
         p = PATH[k]
@@ -632,31 +715,64 @@ def make_falls() -> list[Prop]:
     return falls
 
 
-GATES_ALL = make_gates()
-PROPS = make_props() + make_falls()
-TREES = make_trees()
-GATES = len(GATES_ALL)
+GATES_ALL: list[Gate] = []
+PROPS: list[Prop] = []
+TREES: list[tuple[V, float]] = []
+GATES = 0
+
+
+def load_course(name: str, seed: int = 0) -> None:
+    """コースを読み込む（地図の作り直し）。名前が「ランダム」なら種から作る。世界や描く側はこの結果を読む。"""
+    global COURSE_NAME, COURSE_SEED, KNOTS, SECTIONS, FLOOR_BASE, HILL_BASE, HILL_AMP
+    global PATH, PATH_LEN, HEIGHTS, TUNNELS, GATES_ALL, PROPS, TREES, GATES
+    spec = random_course(seed) if name == "ランダム" else COURSES[name]
+    COURSE_NAME, COURSE_SEED = name, (seed if name == "ランダム" else 0)
+    KNOTS = spec["knots"]
+    FLOOR_BASE, (HILL_BASE, HILL_AMP) = spec["floor"], spec["hill"]
+    PATH = make_path()
+    PATH_LEN = (len(PATH) - 1) * PATH_STEP
+    SECTIONS, at = [], 0.0                          # 区間の並びを道のりに直す。最後の区間は道すじの終わりまで
+    for k, (kind, length) in enumerate(spec["plan"]):
+        end = PATH_LEN + 1 if k == len(spec["plan"]) - 1 else at + length
+        SECTIONS.append((SECTION_NAMES[kind], kind, at, end))
+        at = end
+    HEIGHTS = carve()
+    TUNNELS = tunnel_rings()
+    GATES_ALL = make_gates()
+    PROPS = make_props() + make_falls()
+    TREES = make_trees()
+    GATES = len(GATES_ALL)
+
+
+LOADED = load_course("峡谷")                         # 最初のコースを読み込む（代入の形にしておくと、ブラウザ版の切り出しにも入る）
 
 
 # ── 記録 ────────────────────────────────────────────────────────────────
 
 @dataclass
 class Best:
-    total: float = 0.0                              # 0 は未記録
+    """コースごとのベストタイム。ランダムは種が違っても 1 つにまとめる。"""
+
+    totals: dict[str, float] = field(default_factory=dict)
+
+    def of(self, course: str) -> float:
+        return self.totals.get(course, 0.0)          # 0 は未記録
 
     def dump(self) -> str:
-        return json.dumps({"total": self.total})
+        return json.dumps({"totals": self.totals})
 
     @classmethod
     def parse(cls, text: str) -> "Best":
         try:
-            return cls(float(json.loads(text)["total"]))
-        except (ValueError, KeyError, TypeError):
+            data = json.loads(text)
+            totals = {str(k): float(v) for k, v in data["totals"].items()}
+            return cls(totals)
+        except (ValueError, KeyError, TypeError, AttributeError):
             return cls()
 
-    def take(self, total: float) -> bool:
-        if self.total == 0.0 or total < self.total:
-            self.total = round(total, 2)
+    def take(self, course: str, total: float) -> bool:
+        if self.of(course) == 0.0 or total < self.of(course):
+            self.totals[course] = round(total, 2)
             return True
         return False
 
@@ -670,6 +786,7 @@ def fresh_gates() -> list[Gate]:
 @dataclass
 class World:
     seed: int = 0
+    course: str = "峡谷"                             # 読み込んだコースの名前（記録の鍵）
     pos: V = V(0.0, 0.0, 0.0)
     frame: Frame = Frame()
     speed: float = SPEEDS[1]
@@ -700,6 +817,7 @@ class World:
     prop_spin: float = 0.0
 
     def __post_init__(self):
+        self.course = COURSE_NAME
         k = 0
         d = path_dir(k)
         self.pos = V(PATH[k].x, floor_at(k) + 30.0, PATH[k].z)
@@ -905,6 +1023,14 @@ class World:
             return None
         k = self.hint
         return V(PATH[k].x, floor_at(k) + TUNNEL_R, PATH[k].z), path_dir(k)
+
+    def darkness(self) -> float:
+        """いまの暗さ（1 = 明るい）。どのトンネルでも、口の前後 40 m で変わる。"""
+        inside = 0.0
+        for _, kind, lo, hi in SECTIONS:
+            if kind == "tunnel":
+                inside = max(inside, max(0.0, min(self.s - lo + 40, hi - self.s + 40, 60)) / 60)
+        return 1.0 - (1.0 - TUNNEL_DARK) * inside
 
 
 def clock_text(seconds: float) -> str:
@@ -1138,10 +1264,10 @@ def draw_prop(screen: Screen, prop: Prop, cam: Camera) -> None:
             draw_solid(screen, [view(p, cam) for p in column], cf, PILLAR)
 
 
-def draw_tunnel(screen: Screen, k: int, cam: Camera) -> None:
+def draw_tunnel(screen: Screen, rings: list[tuple[V, V]], k: int, cam: Camera) -> None:
     """トンネルの筒の 1 区切り（20 m）。12 角形の輪と輪の間を塗る。天井に灯り。入口と出口は暗い口。"""
     scale = screen.width / WIDTH
-    (c0, d0), (c1, d1) = TUNNEL[k], TUNNEL[k + 1]
+    (c0, d0), (c1, d1) = rings[k], rings[k + 1]
     side0, side1 = V(0, 1, 0).cross(d0).unit(), V(0, 1, 0).cross(d1).unit()
     up0, up1 = d0.cross(side0).unit(), d1.cross(side1).unit()
     ring0 = [view(c0 + side0.scale(TUNNEL_R * math.cos(a)) + up0.scale(TUNNEL_R * math.sin(a)), cam) for a in (i * math.tau / 12 for i in range(12))]
@@ -1152,7 +1278,7 @@ def draw_tunnel(screen: Screen, k: int, cam: Camera) -> None:
         lamp = k % 2 == 0 and i in (2, 3)             # 上のほう、1 つおきの区切りに灯り
         color = TUNNEL_LAMP if lamp else (TUNNEL_WALL if i in (0, 1, 2, 3, 4, 5, 6) else TUNNEL_FLOOR)
         draw_quad(screen, quad, fog(color, max(NEAR, depth)), scale)
-    if k == 0 or k == len(TUNNEL) - 2:                 # 口：筒のまわりの暗い環（山の面との継ぎ目を隠す）
+    if k == 0 or k == len(rings) - 2:                  # 口：筒のまわりの暗い環（山の面との継ぎ目を隠す）
         c, sd, up = (c0, side0, up0) if k == 0 else (c1, side1, up1)
         outer = [view(c + sd.scale(TUNNEL_R * 1.7 * math.cos(a)) + up.scale(TUNNEL_R * 1.7 * math.sin(a)), cam) for a in (i * math.tau / 12 for i in range(12))]
         inner = ring0 if k == 0 else ring1
@@ -1231,9 +1357,7 @@ def draw(screen: Screen, world: World) -> None:
     """空 → 雲 → 地形 → 木・輪・障害物（奥から）→ 自機 → 印と HUD。"""
     cam = world.camera()
     scale = screen.width / WIDTH
-    lo, hi = next((a, b) for _, kind, a, b in SECTIONS if kind == "tunnel")
-    inside = max(0.0, min(world.s - lo + 40, hi - world.s + 40, 60)) / 60   # 口の前後 40 m で暗さが変わる
-    DIM[0] = 1.0 - (1.0 - TUNNEL_DARK) * inside
+    DIM[0] = world.darkness()
     draw_sky(screen, cam)
     draw_clouds(screen, cam)
     draw_terrain(screen, cam, floor_at(world.hint))
@@ -1250,17 +1374,18 @@ def draw(screen: Screen, world: World) -> None:
         q = view(prop.pos, cam)
         if -60 < q.z < 900 and abs(q.x) < q.z * 1.3 + 80:
             things.append((q.z, "prop", prop))
-    for k in range(len(TUNNEL) - 1):
-        q = view(TUNNEL[k][0], cam)
-        if -30 < q.z < 900:
-            things.append((q.z + 10, "tunnel", k))   # 少し奥扱い（同じ場所の輪より先に描く）
+    for rings in TUNNELS:
+        for k in range(len(rings) - 1):
+            q = view(rings[k][0], cam)
+            if -30 < q.z < 900:
+                things.append((q.z + 10, "tunnel", (rings, k)))   # 少し奥扱い（同じ場所の輪より先に描く）
     for z, kind, thing in sorted(things, key=lambda t: -t[0]):
         if kind == "tree":
             draw_tree(screen, thing[0], thing[1], scale)
         elif kind == "gate":
             draw_gate(screen, thing, cam)
         elif kind == "tunnel":
-            draw_tunnel(screen, thing, cam)
+            draw_tunnel(screen, thing[0], thing[1], cam)
         elif thing.kind == "falls":
             draw_falls(screen, thing, cam)
         else:
@@ -1299,7 +1424,7 @@ def read_keys(fd: int) -> list[str]:
         text = os.read(fd, 64).decode(errors="ignore")
         for token, name in (("\x1b[D", "left"), ("\x1b[C", "right"), ("\x1b[A", "up"), ("\x1b[B", "down"),
                             ("a", "left"), ("d", "right"), ("w", "faster"), ("s", "slower"),
-                            ("q", "quit"), ("\x1b", "quit"), ("r", "reset"), (" ", "go"), ("\r", "go"), ("\n", "go")):
+                            ("q", "quit"), ("\x1b", "quit"), ("r", "reset"), ("c", "course"), (" ", "go"), ("\r", "go"), ("\n", "go")):
             keys.extend([name] * text.count(token))
         if "\x1b[" in text:
             keys = [k for k in keys if k != "quit"] if text.count("\x1b") == text.count("\x1b[") else keys
@@ -1360,15 +1485,19 @@ def status(world: World, best: Best, improved: bool = False) -> str:
         note = f"★ ゴール {clock_text(world.finished_at)}" + (" ベスト更新！" if improved else "") + " r でもう一度"
         tail = ""
     else:
-        tail = f"ベスト {clock_text(best.total) if best.total else '--:--.--'}  q でやめる"
+        tail = f"ベスト {clock_text(best.of(world.course)) if best.of(world.course) else '--:--.--'}  q でやめる"
+    if not world.started:
+        note = f"{world.course}{'（種 ' + str(COURSE_SEED) + '）' if world.course == 'ランダム' else ''}  スペースで始める"
+        tail = "c でコース  q でやめる"
     return (f" {clock_text(world.total())} {world.section():<6} 輪 {world.next:2d}/{GATES} 外し {world.misses:2d} 連続 {world.combo:2d} "
-            f"速さ {world.speed:3.0f} 高度 {world.altitude():3.0f} {note:<20} " + tail)
+            f"速さ {world.speed:3.0f} 高度 {world.altitude():3.0f} {note:<24} " + tail)
 
 
-def run() -> None:
+def run(course: str = "峡谷", seed: int | None = None) -> None:
     import termios
     import tty
 
+    load_course(course, seed if seed is not None else int(time.time()) % 10000)
     world = World(seed=int(time.time()))
     best = load_best()
     improved = False
@@ -1388,9 +1517,16 @@ def run() -> None:
                 if key == "quit":
                     return
                 if key == "reset" and world.finished_at is not None:
+                    if world.course == "ランダム":
+                        load_course("ランダム", int(time.time()) % 10000)
                     world = World(seed=int(time.time()))
                     world.started = True
                     improved = False
+                elif key == "course" and not world.started:      # 始める前ならコースを切り替える
+                    order = list(COURSE_ORDER)
+                    nxt = order[(order.index(world.course) + 1) % len(order)]
+                    load_course(nxt, int(time.time()) % 10000)
+                    world = World(seed=int(time.time()))
                 elif key in ("left", "right", "up", "down"):
                     held[key] = now + 0.45
                 else:
@@ -1402,7 +1538,7 @@ def run() -> None:
             while lag >= STEP:
                 event = world.update(STEP)
                 if event == "finish":
-                    improved = best.take(world.finished_at)
+                    improved = best.take(world.course, world.finished_at)
                     save_best(best)
                     event = "best" if improved else event
                 speaker.say(event)
@@ -1513,12 +1649,12 @@ def check() -> None:
         assert ground_at(p.x + side.x * edge, p.z + side.z * edge) > floor_at(k) + 5, (k, want)
     k_t = int(3600 / PATH_STEP)
     assert ground_at(PATH[k_t].x, PATH[k_t].z) > floor_at(k_t) + 40, "トンネルの区間は山が残る"
-    assert floor_at(int(5300 / PATH_STEP)) - floor_at(int(4500 / PATH_STEP)) > 120, "滝の上昇で谷底が上る"
+    assert floor_at(len(PATH) - 1) - floor_at(int(4500 / PATH_STEP)) > 120, "滝の上昇で谷底が上る"
     world = World(seed=1)
     world.started = True
     world.clock = 0.0
     world.time = 0.001
-    c, d = TUNNEL[3]
+    c, d = TUNNELS[0][3]
     world.hint, world.s = locate(c, int(3400 / PATH_STEP))
     world.pos = c + V(0, 1, 0).cross(d).unit().scale(TUNNEL_R + 2)     # 筒の壁にめり込む
     world.frame = Frame(d, V(0, 1, 0), V(0, 1, 0).cross(d).unit()).tidy()
@@ -1707,10 +1843,33 @@ def check() -> None:
     assert same / (WIDTH * HEIGHT) > 0.85
     print("● 記録と音")
     best = Best.parse("")
-    assert best.take(100.0) and not best.take(120.0) and best.take(90.0) and best == Best(90.0)
+    assert best.take("峡谷", 100.0) and not best.take("峡谷", 120.0) and best.take("峡谷", 90.0) and best.of("峡谷") == 90.0
+    assert best.take("海岸", 150.0) and best.of("海岸") == 150.0 and best.of("高原") == 0.0, "コースごとに別"
     assert Best.parse(best.dump()) == best and Best.parse("{x") == Best()
     assert len({sound_bytes(k) for k in SOUNDS}) == len(SOUNDS) and all(k in SOUNDS for k in EVENTS)
     print(f"  短いタイムだけ更新。音は {len(SOUNDS)} つ全部別")
+    print("● コース")
+    for name in ("海岸", "高原"):
+        load_course(name)
+        assert GATES >= 25 and all(abs(g.dir.length() - 1) < 1e-9 for g in GATES_ALL), (name, GATES)
+        assert all(0 <= p.x <= GRID * CELL and 0 <= p.z <= GRID * CELL for p in PATH), name
+        print(f"  {name}: 道すじ {PATH_LEN:.0f} m、輪 {GATES} 個、区間 {'→'.join(n for n, _, _, _ in SECTIONS)}")
+    for seed in (1, 2, 3):
+        load_course("ランダム", seed)
+        assert all(220 <= x <= 2340 and 220 <= z <= 2340 for x, z in KNOTS), seed
+        assert all(math.hypot(a[0] - b[0], a[1] - b[1]) > 200 for i, a in enumerate(KNOTS) for b in KNOTS[i + 1:]), "制御点は 200 m 以上離れる"
+        assert GATES >= 25
+        world = World(seed=seed)
+        world.started = True
+        for _ in range(30 * 400):
+            autopilot(world)
+            world.update(STEP)
+            if world.finished_at is not None:
+                break
+        assert world.finished_at is not None, (seed, world.next)
+        assert world.course == "ランダム"
+        print(f"  ランダム（種 {seed}）: {PATH_LEN:.0f} m、輪 {GATES} 個、{'→'.join(n for n, _, _, _ in SECTIONS)}。自動操縦 {clock_text(world.finished_at)}")
+    load_course("峡谷")
     print("\nぜんぶ通った。")
 
 
@@ -1774,7 +1933,9 @@ def main() -> None:
     elif "--map" in sys.argv:
         terrain_map(sys.argv[sys.argv.index("--map") + 1] if len(sys.argv) > 2 else "map.png")
     else:
-        run()
+        course = sys.argv[sys.argv.index("--course") + 1] if "--course" in sys.argv else "峡谷"
+        seed = int(sys.argv[sys.argv.index("--seed") + 1]) if "--seed" in sys.argv else None
+        run(course, seed)
 
 
 if __name__ == "__main__":
