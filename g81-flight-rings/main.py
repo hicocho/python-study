@@ -51,12 +51,14 @@ GATE_FIRST = 200.0                                  # 最初の輪までの距�
 MISS_PENALTY = 3.0                                  # 輪を外したときに足す秒数
 SPEEDS = (55.0, 80.0, 110.0)                        # スロットル 3 段階の速さ（m/s）
 ROLL_RATE = 2.8                                     # ロールの速さ（ラジアン/秒）。きびきび
-LEVEL_RATE = 1.6                                    # 手を離したとき水平に戻る速さ
+LEVEL_RATE = 1.6                                    # 手を離したとき水平に戻る速さ（ロール）
+PITCH_LEVEL = 1.4                                   # 手を離したとき機首が水平に戻る速さ
 PITCH_RATE = 1.2
 PITCH_LIMIT = math.radians(50)
 BANK_LIMIT = math.radians(75)
 TURN_PER_BANK = 1.2                                 # 傾き 1 ラジアンあたりの旋回（ラジアン/秒）
 CLIMB_DRAG = 0.35
+BOUNCE_UP = 0.3                                     # ぶつかって跳ね返るときの機首の上げ（sin。約 17°）
 CAM_BACK = 22.0                                     # カメラは自機の後ろ何 m か
 CAM_UP = 7.0
 COUNTDOWN = 3.0
@@ -619,7 +621,7 @@ class World:
         climb = self.frame.climb()
         want = self.pitch_in * PITCH_RATE * dt
         if not self.pitch_in:                        # 手を離すと機首も水平へ
-            want = max(-LEVEL_RATE * 0.5 * dt, min(LEVEL_RATE * 0.5 * dt, -climb))
+            want = max(-PITCH_LEVEL * dt, min(PITCH_LEVEL * dt, -climb))
         want = max(-PITCH_LIMIT - climb, min(PITCH_LIMIT - climb, want)) if abs(climb) < PITCH_LIMIT else (
             want if want * climb < 0 else 0.0)      # 限界の中では限界で止め、外にいる（ぶつかって上を向いた）ときは戻る向きだけ許す
         if want:
@@ -640,7 +642,12 @@ class World:
         n = ground_normal(self.pos.x, self.pos.z)
         f = self.frame.forward
         bounced = (f - n.scale(2 * f.dot(n))).scale(0.6) + n.scale(0.4)   # 反射して、少し法線の向きへ
-        self.frame = Frame(bounced.unit(), V(0, 1, 0), V(0, 1, 0).cross(bounced).unit()).tidy()
+        level = V(bounced.x, 0.0, bounced.z)        # 横向きの成分。真上に跳ねそうなら、もとの向きの横成分を使う
+        if level.length() < 0.2:
+            level = V(f.x, 0.0, f.z)
+        lift = max(0.05, min(BOUNCE_UP, bounced.y))  # ただし機首は少ししか上げない（谷から飛び出さない）
+        bounced = level.unit().scale(math.sqrt(1 - lift * lift)) + V(0, lift, 0)
+        self.frame = Frame(bounced, V(0, 1, 0), V(0, 1, 0).cross(bounced).unit()).tidy()
         self.pos = V(self.pos.x, floor, self.pos.z) + n.scale(3.0)
         self.speed *= 0.5
         self.hurt = 0.8
@@ -1321,7 +1328,12 @@ def check() -> None:
     assert world.bumps == 1 and world.altitude() >= 2.4, (world.bumps, world.altitude())
     away = world.frame.forward.dot(ground_normal(world.pos.x, world.pos.z))
     assert away > 0, "跳ね返ったあとは壁から離れる向き"
-    print(f"  {world.time:.1f} 秒で壁。法線の向きに押し出され、進む向きが反射する。速さは半分")
+    assert world.frame.climb() <= math.asin(BOUNCE_UP) + 1e-6, "跳ね返っても機首は少ししか上がらない"
+    y0 = world.pos.y
+    for _ in range(60):
+        world.update(STEP)
+    assert world.pos.y - y0 < 40 and abs(world.frame.climb()) < 0.05, (world.pos.y - y0, world.frame.climb())
+    print(f"  {world.time:.1f} 秒で壁。法線の向きに押し出され、進む向きが反射する（機首は 17° まで）。2 秒で水平、上がるのは {world.pos.y - y0:.0f} m")
     print("● 輪の判定")
     world = World(seed=1)
     world.started = True

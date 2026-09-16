@@ -95,7 +95,10 @@ SPEEDS = (55.0, 80.0, 110.0)                        # スロットル 3 段階�
 ROLL_RATE = 2.8                                     # ロールの速さ（ラジアン/秒）。きびきび
 
 
-LEVEL_RATE = 1.6                                    # 手を離したとき水平に戻る速さ
+LEVEL_RATE = 1.6                                    # 手を離したとき水平に戻る速さ（ロール）
+
+
+PITCH_LEVEL = 1.4                                   # 手を離したとき機首が水平に戻る速さ
 
 
 PITCH_RATE = 1.2
@@ -111,6 +114,9 @@ TURN_PER_BANK = 1.2                                 # 傾き 1 ラジアンあ�
 
 
 CLIMB_DRAG = 0.35
+
+
+BOUNCE_UP = 0.3                                     # ぶつかって跳ね返るときの機首の上げ（sin。約 17°）
 
 
 CAM_BACK = 22.0                                     # カメラは自機の後ろ何 m か
@@ -727,7 +733,7 @@ class World:
         climb = self.frame.climb()
         want = self.pitch_in * PITCH_RATE * dt
         if not self.pitch_in:                        # 手を離すと機首も水平へ
-            want = max(-LEVEL_RATE * 0.5 * dt, min(LEVEL_RATE * 0.5 * dt, -climb))
+            want = max(-PITCH_LEVEL * dt, min(PITCH_LEVEL * dt, -climb))
         want = max(-PITCH_LIMIT - climb, min(PITCH_LIMIT - climb, want)) if abs(climb) < PITCH_LIMIT else (
             want if want * climb < 0 else 0.0)      # 限界の中では限界で止め、外にいる（ぶつかって上を向いた）ときは戻る向きだけ許す
         if want:
@@ -748,7 +754,12 @@ class World:
         n = ground_normal(self.pos.x, self.pos.z)
         f = self.frame.forward
         bounced = (f - n.scale(2 * f.dot(n))).scale(0.6) + n.scale(0.4)   # 反射して、少し法線の向きへ
-        self.frame = Frame(bounced.unit(), V(0, 1, 0), V(0, 1, 0).cross(bounced).unit()).tidy()
+        level = V(bounced.x, 0.0, bounced.z)        # 横向きの成分。真上に跳ねそうなら、もとの向きの横成分を使う
+        if level.length() < 0.2:
+            level = V(f.x, 0.0, f.z)
+        lift = max(0.05, min(BOUNCE_UP, bounced.y))  # ただし機首は少ししか上げない（谷から飛び出さない）
+        bounced = level.unit().scale(math.sqrt(1 - lift * lift)) + V(0, lift, 0)
+        self.frame = Frame(bounced, V(0, 1, 0), V(0, 1, 0).cross(bounced).unit()).tidy()
         self.pos = V(self.pos.x, floor, self.pos.z) + n.scale(3.0)
         self.speed *= 0.5
         self.hurt = 0.8
