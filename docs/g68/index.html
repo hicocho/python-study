@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ブロック崩し — python-study</title>
+<meta name="description" content="バーで玉を跳ね返してブロックを消す。文字で描いた 8 面、硬い・鉄・爆発・動くブロック、連続で倍率。スマホは指のスライドか傾きで。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#129528;</text></svg>">
+<link rel="stylesheet" href="https://pyscript.net/releases/2025.8.1/core.css">
+<script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #656d76;
+    --line: #d8dbe0;
+    --accent: #3b6f9c;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c;
+      --panel: #1f2229;
+      --ink: #e6e6e3;
+      --muted: #9aa2ad;
+      --line: #333842;
+      --accent: #8fc3ee;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 1.25rem 1rem 3rem;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    line-height: 1.7;
+  }
+  main { max-width: 34rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; letter-spacing: .02em; }
+  .sub { color: var(--muted); font-size: .875rem; margin: 0 0 1rem; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: .75rem;
+    padding: 1rem;
+  }
+  .status { display: flex; flex-wrap: wrap; gap: .15rem 1.2rem; justify-content: space-between; align-items: baseline;
+    margin-bottom: .6rem; color: var(--muted); font-size: .875rem;
+    font-variant-numeric: tabular-nums; }
+  .status b { color: var(--ink); font-weight: 700; }
+  .status span { white-space: nowrap; }
+
+  /* ドット絵の画面。600×420 の canvas を横幅いっぱいに */
+  .stage { display: flex; justify-content: center; }
+  #screen {
+    width: min(100%, 600px);
+    aspect-ratio: 120 / 84;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    background: #161830;
+    border: 2px solid var(--line);
+    border-radius: .35rem;
+    touch-action: none;
+    cursor: pointer;
+    user-select: none; -webkit-user-select: none;
+  }
+  .note-line { margin: .3rem 0 0; min-height: 1.4em; text-align: center; font-weight: 700; color: #b8860b; font-size: .95rem; }
+  #message { min-height: 1.6em; margin: .4rem 0 0; font-size: .8125rem; color: var(--ink); text-align: center; }
+  .pad { display: grid; gap: .4rem; margin-top: .6rem; grid-template-columns: 1fr; }
+  .pad button { padding: .8rem 0; font-size: 1.05rem; font-family: inherit; font-weight: 600;
+    color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+    border-radius: .5rem; cursor: pointer; user-select: none; -webkit-user-select: none; }
+  .pad button:active { background: var(--accent); color: var(--panel); }
+  .pad button.go { background: #2f7d52; border-color: #2f7d52; color: #fff; }
+  @media (prefers-color-scheme: dark) {
+    .pad button.go { background: #3f8f62; border-color: #3f8f62; color: #0f1512; }
+  }
+  .tilt-note { font-size: .8125rem; color: var(--muted); text-align: center; margin: .3rem 0 0; }
+  .howto { margin: .75rem 0 0; padding: .7rem .8rem; background: var(--bg);
+    border: 1px solid var(--line); border-radius: .5rem; font-size: .8125rem; }
+  .howto b { color: var(--ink); }
+  .howto ol { margin: .4rem 0 0; padding-left: 1.2rem; }
+  .howto li { margin: .15rem 0; }
+  .howto code { background: transparent; }
+  .cues { display: grid; grid-template-columns: 1fr 1fr; gap: .3rem .9rem; margin: .6rem 0 0; font-size: .8125rem;
+    color: var(--muted); }
+  .cues b { color: var(--ink); }
+  #loading { color: var(--muted); font-size: .875rem; text-align: center; padding: .5rem 0; margin: .5rem 0 0; }
+  .note { font-size: .875rem; color: var(--muted); margin-top: 1.5rem; }
+  .note a { color: inherit; }
+  .back { font-size: .875rem; margin: 0 0 1rem; }
+  .back a { color: var(--muted); text-decoration: none; }
+  .back a:hover { text-decoration: underline; }
+  footer { margin-top: 2rem; font-size: .8125rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <p class="back"><a href="../">← 課題一覧</a></p>
+  <h1>ブロック崩し</h1>
+  <p class="sub">バーで玉を跳ね返してブロックを消します。文字で描いた 8 面、玉は 3 つ。硬い・鉄・爆発・動くブロック、連続で消すと倍率。<strong>スマホは画面のどこでも指を左右に動かすだけ</strong>（傾きでも操作できます）。<strong>音を出してお使いください。</strong></p>
+
+  <div class="card">
+    <div class="status">
+      <span>面 <b id="stage">1/8 はじまり</b> ・ 残り <b id="left">48</b> 個 ・ 玉 <b id="lives">3</b></span>
+      <span>点 <b id="score">0</b> ・ 連続 <b id="streak">0（×1）</b> ・ 速さ <b id="speed">42</b></span>
+      <span>ベスト <b id="best">0</b> ・ <b id="fps">–</b> コマ/秒</span>
+    </div>
+
+    <div class="stage"><canvas id="screen" width="600" height="420"></canvas></div>
+    <p id="note" class="note-line">&nbsp;</p>
+    <p id="message"></p>
+
+    <div class="pad">
+      <button type="button" id="go" class="go">▶ スタート</button>
+      <button type="button" id="again" hidden>もう一度</button>
+      <button type="button" id="tilt">📱 傾きで操作（スマホ・タブレット）</button>
+      <button type="button" id="tilt-stop" hidden>傾きをやめる</button>
+    </div>
+    <p id="tilt-note" class="tilt-note">傾きで操作するには、上のボタンを押して許可してください（スマホ・タブレット）</p>
+
+    <div class="howto">
+      <b>やること</b>：「スタート」のあと、画面を<b>タップ</b>で玉を放す。画面のどこでも<b>指を左右に動かす</b>とバーが追いかける（パソコンはマウスか <code>←</code> <code>→</code>、スペースで放す）。
+      <ol>
+        <li>バーの<b>真ん中</b>に当てると真上、<b>端</b>に当てるほど浅い角度（最大 65°）で返る。狙いたい方向の逆側で受ける。</li>
+        <li>ふつうのブロック +10。<b>硬い</b>（灰色）は 2 回で +20、<b>鉄</b>（金色）は壊れない、<b>爆発</b>（橙に芯）は周り 8 つも壊す +30、<b>動く</b>（水色）は左右に揺れる +30。</li>
+        <li>バーに戻るまでに続けて壊すと 3 個ごとに倍率が上がる（×4 まで）。</li>
+        <li>打ち返すたびに少し速くなる。落とすと玉が 1 つ減って速さが戻る。8 面を全部消したらクリア。</li>
+      </ol>
+      <div class="cues">
+        <span><b>文字の地図</b>：1 面 = 文字の並び 1 枚、文字 → 種類は表</span>
+        <span><b>軸ごとの当たり判定</b>：x を動かして調べ、次に y</span>
+        <span><b>細かい歩み</b>：1 コマを 1 ドットずつ進めてすり抜けを防ぐ</span>
+        <span><b>角度は当たった場所</b>：バーのどこに当たったかで決まる</span>
+      </div>
+    </div>
+
+    <p id="loading">Python を読み込んでいます… （初回は数秒かかります）</p>
+  </div>
+
+  <p class="note">
+    このページは <strong>Python のコードがブラウザの中でそのまま動いています</strong>（PyScript）。
+    面の地図・玉の歩みと当たり判定・点と連続・描く処理は CLI 版と 1 文字も違いません。
+    端末は 120 × 84 ドットを ▀ の並びで、ここでは<strong>同じ式を 5 倍の板（600 × 420）</strong>で回して canvas に出しています。
+  </p>
+
+  <footer>
+    ソース: <a href="https://github.com/hicocho/python-study">github.com/hicocho/python-study</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/docs/g68/game.py">このページの game.py</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/g68-breakout/main.py">CLI 版 main.py</a>
+  </footer>
+</main>
+
+<script type="py" src="./game.py?v=82193973"></script>
+</body>
+</html>
