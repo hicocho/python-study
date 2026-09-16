@@ -78,6 +78,9 @@ KINDS = {
     "mouse":     dict(points=1, hits=1, stay=1.0, weight=5, move="swarm", word="ネズミ"),
     "hourglass": dict(points=0, hits=1, stay=1.0, weight=4, move="time", word="砂時計"),
     "king":      dict(points=15, hits=4, stay=1.8, weight=0, move=None, word="王様！"),
+    "hive":      dict(points=0, hits=1, stay=1.2, weight=5, move="trap", word="ハチの巣"),
+    "cactus":    dict(points=0, hits=1, stay=1.2, weight=5, move="trap", word="サボテン"),
+    "turtle":    dict(points=0, hits=1, stay=1.4, weight=5, move="trap", word="カメ"),
 }
 
 
@@ -103,6 +106,15 @@ KING_TIMES = (18.0, 42.0)                           # 王様が出る時刻（�
 
 
 KING_COMBO = 3                                      # 王様を倒すとコンボが伸びる数
+
+
+BEES_TIME = 3.0                                     # ハチの巣を叩いたあと、ハチが飛び回る秒数（その間の点は半分）
+
+
+NUMB_TIME = 1.5                                     # サボテンを叩いたあと、ハンマーがしびれて叩けない秒数
+
+
+SHELL_TIME = 4.0                                    # カメがこもって穴をふさぐ秒数
 
 
 RATE = 22050
@@ -151,6 +163,12 @@ def sound_bytes(kind: str) -> bytes:
         samples = tone(1200, 0.04) + tone(900, 0.04) + tone(1200, 0.04) + tone(900, 0.04)
     elif kind == "king":                            # 王様を倒した（ファンファーレ）
         samples = tone(784, 0.1) + tone(988, 0.1) + tone(1175, 0.1) + tone(1568, 0.3)
+    elif kind == "buzz":                            # ハチ（ブーン）
+        samples = array("h", (int(v * (0.7 + 0.3 * math.sin(i / 40))) for i, v in enumerate(tone(180, 0.5, VOLUME * 0.9))))
+    elif kind == "ouch":                            # サボテン（チクッ）
+        samples = tone(2400, 0.03, VOLUME * 0.9) + tone(300, 0.12, VOLUME * 0.7)
+    elif kind == "shell":                           # カメがこもる（コトッ）
+        samples = noise(0.05, VOLUME * 0.9, 60.0, 12) + tone(260, 0.08, VOLUME * 0.6)
     elif kind == "best":
         samples = tone(523, 0.1) + tone(659, 0.1) + tone(784, 0.1) + tone(1047, 0.3)
     else:
@@ -164,7 +182,7 @@ def sound_bytes(kind: str) -> bytes:
     return buffer.getvalue()
 
 
-EVENTS = ("pop", "miss", "clank", "hop", "hit", "tick", "gold", "king", "bomb", "end")   # 目立つ順
+EVENTS = ("pop", "miss", "clank", "hop", "hit", "tick", "gold", "king", "shell", "ouch", "buzz", "bomb", "end")   # 目立つ順
 
 
 SOUNDS = EVENTS + ("best",)
@@ -192,7 +210,19 @@ PALETTE = {
     "n": (110, 100, 100),   # ネズミの影
     "H": (232, 200, 120),   # 砂時計の砂
     "h": (120, 80, 40),     # 砂時計の枠
+    "C": (80, 170, 90),     # サボテン
+    "c": (50, 120, 60),     # サボテンの影
+    "T": (90, 150, 70),     # カメの甲羅
+    "t": (60, 110, 50),     # 甲羅の模様
+    "V": (170, 130, 60),    # ハチの巣
+    "v": (120, 90, 40),     # 巣の穴
 }
+
+
+BEE = (250, 210, 40)
+
+
+NUMB = (255, 230, 90)
 
 
 GRASS = (92, 160, 70)
@@ -592,7 +622,115 @@ BBBBBbBBBBbBBBBB
 """)
 
 
-SPRITES = {"normal": (MOLE, MOLE_HIT), "gold": (GOLD, GOLD_HIT), "helmet": (HELMET, HELMET_CRACKED), "bomb": (BOMB, BOOM),
+HIVE = sprite("hive", """
+................
+.....VVVVVV.....
+....VVVVVVVV....
+...VVvVVVVvVV...
+...VVVVVVVVVV...
+..VVvVVVvVVVvV..
+..VVVVVVVVVVVV..
+..VVVvVVvVVVVV..
+...VVVVVVVVVV...
+...VVvVVVVvVV...
+....VVVVVVVV....
+.....VVVVVV.....
+.......vv.......
+................
+""")
+
+
+HIVE_HIT = sprite("hive-hit", """
+.Y..............
+....Y......Y....
+.....VVVVVV.....
+..Y.VVVVVVVV..Y.
+...VVvVVVVvVV...
+...VVVVVVVVVV...
+..VVvVVVvVVVvV.Y
+..VVVVVVVVVVVV..
+Y.VVVvVVvVVVVV..
+...VVVVVVVVVV...
+...VVvVVVVvVV..Y
+....VVVVVVVV....
+.Y...VVVVVV.....
+................
+""")
+
+
+CACTUS = sprite("cactus", """
+................
+.......CC.......
+......CCCC......
+..CC..CCCC..CC..
+..CC..CCCC..CC..
+..CCC.CCCC.CCC..
+..CCCCCCCCCCCC..
+...CCCCCCCCCC...
+......CCCC......
+......CCCC......
+......CcCC......
+......CCCC......
+......CcCC......
+....hhhhhhhh....
+""")
+
+
+CACTUS_HIT = sprite("cactus-hit", """
+.....W..W.......
+..W....CC...W...
+......CCCC......
+..CC..CCCC..CC..
+..CC.WCCCCW.CC..
+..CCC.CCCC.CCC..
+..CCCCCCCCCCCC..
+W..CCCCCCCCCC..W
+......CCCC......
+......CCCC......
+......CcCC......
+......CCCC......
+......CcCC......
+....hhhhhhhh....
+""")
+
+
+TURTLE = sprite("turtle", """
+................
+................
+.....TTTTTT.....
+....TTtTTtTT....
+...TTtTTTTtTT...
+..TTTTTtTTTTTT..
+..TtTTTTTTTtTT..
+..TTTTTtTTTTTT..
+.SSTTTTTTTTTT...
+SSSSTTTTTTTTT...
+SKSSS.........SS
+SSSS..........SS
+.SS.............
+................
+""")
+
+
+SHELL = sprite("shell", """
+................
+................
+................
+................
+.....TTTTTT.....
+....TTtTTtTT....
+...TTtTTTTtTT...
+..TTTTTtTTTTTT..
+..TtTTTTTTTtTT..
+..TTTTTtTTTTTT..
+..TTTTTTTTTTTT..
+...tttttttttt...
+................
+................
+""")
+
+
+SPRITES = {"hive": (HIVE, HIVE_HIT), "cactus": (CACTUS, CACTUS_HIT), "turtle": (TURTLE, SHELL), "normal": (MOLE, MOLE_HIT), "gold": (GOLD, GOLD_HIT), "helmet": (HELMET, HELMET_CRACKED), "bomb": (BOMB, BOOM),
            "slime": (SLIME, SLIME_HIT), "metal": (METAL, METAL_HIT), "ghost": (GHOST, GHOST_HIT), "rabbit": (RABBIT, RABBIT_HIT),
            "mouse": (MOUSE, MOUSE_HIT), "hourglass": (HOURGLASS, HOURGLASS_HIT), "king": (KING, KING_HIT)}
 
@@ -647,6 +785,7 @@ class State(Enum):
     UP = "up"
     SINKING = "sinking"
     HIT = "hit"
+    SHELL = "shell"                                 # カメがこもって穴をふさいでいる
 
 
 @dataclass
@@ -672,7 +811,7 @@ class Hole:
             return min(1.0, (now - self.since) / RISE)
         if self.state == State.SINKING:
             return max(0.0, 1 - (now - self.since) / SINK)
-        if self.state in (State.UP, State.HIT):
+        if self.state in (State.UP, State.HIT, State.SHELL):
             return 1.0
         return 0.0
 
@@ -746,6 +885,8 @@ class World:
     swarms: dict[int, list[int]] = field(default_factory=dict)   # 群れの番号 → [叩いた数, 逃した数]
     swarm_count: int = 0
     kings_done: int = 0                             # 出した王様の数
+    bees_until: float = 0.0                         # ハチが飛び回っている終わりの時刻
+    numb_until: float = 0.0                         # ハンマーがしびれている終わりの時刻
     note: str = ""
     note_until: float = 0.0
 
@@ -843,7 +984,7 @@ class World:
                     hole.since = self.time
             elif hole.state == State.UP and passed >= hole.stay and not (hole.kind == "rabbit" and hole.jumps < JUMPS):
                 hole.enter(State.SINKING, self.time)
-                if hole.kind not in ("bomb", "hourglass"):
+                if hole.kind not in ("bomb", "hourglass", "hive", "cactus", "turtle"):
                     self.escaped += 1
                 if hole.swarm:
                     self.swarms[hole.swarm][1] += 1
@@ -851,6 +992,8 @@ class World:
                 hole.enter(State.EMPTY, self.time)
             elif hole.state == State.HIT and passed >= HIT_SHOW:
                 hole.enter(State.EMPTY, self.time)
+            elif hole.state == State.SHELL and passed >= SHELL_TIME:
+                hole.enter(State.SINKING, self.time)
         if self.time >= self.next_pop:
             if self.pop() is not None:
                 happened = "pop"
@@ -862,7 +1005,13 @@ class World:
         if not self.started or self.over or not 0 <= index < len(self.holes):
             return None
         hole = self.holes[index]
+        if self.time < self.numb_until:             # サボテンでしびれている：叩けない
+            self.tell("しびれて叩けない…")
+            return None
         self.hammer = (index, self.time)
+        if hole.state == State.SHELL:               # 甲羅は叩いても何も起きない（罰も無し）
+            self.tell("カメがこもっている")
+            return "clank"
         if not hole.whackable(self.time):           # 空の穴、消えているおばけ
             self.score -= MISS_PENALTY
             self.misses += 1
@@ -870,6 +1019,20 @@ class World:
             self.tell("空振り −1")
             return "miss"
         spec = KINDS[hole.kind]
+        if hole.kind == "hive":                     # ハチの巣：ハチが飛び回り、しばらく点が半分
+            self.bees_until = self.time + BEES_TIME
+            hole.enter(State.HIT, self.time)
+            self.tell(f"ハチの巣！ {BEES_TIME:.0f} 秒は点が半分", 1.5)
+            return "buzz"
+        if hole.kind == "cactus":                   # サボテン：しびれて叩けない
+            self.numb_until = self.time + NUMB_TIME
+            hole.enter(State.HIT, self.time)
+            self.tell(f"サボテン！ {NUMB_TIME} 秒しびれる", 1.5)
+            return "ouch"
+        if hole.kind == "turtle":                   # カメ：甲羅にこもって穴をふさぐ
+            hole.enter(State.SHELL, self.time)
+            self.tell(f"カメがこもった。{SHELL_TIME:.0f} 秒ふさがる", 1.5)
+            return "shell"
         if hole.kind == "bomb":
             self.score += spec["points"]
             self.combo = 0
@@ -892,6 +1055,8 @@ class World:
             return "tick"
         self.combo += 1
         points = spec["points"] * self.multiplier
+        if self.time < self.bees_until:             # ハチが飛んでいる間は半分（最低 1）
+            points = max(1, points // 2)
         if hole.kind == "king":                     # 王様は倒したあとにコンボが伸びる（点は倒す前の倍率）
             self.combo += KING_COMBO
         self.best_combo = max(self.best_combo, self.combo)
@@ -940,11 +1105,24 @@ def draw(screen: Screen, world: World) -> None:
         lift = hole.lift(world.time)
         if lift > 0 and hole.visible(world.time):
             face, hit_face = SPRITES[hole.kind]
-            spr = hit_face if hole.state == State.HIT else (HELMET_CRACKED if hole.kind == "helmet" and hole.armor == 1 else face)
+            spr = hit_face if hole.state in (State.HIT, State.SHELL) else (HELMET_CRACKED if hole.kind == "helmet" and hole.armor == 1 else face)
             top_y = cy - spr.height * scale * lift                 # 出ているぶんだけ上に
             screen.blit(spr, int(cx - spr.width * scale / 2), int(top_y), scale, clip_bottom=int(cy))
         screen.ellipse(cx, cy, 15 * scale, 3.5 * scale, HOLE_RIM)   # 穴の手前の縁（モグラの下端を隠す）
         screen.ellipse(cx, cy + 1.2 * scale, 13 * scale, 2.0 * scale, HOLE)
+    if world.time < world.bees_until:               # ハチ：黄色い点が飛び回る（時間から決まる動き。乱数なし）
+        left = world.bees_until - world.time
+        for k in range(8):
+            a = world.time * (5 + k) + k * 1.3
+            bx = (WIDTH / 2 + (WIDTH / 2 - 6) * math.sin(a) * math.cos(k)) * scale
+            by = (HEIGHT / 2 + (HEIGHT / 2 - 8) * math.sin(a * 0.7 + k)) * scale
+            screen.box(int(bx), int(by), 2 * scale, scale, BEE if int(a * 4) % 2 else (40, 30, 20))
+    if world.time < world.numb_until:               # しびれ：縁が黄色
+        thick = 2 * scale
+        screen.box(0, 0, screen.width, thick, NUMB)
+        screen.box(0, screen.height - thick, screen.width, thick, NUMB)
+        screen.box(0, 0, thick, screen.height, NUMB)
+        screen.box(screen.width - thick, 0, thick, screen.height, NUMB)
     if world.hammer is not None and world.time - world.hammer[1] < 0.2:   # 振り下ろしたハンマー
         index, when = world.hammer
         x, y, w, h = hole_rect(index)
