@@ -9,6 +9,7 @@
 
     python3 main.py            遊ぶ（スペースで始める。← → ロール、↑ ↓ 機首、w / s スロットル。c でコース。q でやめる）
     python3 main.py --course 海岸        コースを選んで（峡谷 / 海岸 / 高原 / ランダム）。--seed 42 で種
+    python3 main.py --weather 雨         天気（晴れ / 雨 / 霧 / 夕方 / 雪）
     python3 main.py --check    決まりを確かめる
     python3 main.py --shot     場面を PNG に書き出す（見た目の確認用）
     python3 main.py --map      地形と輪を真上から PNG に
@@ -107,6 +108,7 @@ PROP_COLOR = (40, 40, 44)
 SHADOW_COLOR = (40, 70, 40)
 PLUMB = (255, 255, 200)                             # 自機から真下へ落ちる線
 SPARK = (255, 220, 120)                             # くぐった輪が散る光
+RAIN = (150, 165, 190)
 GAUGE = (120, 200, 140)
 GAUGE_BG = (28, 30, 34)
 BOOST_COLOR = (255, 170, 60)
@@ -404,6 +406,26 @@ COURSE_ORDER = ("峡谷", "海岸", "高原", "ランダム")
 TUNNEL_R = 28.0                                     # トンネルの筒の半径
 TUNNEL_DARK = 0.45                                  # トンネルの中の暗さ
 
+# 天気（g80 の表と同じ考え。描く側は表を読むだけ）。sky: 空の上と地平線、haze: 霧が溶ける先、fog: 霧の始まりと終わり、
+# light: 地面などの明るさ、sun: 太陽を描くか、rain / snow: 降る粒の数、snow_ground: 地面を白くするか
+WEATHERS = {
+    "晴れ": dict(sky=((78, 130, 210), (176, 204, 232)), haze=(200, 214, 232), fog=(450.0, 1300.0), light=1.0, sun=True, rain=0, snow=0, snow_ground=False),
+    "雨":   dict(sky=((90, 100, 118), (150, 158, 172)), haze=(150, 158, 172), fog=(250.0, 900.0), light=0.72, sun=False, rain=140, snow=0, snow_ground=False),
+    "霧":   dict(sky=((170, 178, 190), (205, 210, 218)), haze=(205, 210, 218), fog=(80.0, 420.0), light=0.85, sun=False, rain=0, snow=0, snow_ground=False),
+    "夕方": dict(sky=((60, 62, 130), (240, 150, 96)), haze=(230, 160, 120), fog=(400.0, 1200.0), light=0.8, sun=True, rain=0, snow=0, snow_ground=False),
+    "雪":   dict(sky=((168, 176, 190), (216, 220, 228)), haze=(216, 220, 228), fog=(200.0, 700.0), light=0.92, sun=False, rain=0, snow=110, snow_ground=True),
+}
+WEATHER_ORDER = ("晴れ", "雨", "霧", "夕方", "雪")
+WEATHER_NAME = "晴れ"
+LOOK = WEATHERS["晴れ"]                              # いまの天気の見た目。set_weather() が書き換える
+
+
+def set_weather(name: str) -> None:
+    global WEATHER_NAME, LOOK
+    WEATHER_NAME = name
+    LOOK = WEATHERS[name]
+
+
 # いま読み込んでいるコース。load_course() が書き換える（描く側・世界はこれを読む）
 COURSE_NAME = "峡谷"
 COURSE_SEED = 0
@@ -588,6 +610,8 @@ def land_color(height: float, steep: float, floor: float) -> tuple[int, int, int
     """色。谷底は草と川、壁は岩（急なところは暗い岩）、上のほうは森、峰は雪。"""
     if height < floor + 3:
         return WATER if height < floor + 1.0 else SAND
+    if LOOK["snow_ground"] and steep < 0.5:
+        return SNOW
     if steep > 0.6:
         return ROCK_DARK
     if steep > 0.35:
@@ -736,6 +760,8 @@ def make_falls() -> list[Prop]:
     lo = span[0]
     for s_at in (lo + 150, lo + 520):
         k = int(s_at / PATH_STEP)
+        if k >= len(PATH) - 2:
+            continue
         p = PATH[k]
         d = path_dir(k)
         side = V(d.z, 0.0, -d.x)
@@ -762,9 +788,12 @@ def load_course(name: str, seed: int = 0) -> None:
     PATH_LEN = (len(PATH) - 1) * PATH_STEP
     SECTIONS, at = [], 0.0                          # 区間の並びを道のりに直す。最後の区間は道すじの終わりまで
     for k, (kind, length) in enumerate(spec["plan"]):
-        end = PATH_LEN + 1 if k == len(spec["plan"]) - 1 else at + length
+        last = k == len(spec["plan"]) - 1 or at + length > PATH_LEN - 400   # 道すじが足りなければそこで打ち切る
+        end = PATH_LEN + 1 if last else at + length
         SECTIONS.append((SECTION_NAMES[kind], kind, at, end))
         at = end
+        if last:
+            break
     HEIGHTS = carve()
     TUNNELS = tunnel_rings()
     GATES_ALL = make_gates()
@@ -833,6 +862,7 @@ class World:
     pitch_in: float = 0.0
     turning: float = 0.0                            # いま曲がっている量（-1〜+1）。roll_in に 0.15 秒で追いつく
     sparks: list[list] = field(default_factory=list)   # くぐった輪の光の粒 [位置, 速さ, 残り秒]
+    drops: list[list[float]] = field(default_factory=list)   # 雨や雪の粒 [x, y, 速さ]（画面の割合 0〜1。g80 と同じ）
     spray: list[list] = field(default_factory=list)    # 低空の水しぶき [位置, 速さ, 残り秒]
     hurt: float = 0.0
     bumps: int = 0
@@ -990,6 +1020,7 @@ class World:
         if self.collide():
             self.tell("ぶつかった！", 1.0)
             happened = "bump"
+        self.fall(dt)
         for bits in (self.sparks, self.spray):      # 粒を飛ばす
             for bit in bits:
                 bit[0] = bit[0] + bit[1].scale(dt)
@@ -1051,6 +1082,23 @@ class World:
         if self.next < GATES:
             self.gates[self.next].state = "next"
 
+    def fall(self, dt: float) -> None:
+        """雨と雪の粒（画面の割合で持つ 2D の粒）。数は天気で決まる。"""
+        want = LOOK["rain"] or LOOK["snow"]
+        luck = random.Random(int(self.time * 997) % 100003)
+        while len(self.drops) < want:
+            self.drops.append([luck.random(), luck.random(), luck.uniform(0.7, 1.3)])
+        del self.drops[want:]
+        speed = 1.8 if LOOK["rain"] else 0.14
+        for drop in self.drops:
+            drop[1] += speed * drop[2] * dt
+            if LOOK["snow"]:
+                drop[0] += 0.03 * math.sin(self.time * 2 + drop[2] * 9) * dt
+            if drop[1] > 1.0:
+                drop[1] -= 1.0
+                drop[0] = luck.random()
+            drop[0] %= 1.0
+
     def follow(self, dt: float) -> None:
         """カメラは自機の後ろ・少し上。位置はなめらかに追い、向きは自機を見て、傾きは自機の半分だけ付き合う。"""
         want = self.pos - V(self.frame.forward.x, 0.0, self.frame.forward.z).unit().scale(CAM_BACK) + V(0, CAM_UP, 0)
@@ -1098,9 +1146,10 @@ DIM = [1.0]                                         # いまの明るさ（ト�
 
 
 def fog(color: tuple[int, int, int], z: float) -> tuple[int, int, int]:
-    amount = max(0.0, min(0.92, (z - FOG_FROM) / (FAR - FOG_FROM)))
-    k = DIM[0]
-    return tuple(int((c + (b - c) * amount) * k) for c, b in zip(color, HAZE))
+    near_, far_ = LOOK["fog"]
+    amount = max(0.0, min(0.92, (z - near_) / (far_ - near_)))
+    k = DIM[0] * LOOK["light"]
+    return tuple(int((c + (b - c) * amount) * k) for c, b in zip(color, LOOK["haze"]))
 
 
 def shade(base: tuple[int, int, int], normal: V, z: float) -> tuple[int, int, int]:
@@ -1201,7 +1250,7 @@ def draw_sky(screen: Screen, cam: Camera) -> None:
         d = (flat + side.scale(k * 0.9)).unit()
         q = V(d.dot(cam.frame.right), d.dot(cam.frame.up), d.dot(cam.frame.forward))
         if q.z < 0.05:
-            screen.clear(SKY_TOP if f.y > 0 else FOREST)
+            screen.clear(LOOK["sky"][0] if f.y > 0 else FOREST)
             return
         ends.append(project(q, scale))
     (x1, y1), (x2, y2) = ends
@@ -1215,16 +1264,18 @@ def draw_sky(screen: Screen, cam: Camera) -> None:
     big = 4000 * scale
     ax, ay = x1 - dx * 20, y1 - dy * 20
     bx, by = x2 + dx * 20, y2 + dy * 20
-    screen.clear(HAZE)
-    screen.fill([(ax, ay), (bx, by), (bx + nx * big, by + ny * big), (ax + nx * big, ay + ny * big)], SKY_TOP)
-    for depth, color in ((14 * scale, SKY), (5 * scale, HAZE)):
+    sky_top, sky_low = LOOK["sky"]
+    screen.clear(LOOK["haze"])
+    screen.fill([(ax, ay), (bx, by), (bx + nx * big, by + ny * big), (ax + nx * big, ay + ny * big)], sky_top)
+    for depth, color in ((14 * scale, sky_low), (5 * scale, LOOK["haze"])):
         screen.fill([(ax, ay), (bx, by), (bx + nx * depth, by + ny * depth), (ax + nx * depth, ay + ny * depth)], color)
     sun = V(*LIGHT_DIR).unit()
     q = V(sun.dot(cam.frame.right), sun.dot(cam.frame.up), sun.dot(cam.frame.forward))
-    if q.z > 0.2:
+    if LOOK["sun"] and q.z > 0.2:
         sx, sy = project(q, scale)
         r = 5.0 * scale
-        screen.fill([(sx + r * math.cos(a), sy + r * math.sin(a)) for a in (i * math.tau / 12 for i in range(12))], SUN)
+        screen.fill([(sx + r * math.cos(a), sy + r * math.sin(a)) for a in (i * math.tau / 12 for i in range(12))],
+                    SUN if WEATHER_NAME != "夕方" else (255, 170, 80))
 
 
 CLOUDS = [(V(300 + 600 * i, 520 + 60 * math.sin(i * 2.3), 300 + 500 * ((i * 7) % 5)), 80 + 40 * math.sin(i * 1.7)) for i in range(9)]
@@ -1464,6 +1515,15 @@ def draw(screen: Screen, world: World) -> None:
     draw_plane(screen, world, cam)
     if world.finished_at is None:
         draw_marker(screen, world, cam)
+    if LOOK["rain"]:                                # 雨：斜めの短い線。雪：小さな丸
+        for x, y, v in world.drops:
+            px, py = x * screen.width, y * screen.height
+            screen.line((px, py), (px + 1.2 * scale, py + (2.5 + 1.5 * v) * scale), RAIN)
+    elif LOOK["snow"]:
+        for x, y, v in world.drops:
+            px, py = x * screen.width, y * screen.height
+            r = max(1.0, 0.45 * scale * v)
+            screen.fill([(px - r, py), (px, py - r), (px + r, py), (px, py + r)], FOAM)
     draw_hud(screen, world)
 
 
@@ -1495,7 +1555,8 @@ def read_keys(fd: int) -> list[str]:
         text = os.read(fd, 64).decode(errors="ignore")
         for token, name in (("\x1b[D", "left"), ("\x1b[C", "right"), ("\x1b[A", "up"), ("\x1b[B", "down"),
                             ("a", "left"), ("d", "right"), ("w", "faster"), ("s", "slower"),
-                            ("q", "quit"), ("\x1b", "quit"), ("r", "reset"), ("c", "course"), (" ", "go"), ("\r", "go"), ("\n", "go")):
+                            ("q", "quit"), ("\x1b", "quit"), ("r", "reset"), ("c", "course"), ("x", "weather"),
+                            (" ", "go"), ("\r", "go"), ("\n", "go")):
             keys.extend([name] * text.count(token))
         if "\x1b[" in text:
             keys = [k for k in keys if k != "quit"] if text.count("\x1b") == text.count("\x1b[") else keys
@@ -1558,17 +1619,18 @@ def status(world: World, best: Best, improved: bool = False) -> str:
     else:
         tail = f"ベスト {clock_text(best.of(world.course)) if best.of(world.course) else '--:--.--'}  q でやめる"
     if not world.started:
-        note = f"{world.course}{'（種 ' + str(COURSE_SEED) + '）' if world.course == 'ランダム' else ''}  スペースで始める"
-        tail = "c でコース  q でやめる"
+        note = f"{world.course}{'（種 ' + str(COURSE_SEED) + '）' if world.course == 'ランダム' else ''}・{WEATHER_NAME}  スペースで始める"
+        tail = "c でコース  x で天気  q でやめる"
     return (f" {clock_text(world.total())} {world.section():<6} 輪 {world.next:2d}/{GATES} 外し {world.misses:2d} 連続 {world.combo:2d} "
             f"速さ {world.speed:3.0f} 高度 {world.altitude():3.0f} {note:<24} " + tail)
 
 
-def run(course: str = "峡谷", seed: int | None = None) -> None:
+def run(course: str = "峡谷", seed: int | None = None, weather: str = "晴れ") -> None:
     import termios
     import tty
 
     load_course(course, seed if seed is not None else int(time.time()) % 10000)
+    set_weather(weather)
     world = World(seed=int(time.time()))
     best = load_best()
     improved = False
@@ -1593,6 +1655,9 @@ def run(course: str = "峡谷", seed: int | None = None) -> None:
                     world = World(seed=int(time.time()))
                     world.started = True
                     improved = False
+                elif key == "weather" and not world.started:     # 始める前なら天気を切り替える
+                    order = list(WEATHER_ORDER)
+                    set_weather(order[(order.index(WEATHER_NAME) + 1) % len(order)])
                 elif key == "course" and not world.started:      # 始める前ならコースを切り替える
                     order = list(COURSE_ORDER)
                     nxt = order[(order.index(world.course) + 1) % len(order)]
@@ -1934,6 +1999,28 @@ def check() -> None:
     assert len(loop_) == RATE and abs(int.from_bytes(loop_[:2], "little", signed=True)) < 400
     assert engine_rate(55, 0, False) < engine_rate(55, 1, False) < engine_rate(80, 1, False) < engine_rate(80, 1, True)
     print(f"  短いタイムだけ更新。音は {len(SOUNDS)} つ全部別。エンジンの輪は 0.5 秒で切れ目なし、スロットル・速さ・ブーストで高く")
+    print("● 天気")
+    world = World(seed=1)
+    world.started = True
+    world.clock = 0.0
+    tops = {}
+    for name in WEATHER_ORDER:
+        set_weather(name)
+        world.drops = []
+        for _ in range(5):
+            world.update(STEP)
+        assert len(world.drops) == (LOOK["rain"] or LOOK["snow"]), name
+        board = Screen()
+        draw(board, world)
+        tops[name] = board.pixel(CX, 2)
+    assert len(set(tops.values())) == len(WEATHER_ORDER), tops
+    assert sum(tops["雨"]) < sum(tops["晴れ"]) and tops["夕方"][0] < tops["晴れ"][2]
+    set_weather("霧")
+    assert fog(GRASS, 300)[0] > fog(GRASS, 300)[1] * 0 and fog(GRASS, 300) != fog(GRASS, 100), "霧は近くから溶ける"
+    near_fog, far_fog = LOOK["fog"]
+    set_weather("晴れ")
+    assert near_fog < LOOK["fog"][0]
+    print(f"  {'・'.join(WEATHER_ORDER)}。空の色が変わり、雨は 140 粒、雪は 110 粒、霧は {near_fog:.0f} m から溶ける")
     print("● コース")
     for name in ("海岸", "高原"):
         load_course(name)
@@ -2021,7 +2108,8 @@ def main() -> None:
     else:
         course = sys.argv[sys.argv.index("--course") + 1] if "--course" in sys.argv else "峡谷"
         seed = int(sys.argv[sys.argv.index("--seed") + 1]) if "--seed" in sys.argv else None
-        run(course, seed)
+        weather = sys.argv[sys.argv.index("--weather") + 1] if "--weather" in sys.argv else "晴れ"
+        run(course, seed, weather)
 
 
 if __name__ == "__main__":

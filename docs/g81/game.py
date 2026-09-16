@@ -260,6 +260,9 @@ PLUMB = (255, 255, 200)                             # 自機から真下へ落�
 SPARK = (255, 220, 120)                             # くぐった輪が散る光
 
 
+RAIN = (150, 165, 190)
+
+
 GAUGE = (120, 200, 140)
 
 
@@ -525,6 +528,30 @@ def catmull(p0: V, p1: V, p2: V, p3: V, t: float) -> V:
     return (a + b + c + d).scale(0.5)
 
 
+WEATHERS = {
+    "晴れ": dict(sky=((78, 130, 210), (176, 204, 232)), haze=(200, 214, 232), fog=(450.0, 1300.0), light=1.0, sun=True, rain=0, snow=0, snow_ground=False),
+    "雨":   dict(sky=((90, 100, 118), (150, 158, 172)), haze=(150, 158, 172), fog=(250.0, 900.0), light=0.72, sun=False, rain=140, snow=0, snow_ground=False),
+    "霧":   dict(sky=((170, 178, 190), (205, 210, 218)), haze=(205, 210, 218), fog=(80.0, 420.0), light=0.85, sun=False, rain=0, snow=0, snow_ground=False),
+    "夕方": dict(sky=((60, 62, 130), (240, 150, 96)), haze=(230, 160, 120), fog=(400.0, 1200.0), light=0.8, sun=True, rain=0, snow=0, snow_ground=False),
+    "雪":   dict(sky=((168, 176, 190), (216, 220, 228)), haze=(216, 220, 228), fog=(200.0, 700.0), light=0.92, sun=False, rain=0, snow=110, snow_ground=True),
+}
+
+
+WEATHER_ORDER = ("晴れ", "雨", "霧", "夕方", "雪")
+
+
+WEATHER_NAME = "晴れ"
+
+
+LOOK = WEATHERS["晴れ"]                              # いまの天気の見た目。set_weather() が書き換える
+
+
+def set_weather(name: str) -> None:
+    global WEATHER_NAME, LOOK
+    WEATHER_NAME = name
+    LOOK = WEATHERS[name]
+
+
 SECTION_NAMES = {"canyon": "谷", "narrow": "狭い峡谷", "bridges": "三連橋", "snake": "S 字", "tunnel": "トンネル", "climb": "滝の上昇"}
 
 
@@ -747,6 +774,8 @@ def land_color(height: float, steep: float, floor: float) -> tuple[int, int, int
     """色。谷底は草と川、壁は岩（急なところは暗い岩）、上のほうは森、峰は雪。"""
     if height < floor + 3:
         return WATER if height < floor + 1.0 else SAND
+    if LOOK["snow_ground"] and steep < 0.5:
+        return SNOW
     if steep > 0.6:
         return ROCK_DARK
     if steep > 0.35:
@@ -860,6 +889,8 @@ def make_falls() -> list[Prop]:
     lo = span[0]
     for s_at in (lo + 150, lo + 520):
         k = int(s_at / PATH_STEP)
+        if k >= len(PATH) - 2:
+            continue
         p = PATH[k]
         d = path_dir(k)
         side = V(d.z, 0.0, -d.x)
@@ -925,9 +956,12 @@ def load_course(name: str, seed: int = 0) -> None:
     PATH_LEN = (len(PATH) - 1) * PATH_STEP
     SECTIONS, at = [], 0.0                          # 区間の並びを道のりに直す。最後の区間は道すじの終わりまで
     for k, (kind, length) in enumerate(spec["plan"]):
-        end = PATH_LEN + 1 if k == len(spec["plan"]) - 1 else at + length
+        last = k == len(spec["plan"]) - 1 or at + length > PATH_LEN - 400   # 道すじが足りなければそこで打ち切る
+        end = PATH_LEN + 1 if last else at + length
         SECTIONS.append((SECTION_NAMES[kind], kind, at, end))
         at = end
+        if last:
+            break
     HEIGHTS = carve()
     TUNNELS = tunnel_rings()
     GATES_ALL = make_gates()
@@ -992,6 +1026,7 @@ class World:
     pitch_in: float = 0.0
     turning: float = 0.0                            # いま曲がっている量（-1〜+1）。roll_in に 0.15 秒で追いつく
     sparks: list[list] = field(default_factory=list)   # くぐった輪の光の粒 [位置, 速さ, 残り秒]
+    drops: list[list[float]] = field(default_factory=list)   # 雨や雪の粒 [x, y, 速さ]（画面の割合 0〜1。g80 と同じ）
     spray: list[list] = field(default_factory=list)    # 低空の水しぶき [位置, 速さ, 残り秒]
     hurt: float = 0.0
     bumps: int = 0
@@ -1149,6 +1184,7 @@ class World:
         if self.collide():
             self.tell("ぶつかった！", 1.0)
             happened = "bump"
+        self.fall(dt)
         for bits in (self.sparks, self.spray):      # 粒を飛ばす
             for bit in bits:
                 bit[0] = bit[0] + bit[1].scale(dt)
@@ -1210,6 +1246,23 @@ class World:
         if self.next < GATES:
             self.gates[self.next].state = "next"
 
+    def fall(self, dt: float) -> None:
+        """雨と雪の粒（画面の割合で持つ 2D の粒）。数は天気で決まる。"""
+        want = LOOK["rain"] or LOOK["snow"]
+        luck = random.Random(int(self.time * 997) % 100003)
+        while len(self.drops) < want:
+            self.drops.append([luck.random(), luck.random(), luck.uniform(0.7, 1.3)])
+        del self.drops[want:]
+        speed = 1.8 if LOOK["rain"] else 0.14
+        for drop in self.drops:
+            drop[1] += speed * drop[2] * dt
+            if LOOK["snow"]:
+                drop[0] += 0.03 * math.sin(self.time * 2 + drop[2] * 9) * dt
+            if drop[1] > 1.0:
+                drop[1] -= 1.0
+                drop[0] = luck.random()
+            drop[0] %= 1.0
+
     def follow(self, dt: float) -> None:
         """カメラは自機の後ろ・少し上。位置はなめらかに追い、向きは自機を見て、傾きは自機の半分だけ付き合う。"""
         want = self.pos - V(self.frame.forward.x, 0.0, self.frame.forward.z).unit().scale(CAM_BACK) + V(0, CAM_UP, 0)
@@ -1255,9 +1308,10 @@ DIM = [1.0]                                         # いまの明るさ（ト�
 
 
 def fog(color: tuple[int, int, int], z: float) -> tuple[int, int, int]:
-    amount = max(0.0, min(0.92, (z - FOG_FROM) / (FAR - FOG_FROM)))
-    k = DIM[0]
-    return tuple(int((c + (b - c) * amount) * k) for c, b in zip(color, HAZE))
+    near_, far_ = LOOK["fog"]
+    amount = max(0.0, min(0.92, (z - near_) / (far_ - near_)))
+    k = DIM[0] * LOOK["light"]
+    return tuple(int((c + (b - c) * amount) * k) for c, b in zip(color, LOOK["haze"]))
 
 
 def shade(base: tuple[int, int, int], normal: V, z: float) -> tuple[int, int, int]:
@@ -1357,7 +1411,7 @@ def draw_sky(screen: Screen, cam: Camera) -> None:
         d = (flat + side.scale(k * 0.9)).unit()
         q = V(d.dot(cam.frame.right), d.dot(cam.frame.up), d.dot(cam.frame.forward))
         if q.z < 0.05:
-            screen.clear(SKY_TOP if f.y > 0 else FOREST)
+            screen.clear(LOOK["sky"][0] if f.y > 0 else FOREST)
             return
         ends.append(project(q, scale))
     (x1, y1), (x2, y2) = ends
@@ -1371,16 +1425,18 @@ def draw_sky(screen: Screen, cam: Camera) -> None:
     big = 4000 * scale
     ax, ay = x1 - dx * 20, y1 - dy * 20
     bx, by = x2 + dx * 20, y2 + dy * 20
-    screen.clear(HAZE)
-    screen.fill([(ax, ay), (bx, by), (bx + nx * big, by + ny * big), (ax + nx * big, ay + ny * big)], SKY_TOP)
-    for depth, color in ((14 * scale, SKY), (5 * scale, HAZE)):
+    sky_top, sky_low = LOOK["sky"]
+    screen.clear(LOOK["haze"])
+    screen.fill([(ax, ay), (bx, by), (bx + nx * big, by + ny * big), (ax + nx * big, ay + ny * big)], sky_top)
+    for depth, color in ((14 * scale, sky_low), (5 * scale, LOOK["haze"])):
         screen.fill([(ax, ay), (bx, by), (bx + nx * depth, by + ny * depth), (ax + nx * depth, ay + ny * depth)], color)
     sun = V(*LIGHT_DIR).unit()
     q = V(sun.dot(cam.frame.right), sun.dot(cam.frame.up), sun.dot(cam.frame.forward))
-    if q.z > 0.2:
+    if LOOK["sun"] and q.z > 0.2:
         sx, sy = project(q, scale)
         r = 5.0 * scale
-        screen.fill([(sx + r * math.cos(a), sy + r * math.sin(a)) for a in (i * math.tau / 12 for i in range(12))], SUN)
+        screen.fill([(sx + r * math.cos(a), sy + r * math.sin(a)) for a in (i * math.tau / 12 for i in range(12))],
+                    SUN if WEATHER_NAME != "夕方" else (255, 170, 80))
 
 
 CLOUDS = [(V(300 + 600 * i, 520 + 60 * math.sin(i * 2.3), 300 + 500 * ((i * 7) % 5)), 80 + 40 * math.sin(i * 1.7)) for i in range(9)]
@@ -1620,6 +1676,15 @@ def draw(screen: Screen, world: World) -> None:
     draw_plane(screen, world, cam)
     if world.finished_at is None:
         draw_marker(screen, world, cam)
+    if LOOK["rain"]:                                # 雨：斜めの短い線。雪：小さな丸
+        for x, y, v in world.drops:
+            px, py = x * screen.width, y * screen.height
+            screen.line((px, py), (px + 1.2 * scale, py + (2.5 + 1.5 * v) * scale), RAIN)
+    elif LOOK["snow"]:
+        for x, y, v in world.drops:
+            px, py = x * screen.width, y * screen.height
+            r = max(1.0, 0.45 * scale * v)
+            screen.fill([(px - r, py), (px, py - r), (px + r, py), (px, py + r)], FOAM)
     draw_hud(screen, world)
 
 
@@ -1664,6 +1729,7 @@ message = document.querySelector("#message")
 again_button = document.querySelector("#again")
 go_button = document.querySelector("#go")
 course_buttons = document.querySelectorAll(".courses button")
+weather_buttons = document.querySelectorAll(".weathers button")
 course_label = document.querySelector("#course")
 SAVED = "g81-best"                                  # localStorage の鍵。CLI 版の records.json にあたる
 sound_on = document.querySelector("#engine")
@@ -1743,7 +1809,10 @@ def refresh() -> None:
     alt_label.textContent = f"{world.altitude():.0f}"
     heading_label.textContent = f"{int((math.degrees(world.frame.heading()) + 360) % 360):03d}"
     best_label.textContent = clock_text(best.of(world.course)) if best.of(world.course) else "--:--.--"
-    course_label.textContent = world.course + (f"（種 {COURSE_SEED}）" if world.course == "ランダム" else "")
+    course_label.textContent = world.course + (f"（種 {COURSE_SEED}）" if world.course == "ランダム" else "") + "・" + WEATHER_NAME
+    for button in weather_buttons:
+        button.classList.toggle("go", button.getAttribute("data-weather") == WEATHER_NAME)
+        button.disabled = world.started
     for button in course_buttons:
         button.classList.toggle("go", button.getAttribute("data-course") == world.course)
         button.disabled = world.started
@@ -1852,8 +1921,9 @@ def pad_leave(event):
 @when("click", "#again")
 def again(event):
     global world, improved
-    if world.course == "ランダム":                     # ランダムは毎回違う地形
+    if world.course == "ランダム":                     # ランダムは毎回違う地形と天気
         load_course("ランダム", int(window.performance.now()) % 10000)
+        set_weather(random.Random(int(window.performance.now())).choice(WEATHER_ORDER))
     world = World(seed=int(window.performance.now()))
     world.started = True
     improved = False
@@ -1869,8 +1939,17 @@ def choose_course(event):
     name = event.target.getAttribute("data-course")
     message.textContent = f"{name} を作っています…"
     load_course(name, int(window.performance.now()) % 10000)   # 地図の作り直し（1〜2 秒）
+    if name == "ランダム":
+        set_weather(random.Random(int(window.performance.now())).choice(WEATHER_ORDER))
     world = World(seed=int(window.performance.now()))
     refresh()
+
+
+@when("click", ".weathers button")
+def choose_weather(event):
+    if not world.started:
+        set_weather(event.target.getAttribute("data-weather"))
+        refresh()
 
 
 document.querySelector("#loading").hidden = True
