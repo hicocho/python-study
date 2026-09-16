@@ -65,7 +65,7 @@ LIVES = 3
 SPEED_BASE = 42.0                                   # 玉の速さ（1 秒に進むドット）
 
 
-SPEED_STAGE = 3.0                                   # 面が進むごとに足す
+SPEED_STAGE = 2.0                                   # 面が進むごとに足す
 
 
 SPEED_HIT = 0.6                                     # バーで打ち返すごとに足す（1 つの玉の間）
@@ -164,17 +164,69 @@ KINDS = {
     "X": dict(name="爆発", hits=1, points=30, color=(255, 110, 40)),
     ">": dict(name="動く", hits=1, points=30, color=(100, 220, 220)),
     "<": dict(name="動く", hits=1, points=30, color=(100, 220, 220)),
+    "W": dict(name="動く壁", hits=0, points=0, color=(120, 130, 160)),   # 大きく揺れる壊れない壁
 }
 
 
+WALL_SWAY = 36.0                                    # 動く壁が左右にずれる幅
+
+
+WALL_PERIOD = 4.0
+
+
+RAINBOW = ((226, 72, 66), (240, 205, 60), (90, 190, 90))   # 七色：残り 3・2・1 の色
+
+
+RAINBOW_POINTS = 30
+
+
+DESCEND_SPEED = 0.9                                 # 降りてくる面：1 秒に下がるドット
+
+
+DESCEND_LIMIT = PADDLE_Y - 12                       # ここまで来たら玉を 1 つ失い押し戻される
+
+
+DARK_R = 26.0                                       # 暗闇：玉からこの距離だけ見える
+
+
+BOSS_HP = 24
+
+
+BOSS_W = 60.0                                       # 体力満タンの幅（縮む）
+
+
+BOSS_W_MIN = 24.0
+
+
+BOSS_H = 12.0
+
+
+BOSS_Y = 8.0
+
+
+BOSS_SWAY = 40.0
+
+
+BOSS_PERIOD = 5.0
+
+
+BOSS_FIRE = (2.0, 1.0)                              # 弾の間隔（満タン → 瀕死）
+
+
+BULLET_SPEED = 30.0
+
+
+BULLET_R = 1.2
+
+
 STAGES = [
-    ("はじまり", """
+    dict(name="はじまり", map="""
 rrrrrrrrrrrr
 oooooooooooo
 yyyyyyyyyyyy
 gggggggggggg
 """),
-    ("ピラミッド", """
+    dict(name="ピラミッド", map="""
 .....bb.....
 ....bbbb....
 ...gggggg...
@@ -182,21 +234,21 @@ gggggggggggg
 .oooooooooo.
 rrrrrrrrrrrr
 """),
-    ("硬い壁", """
+    dict(name="硬い壁", map="""
 pppppppppppp
 bbbbbbbbbbbb
 HHHHHHHHHHHH
 gggggggggggg
 yyyyyyyyyyyy
 """),
-    ("爆弾畑", """
+    dict(name="爆弾畑", map="""
 rrrrXrrXrrrr
 oooooooooooo
 yXyyyyyyyXyy
 gggggggggggg
 bbbbXbbXbbbb
 """),
-    ("鉄の柱", """
+    dict(name="鉄の柱", map="""
 S..S..S..S..
 S.rrS.rrS.rr
 S.ooS.ooS.oo
@@ -204,7 +256,7 @@ S.yyS.yyS.yy
 ............
 gggggggggggg
 """),
-    ("動く列", """
+    dict(name="動く列", map="""
 >>>>>>>>>>>>
 ............
 rrrrrrrrrrrr
@@ -212,7 +264,13 @@ HHHHHHHHHHHH
 ............
 <<<<<<<<<<<<
 """),
-    ("城", """
+    dict(name="降りてくる", gimmick="descend", map="""
+pppppppppppp
+bbbbbbbbbbbb
+gXggggggggXg
+yyyyyyyyyyyy
+"""),
+    dict(name="城", map="""
 .rr.rr..rr..
 .HHHHHHHHHH.
 .H..X..X..H.
@@ -220,7 +278,32 @@ HHHHHHHHHHHH
 .H.pppppp.H.
 .HHHHHHHHHH.
 """),
-    ("最後の砦", """
+    dict(name="暗闇", gimmick="dark", map="""
+bbbbbbbbbbbb
+b.pp.pp.pp.b
+b.pp.pp.pp.b
+bHHHHHHHHHHb
+....X..X....
+"""),
+    dict(name="七色", gimmick="rainbow", map="""
+....rrrr....
+..rrrrrrrr..
+rrrrrrrrrrrr
+..rrrrrrrr..
+....rrrr....
+"""),
+    dict(name="動く壁", map="""
+oooooooooooo
+yyyyyyyyyyyy
+gXgggggggXgg
+............
+............
+............
+............
+............
+.....WWW....
+"""),
+    dict(name="最後の砦", map="""
 X>>>>>>>>>>X
 SHHHHHHHHHHS
 S.rroorryy.S
@@ -228,6 +311,14 @@ S.rXoorXyy.S
 S.ggbbppgg.S
 SHHHHHHHHHHS
 <<<<<<<<<<<<
+"""),
+    dict(name="ボス", gimmick="boss", map="""
+............
+............
+............
+............
+............
+..HH....HH..
 """),
 ]
 
@@ -411,13 +502,14 @@ class Brick:
     row: int
     kind: str
     left: int = 0                                   # 残りの当たり回数（0 の鉄は壊れない）
+    dy: float = 0.0                                 # 降りてくる面で下がったぶん
 
     def __post_init__(self):
         self.left = KINDS[self.kind]["hits"]
 
     @property
     def breakable(self) -> bool:
-        return KINDS[self.kind]["hits"] > 0
+        return self.left > 0
 
     def rect(self, now: float) -> tuple[float, float, float, float]:
         """いまの四角 (x, y, w, h)。動くブロックは左右に揺れる。"""
@@ -426,7 +518,9 @@ class Brick:
             x += SWAY * math.sin(math.tau * now / SWAY_PERIOD)
         elif self.kind == "<":
             x -= SWAY * math.sin(math.tau * now / SWAY_PERIOD)
-        return x, BRICK_TOP + self.row * BRICK_H, BRICK_W, BRICK_H
+        elif self.kind == "W":
+            x += WALL_SWAY * math.sin(math.tau * now / WALL_PERIOD)
+        return x, BRICK_TOP + self.row * BRICK_H + self.dy, BRICK_W, BRICK_H
 
 
 def parse_stage(text: str) -> list[Brick]:
@@ -467,6 +561,38 @@ class Capsule:
     x: float
     y: float
     kind: str
+
+
+@dataclass
+class Bullet:
+    x: float
+    y: float
+    vx: float
+    vy: float
+
+
+@dataclass
+class Boss:
+    """最後の面の大きな的。体力で幅が縮む。左右に動き、弾を落とす。"""
+    hp: int = BOSS_HP
+    hit_at: float = -9.0                            # 光る用
+    fired_at: float = 0.0
+
+    @property
+    def alive(self) -> bool:
+        return self.hp > 0
+
+    def width(self) -> float:
+        return BOSS_W_MIN + (BOSS_W - BOSS_W_MIN) * self.hp / BOSS_HP
+
+    def rect(self, now: float) -> tuple[float, float, float, float]:
+        w = self.width()
+        cx = WIDTH / 2 + BOSS_SWAY * math.sin(math.tau * now / BOSS_PERIOD)
+        return cx - w / 2, BOSS_Y, w, BOSS_H
+
+    def interval(self) -> float:
+        slow, fast = BOSS_FIRE
+        return fast + (slow - fast) * self.hp / BOSS_HP
 
 
 @dataclass
@@ -521,6 +647,8 @@ class World:
     shake_size: float = 0.0
     powers: dict[str, float] = field(default_factory=dict)   # 効いているパワーアップ → 切れる時刻
     barrier: bool = False                           # 1 回だけ跳ね返す線
+    boss: Boss | None = None
+    bullets: list[Bullet] = field(default_factory=list)
     laser_at: float = -9.0                          # 最後にレーザーを撃った時刻
     laser_x: float = 0.0                            # 光線の x（見せる用）
     laser_top: float = 0.0                          # 光線の上端
@@ -532,7 +660,13 @@ class World:
     # ── 面 ──
     def load_stage(self, index: int) -> None:
         self.stage = index
-        self.bricks = parse_stage(STAGES[index][1])
+        self.bricks = parse_stage(STAGES[index]["map"])
+        if self.gimmick == "rainbow":               # 七色：ふつうのブロックが 3 回当てる（色が変わる）
+            for brick in self.bricks:
+                if brick.kind in "roygbp":
+                    brick.left = 3
+        self.boss = Boss() if self.gimmick == "boss" else None
+        self.bullets = []
         self.capsules = []
         self.powers = {}
         self.barrier = False
@@ -555,7 +689,11 @@ class World:
 
     @property
     def stage_name(self) -> str:
-        return STAGES[self.stage][0]
+        return STAGES[self.stage]["name"]
+
+    @property
+    def gimmick(self) -> str | None:
+        return STAGES[self.stage].get("gimmick")
 
     @property
     def multiplier(self) -> int:
@@ -578,7 +716,7 @@ class World:
         return speed * SLOW_SCALE if self.has("slow") else speed
 
     def remaining(self) -> int:
-        return sum(1 for b in self.bricks if b.breakable)
+        return sum(1 for b in self.bricks if b.breakable) + (1 if self.boss and self.boss.alive else 0)
 
     def tell(self, text: str, seconds: float = 1.5) -> None:
         self.note, self.note_until = text, self.time + seconds
@@ -617,9 +755,14 @@ class World:
         self.laser_top = 0.0
         below = [b for b in self.bricks if b.rect(self.time)[0] <= self.paddle_x < b.rect(self.time)[0] + BRICK_W]
         if below:
-            target = max(below, key=lambda b: b.row)
+            target = max(below, key=lambda b: b.rect(self.time)[1])
             self.laser_top = target.rect(self.time)[1] + BRICK_H
             self.damage(target)
+        elif self.boss and self.boss.alive:
+            bx, by, bw, bh = self.boss.rect(self.time)
+            if bx <= self.paddle_x <= bx + bw:
+                self.laser_top = by + bh
+                self.hurt_boss(1)
         return "laser"
 
     def aim(self, x: float) -> None:
@@ -647,6 +790,7 @@ class World:
             return None
         happened = set()
         happened |= self.fall_capsules(dt)
+        happened |= self.run_gimmick(dt)
         hit_now: set[int] = set()
         for ball in list(self.balls):
             if ball.stuck:
@@ -670,6 +814,63 @@ class World:
             if name in happened:
                 return name
         return None
+
+    def run_gimmick(self, dt: float) -> set[str]:
+        """面の仕掛けを進める。降りてくる面はブロックが下がる、ボスは動いて弾を落とす。"""
+        happened = set()
+        if self.gimmick == "descend" and self.bricks:
+            for brick in self.bricks:
+                brick.dy += DESCEND_SPEED * dt
+            lowest = max(b.rect(self.time)[1] + BRICK_H for b in self.bricks)
+            if lowest >= DESCEND_LIMIT:             # 押し戻されて玉を 1 つ失う
+                for brick in self.bricks:
+                    brick.dy = 0.0
+                self.balls = []
+                self.tell("ブロックに押しつぶされた！", 1.5)
+        if self.boss and self.boss.alive:
+            boss = self.boss
+            if self.time - boss.fired_at >= boss.interval():
+                boss.fired_at = self.time
+                bx, by, bw, bh = boss.rect(self.time)
+                cx = bx + bw / 2
+                aim = max(-0.4, min(0.4, (self.paddle_x - cx) / 100.0))   # 少しだけバーの方へ
+                self.bullets.append(Bullet(cx, by + bh, BULLET_SPEED * aim, BULLET_SPEED))
+        for bullet in list(self.bullets):
+            bullet.x += bullet.vx * dt
+            bullet.y += bullet.vy * dt
+            if bullet.y + BULLET_R >= PADDLE_Y and bullet.y - BULLET_R <= PADDLE_Y + PADDLE_H \
+                    and abs(bullet.x - self.paddle_x) <= self.paddle_w / 2 + BULLET_R:
+                self.bullets.remove(bullet)
+                self.shake(2.0, 0.25)
+                self.burst(bullet.x, PADDLE_Y, (255, 90, 60), 10)
+                flying = [b for b in self.balls if not b.stuck]
+                if len(self.balls) > 1:             # 玉を 1 つ失う（最後の 1 つなら落としたのと同じ）
+                    self.balls.remove(max(flying, key=lambda b: b.y) if flying else self.balls[-1])
+                    self.tell(f"弾が当たった！ 玉を 1 つ失う（あと {len(self.balls)} 個）", 1.5)
+                else:
+                    self.balls = []
+                    self.tell("弾が当たった！", 1.5)
+                happened.add("bad")
+            elif bullet.y > HEIGHT + 3:
+                self.bullets.remove(bullet)
+        return happened
+
+    def hurt_boss(self, amount: int) -> str:
+        boss = self.boss
+        boss.hp = max(0, boss.hp - amount)
+        boss.hit_at = self.time
+        bx, by, bw, bh = boss.rect(self.time)
+        self.burst(bx + bw / 2, by + bh / 2, (255, 120, 120), 6)
+        self.shake(1.0, 0.15)
+        self.score += 20 * self.multiplier
+        if not boss.alive:
+            self.burst(bx + bw / 2, by + bh / 2, (255, 220, 120), 40)
+            self.shake(3.0, 0.5)
+            self.score += 500
+            self.tell("ボスを倒した！ +500", 2.0)
+            return "boom"
+        self.tell(f"ボス 残り {boss.hp}", 0.8)
+        return "brick"
 
     def walk(self, ball: Ball, dt: float, hit_now: set[int]) -> set[str]:
         """玉を少し進める。x を動かして調べ、次に y を動かして調べる。"""
@@ -744,12 +945,24 @@ class World:
                 ball.vy = -ball.vy
             if id(brick) not in hit_now:
                 hit_now.add(id(brick))
+                could = brick.breakable
                 happened.add(self.damage(brick))
-                if self.has("fire") and brick.breakable:        # 火の玉：上下左右も壊す
+                if self.has("fire") and could:                  # 火の玉：上下左右も壊す
                     for other in list(self.bricks):
                         if other.breakable and abs(other.col - brick.col) + abs(other.row - brick.row) == 1:
                             self.destroy(other)
             break                                   # 1 歩で当たるのは 1 つ
+        if self.boss and self.boss.alive and id(self.boss) not in hit_now:   # ボスにも同じ当たり方
+            bx, by, bw, bh = self.boss.rect(self.time)
+            if ball.x + BALL_R > bx and ball.x - BALL_R < bx + bw and ball.y + BALL_R > by and ball.y - BALL_R < by + bh:
+                if axis == "x":
+                    ball.x = bx - BALL_R if ball.vx > 0 else bx + bw + BALL_R
+                    ball.vx = -ball.vx
+                else:
+                    ball.y = by - BALL_R if ball.vy > 0 else by + bh + BALL_R
+                    ball.vy = -ball.vy
+                hit_now.add(id(self.boss))
+                happened.add(self.hurt_boss(2 if self.has("fire") else 1))
         if abs(ball.vy) < self.speed * MIN_RISE:    # 横に走りすぎない
             sign = 1 if ball.vy >= 0 else -1
             ball.vy = sign * self.speed * MIN_RISE
@@ -773,7 +986,8 @@ class World:
         self.streak += 1
         self.best_streak = max(self.best_streak, self.streak)
         self.broken += 1
-        gained = KINDS[brick.kind]["points"] * self.multiplier
+        points = RAINBOW_POINTS if self.gimmick == "rainbow" and brick.kind in "roygbp" else KINDS[brick.kind]["points"]
+        gained = points * self.multiplier
         self.score += gained
         bx, by, bw, bh = brick.rect(self.time)
         self.burst(bx + bw / 2, by + bh / 2, KINDS[brick.kind]["color"], 6)
@@ -829,7 +1043,7 @@ class World:
                 self.balls.append(Ball(self.paddle_x, PADDLE_Y - BALL_R, stuck=True))
             return "power"
         if kind == "life":
-            self.lives = min(MAX_LIVES, self.lives + 1)
+            self.lives = min(max(MAX_LIVES, self.lives), self.lives + 1)
             return "life"
         if kind == "barrier":
             self.barrier = True
@@ -859,6 +1073,7 @@ class World:
         self.lives -= 1
         self.powers = {}
         self.barrier = False
+        self.bullets = []
         self.shake(2.0, 0.3)
         if self.lives <= 0:
             self.over = True
@@ -891,13 +1106,18 @@ def draw(screen: Screen, world: World) -> None:
         t = y / screen.height
         screen.band(y, y + 1, tuple(int(a + (b - a) * t) for a, b in zip(BACK_TOP, BACK_BOTTOM)))
     blink = world.remaining() <= 3 and int(world.time * 6) % 2 == 0
+    dark = world.gimmick == "dark"
     for brick in world.bricks:
         bx, by, bw, bh = brick.rect(world.time)
         color = KINDS[brick.kind]["color"]
         if brick.kind == "H" and brick.left == 1:
             color = shade(color, 0.7)
+        elif world.gimmick == "rainbow" and brick.kind in "roygbp":
+            color = RAINBOW[max(0, 3 - brick.left)]
         if blink and brick.breakable:
             color = shade(color, 1.4)
+        if dark and not any(math.hypot(b.x - (bx + bw / 2), b.y - (by + bh / 2)) < DARK_R for b in world.balls):
+            color = shade(color, 0.18)              # 暗闇：玉から遠いブロックは影だけ
         x0, y0 = int((bx + ox) * scale), int((by + oy) * scale)
         w, h = bw * scale, bh * scale
         screen.box(x0, y0, w, h, shade(color, 0.55))              # 縁
@@ -922,6 +1142,21 @@ def draw(screen: Screen, world: World) -> None:
         draw_icon(screen, cap.kind, cx, cy, scale)
     for s in world.sparks:
         screen.box(int((s.x + ox) * scale), int((s.y + oy) * scale), scale, scale, s.color)
+    if world.boss and world.boss.alive:                            # ボス
+        boss = world.boss
+        bx, by, bw, bh = boss.rect(world.time)
+        body = (255, 240, 240) if world.time - boss.hit_at < 0.1 else (170, 60, 90)
+        x0, y0 = int((bx + ox) * scale), int((by + oy) * scale)
+        screen.box(x0, y0, int(bw * scale), int(bh * scale), shade(body, 0.55))
+        screen.box(x0 + scale, y0 + scale, int(bw * scale) - 2 * scale, int(bh * scale) - 2 * scale, body)
+        for ex in (bw * 0.3, bw * 0.7):                            # 目と口
+            screen.ellipse(x0 + ex * scale, y0 + 4 * scale, 2 * scale, 1.6 * scale, (250, 250, 250))
+            screen.ellipse(x0 + (ex + (1 if world.paddle_x > bx + bw / 2 else -1) * 0.6) * scale, y0 + 4.2 * scale, scale, scale, (20, 20, 30))
+        screen.box(x0 + int(bw * 0.3 * scale), y0 + 8 * scale, int(bw * 0.4 * scale), scale, (40, 20, 30))
+        screen.box(int(30 * scale), int(3 * scale), int(60 * scale), int(2 * scale), (60, 60, 70))   # 体力
+        screen.box(int(30 * scale), int(3 * scale), int(60 * boss.hp / BOSS_HP * scale), int(2 * scale), (230, 80, 100))
+    for bullet in world.bullets:                                   # 弾
+        screen.ellipse((bullet.x + ox) * scale, (bullet.y + oy) * scale, BULLET_R * scale, BULLET_R * 1.5 * scale, (255, 90, 60))
     if world.time - world.laser_at < LASER_SHOW:                   # 光線
         top = int((world.laser_top + oy) * scale)
         screen.box(int((world.laser_x - 0.5 + ox) * scale), top, scale, int((PADDLE_Y + oy) * scale) - top, LASER_BEAM)
@@ -1091,7 +1326,7 @@ def refresh() -> None:
                                + ("  ベスト更新！" if improved else ""))
     elif not world.started:
         message.textContent = ("「スタート」で始める。画面のどこでも指を左右に動かすとバーが追いかける（← → キーでも）。"
-                               "タップ（スペース）で玉を放す。玉は 3 つ、8 面")
+                               f"タップ（スペース）で玉を放す。玉は 3 つ、{len(STAGES)} 面（最後はボス）")
     elif world.ball.stuck:
         message.textContent = "タップ（スペース）で玉を放す" + ("（磁石：拾った場所の角度で飛ぶ）" if world.has("magnet") else "")
     elif world.has("laser"):
