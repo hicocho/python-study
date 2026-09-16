@@ -313,6 +313,30 @@ LASER_PAD = (255, 150, 180)
 BARRIER = (80, 220, 200)
 
 
+# 3 × 5 の数字（板に面の番号を出す。g59 と同じ作り）
+FONT = {
+    "0": ("###", "#.#", "#.#", "#.#", "###"), "1": (".#.", "##.", ".#.", ".#.", "###"),
+    "2": ("###", "..#", "###", "#..", "###"), "3": ("###", "..#", "###", "..#", "###"),
+    "4": ("#.#", "#.#", "###", "..#", "..#"), "5": ("###", "#..", "###", "..#", "###"),
+    "6": ("###", "#..", "###", "#.#", "###"), "7": ("###", "..#", "..#", "..#", "..#"),
+    "8": ("###", "#.#", "###", "#.#", "###"), "9": ("###", "#.#", "###", "..#", "###"),
+    "/": ("..#", "..#", ".#.", "#..", "#.."), " ": ("...", "...", "...", "...", "..."),
+}
+
+
+def draw_text(screen: "Screen", text: str, x: int, y: int, scale: int, color: tuple[int, int, int], size: int = 1) -> None:
+    """数字を描く。size はドット何個ぶんの太さ。"""
+    for i, ch in enumerate(text):
+        for row, line in enumerate(FONT.get(ch, FONT[" "])):
+            for col, dot in enumerate(line):
+                if dot == "#":
+                    screen.box((x + i * 4 * size + col * size) * scale, (y + row * size) * scale, size * scale, size * scale, color)
+
+
+def text_width(text: str, size: int = 1) -> int:
+    return (len(text) * 4 - 1) * size
+
+
 def shade(color: tuple[int, int, int], k: float) -> tuple[int, int, int]:
     return tuple(max(0, min(255, int(c * k))) for c in color)
 
@@ -491,10 +515,15 @@ class Best:
         self.stage = max(self.stage, world.stage + 1)
         return improved
 
+    def resume_at(self) -> int:
+        """つづきから始める面（0 から）。到達した面から始められる（stage は 1 から数えているので 1 引く）。"""
+        return max(0, min(len(STAGES) - 1, self.stage - 1))
+
 
 @dataclass
 class World:
     seed: int = 0
+    start: int = 0                                  # 始める面（0 から。つづきから／リトライ）
     stage: int = 0                                  # いまの面（0 から）
     bricks: list[Brick] = field(default_factory=list)
     balls: list[Ball] = field(default_factory=list)
@@ -529,7 +558,7 @@ class World:
 
     def __post_init__(self):
         self.luck = random.Random(self.seed)
-        self.load_stage(0)
+        self.load_stage(self.start)
 
     # ── 面 ──
     def load_stage(self, index: int) -> None:
@@ -1065,6 +1094,11 @@ def draw(screen: Screen, world: World) -> None:
         bx, by = (ball.x + ox) * scale, (ball.y + oy) * scale
         screen.ellipse(bx, by, BALL_R * scale, BALL_R * scale, color)
         screen.ellipse(bx - scale * 0.3, by - scale * 0.3, BALL_R * scale * 0.7, BALL_R * scale * 0.7, light)
+    label = f"{world.stage + 1}/{len(STAGES)}"                    # いまの面（上の真ん中）
+    if world.time < world.pause_until:                             # 面が変わる間は大きく
+        size = 3
+        draw_text(screen, f"{world.stage + 1}", (WIDTH - text_width(f"{world.stage + 1}", size)) // 2, 30, scale, SHINE, size)
+    draw_text(screen, label, (WIDTH - text_width(label)) // 2, 1, scale, (170, 180, 220))
     for i in range(world.lives - 1):                               # 残りの玉（左上）
         screen.ellipse((3 + i * 4) * scale, 2.5 * scale, 1.2 * scale, 1.2 * scale, LIFE)
     x = WIDTH - 3                                                  # 効いているパワーアップ（右上、残り時間の棒）
@@ -1136,6 +1170,10 @@ def read_keys(fd: int) -> list[str]:
                 keys.append("go")
             elif ch in ("q", "\x1b"):
                 keys.append("quit")
+            elif ch == "c":
+                keys.append("continue")
+            elif ch == "r":
+                keys.append("retry")
             i += 1
     return keys
 
@@ -1209,10 +1247,11 @@ def status(world: World, best: Best, improved: bool = False) -> str:
     """画面の下の 1 行。板と同じ 120 桁に収める。"""
     note = world.note if world.time < world.note_until else ""
     if not world.started:
-        note, tail = "スペースで始める", "← → でバー、スペースで放す、q でやめる"
+        note = "スペースで始める" + (f" c で面 {best.resume_at() + 1} から" if best.resume_at() > 0 else "")
+        tail = "← → でバー、スペースで放す、q でやめる"
     elif world.over:
         note = ("全部クリア！" if world.won else "ゲームオーバー") + (" ベスト更新！" if improved else "")
-        tail = "スペースでもう一度"
+        tail = "スペースで最初から" + ("" if world.won or world.stage == 0 else f" r で面 {world.stage + 1} から")
     else:
         if world.ball.stuck and not note:
             note = "スペースで放す"
@@ -1252,6 +1291,15 @@ def run() -> None:
                     world = World(seed=int(time.time()))
                     world.started = True
                     improved = False
+                elif key == "retry" and world.over and not world.won:
+                    world = World(seed=int(time.time()), start=world.stage)
+                    world.started = True
+                    world.tell(f"面 {world.stage + 1} からリトライ", 1.5)
+                    improved = False
+                elif key == "continue" and not world.started and best.resume_at() > 0:
+                    world = World(seed=int(time.time()), start=best.resume_at())
+                    world.started = True
+                    world.tell(f"面 {world.stage + 1} から", 1.5)
                 else:
                     speaker.say(obey(world, key))
             lag = min(lag + now - last, 0.25)
@@ -1720,9 +1768,17 @@ rrrrrrrrrrrr
     world = World(seed=1)
     for started, over in ((False, False), (True, False), (True, True)):
         world.started, world.over = started, over
-        world.tell("面 8：最後の砦", 9)
+        world.stage = 9
+        world.tell("面 10：七色", 9)
         assert columns(status(world, best, True)) == WIDTH, columns(status(world, best, True))
-    print(f"  ベストは点で更新、面は到達した最大。音は {len(SOUNDS)} つ全部別。状態行は {WIDTH} 桁ちょうど")
+    assert Best(0, 1).resume_at() == 0 and Best(0, 10).resume_at() == 9 and Best(0, 99).resume_at() == len(STAGES) - 1
+    world = World(seed=1, start=9)
+    assert world.stage == 9 and world.stage_name == "七色" and world.score == 0, "面 10 からリトライ"
+    board = Screen()
+    world.started = True
+    draw(board, world)
+    assert any(board.pixel(x, 3) == (170, 180, 220) for x in range(50, 70)), "板の上に面の番号"
+    print(f"  ベストは点で更新、面は到達した最大。つづきからは到達した面から。音は {len(SOUNDS)} つ全部別。状態行は {WIDTH} 桁ちょうど")
     print("\nぜんぶ通った。")
 
 

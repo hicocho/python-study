@@ -69,6 +69,7 @@
   .note-line { margin: .3rem 0 0; min-height: 1.4em; text-align: center; font-weight: 700; color: #b8860b; font-size: .95rem; }
   #message { min-height: 1.6em; margin: .4rem 0 0; font-size: .8125rem; color: var(--ink); text-align: center; }
   .pad { display: grid; gap: .4rem; margin-top: .6rem; grid-template-columns: 1fr; }
+  .pad button.go { grid-column: 1; }
   .pad button { padding: .8rem 0; font-size: 1.05rem; font-family: inherit; font-weight: 600;
     color: var(--ink); background: var(--bg); border: 1px solid var(--line);
     border-radius: .5rem; cursor: pointer; user-select: none; -webkit-user-select: none; }
@@ -114,7 +115,9 @@
     <p id="message"></p>
 
     <div class="pad">
-      <button type="button" id="go" class="go">▶ スタート</button>
+      <button type="button" id="go" class="go">▶ スタート（最初から）</button>
+      <button type="button" id="cont" hidden>つづきから</button>
+      <button type="button" id="retry" hidden>リトライ</button>
       <button type="button" id="again" hidden>もう一度</button>
       <button type="button" id="tilt">📱 傾きで操作（スマホ・タブレット）</button>
       <button type="button" id="tilt-stop" hidden>傾きをやめる</button>
@@ -132,6 +135,7 @@
         <li><b>仕掛けの面</b>：<b>降りてくる</b>（ブロックが少しずつ下がる。バーの近くまで来ると押し戻されて玉を 1 つ失う）、<b>暗闇</b>（玉の近くのブロックしか見えない）、<b>七色</b>（3 回当てると壊れる。赤 → 黄 → 緑、+30）、<b>動く壁</b>（大きく揺れる壊れない壁がバーの上を往復する）。</li>
         <li><b>ボス</b>（13 面目）：大きな的が左右に動きながら弾を落とす。玉を当てるたびに縮む（火の玉は 2 倍、レーザーも効く）。弾がバーに当たると玉を 1 つ失う（1 つしか無ければ落としたのと同じ）。倒すと +500 でクリア。</li>
         <li>打ち返すたびに少し速くなる。落とすと玉が 1 つ減って速さが戻る（パワーアップも切れる）。</li>
+        <li>ゲームオーバーになった面から<b>リトライ</b>できる（玉 3 つ、点は 0 から）。次に開いたときも「つづきから」で到達した面から始められる。板の上の数字がいまの面。</li>
       </ol>
       <div class="cues">
         <span><b>文字の地図</b>：1 面 = 文字の並び 1 枚、文字 → 種類は表</span>
@@ -157,6 +161,6 @@
   </footer>
 </main>
 
-<script type="py" src="./game.py?v=a115767a"></script>
+<script type="py" src="./game.py?v=febf2356"></script>
 </body>
 </html>

@@ -424,6 +424,29 @@ CRACK = (60, 60, 70)
 SHINE = (255, 255, 255)
 
 
+FONT = {
+    "0": ("###", "#.#", "#.#", "#.#", "###"), "1": (".#.", "##.", ".#.", ".#.", "###"),
+    "2": ("###", "..#", "###", "#..", "###"), "3": ("###", "..#", "###", "..#", "###"),
+    "4": ("#.#", "#.#", "###", "..#", "..#"), "5": ("###", "#..", "###", "..#", "###"),
+    "6": ("###", "#..", "###", "#.#", "###"), "7": ("###", "..#", "..#", "..#", "..#"),
+    "8": ("###", "#.#", "###", "#.#", "###"), "9": ("###", "#.#", "###", "..#", "###"),
+    "/": ("..#", "..#", ".#.", "#..", "#.."), " ": ("...", "...", "...", "...", "..."),
+}
+
+
+def draw_text(screen: "Screen", text: str, x: int, y: int, scale: int, color: tuple[int, int, int], size: int = 1) -> None:
+    """数字を描く。size はドット何個ぶんの太さ。"""
+    for i, ch in enumerate(text):
+        for row, line in enumerate(FONT.get(ch, FONT[" "])):
+            for col, dot in enumerate(line):
+                if dot == "#":
+                    screen.box((x + i * 4 * size + col * size) * scale, (y + row * size) * scale, size * scale, size * scale, color)
+
+
+def text_width(text: str, size: int = 1) -> int:
+    return (len(text) * 4 - 1) * size
+
+
 HOT = (255, 190, 60)                                # 連続 ×4 の玉
 
 
@@ -617,10 +640,15 @@ class Best:
         self.stage = max(self.stage, world.stage + 1)
         return improved
 
+    def resume_at(self) -> int:
+        """つづきから始める面（0 から）。到達した面から始められる（stage は 1 から数えているので 1 引く）。"""
+        return max(0, min(len(STAGES) - 1, self.stage - 1))
+
 
 @dataclass
 class World:
     seed: int = 0
+    start: int = 0                                  # 始める面（0 から。つづきから／リトライ）
     stage: int = 0                                  # いまの面（0 から）
     bricks: list[Brick] = field(default_factory=list)
     balls: list[Ball] = field(default_factory=list)
@@ -655,7 +683,7 @@ class World:
 
     def __post_init__(self):
         self.luck = random.Random(self.seed)
-        self.load_stage(0)
+        self.load_stage(self.start)
 
     # ── 面 ──
     def load_stage(self, index: int) -> None:
@@ -1189,6 +1217,11 @@ def draw(screen: Screen, world: World) -> None:
         bx, by = (ball.x + ox) * scale, (ball.y + oy) * scale
         screen.ellipse(bx, by, BALL_R * scale, BALL_R * scale, color)
         screen.ellipse(bx - scale * 0.3, by - scale * 0.3, BALL_R * scale * 0.7, BALL_R * scale * 0.7, light)
+    label = f"{world.stage + 1}/{len(STAGES)}"                    # いまの面（上の真ん中）
+    if world.time < world.pause_until:                             # 面が変わる間は大きく
+        size = 3
+        draw_text(screen, f"{world.stage + 1}", (WIDTH - text_width(f"{world.stage + 1}", size)) // 2, 30, scale, SHINE, size)
+    draw_text(screen, label, (WIDTH - text_width(label)) // 2, 1, scale, (170, 180, 220))
     for i in range(world.lives - 1):                               # 残りの玉（左上）
         screen.ellipse((3 + i * 4) * scale, 2.5 * scale, 1.2 * scale, 1.2 * scale, LIFE)
     x = WIDTH - 3                                                  # 効いているパワーアップ（右上、残り時間の棒）
@@ -1268,6 +1301,8 @@ fps_label = document.querySelector("#fps")
 note_label = document.querySelector("#note")
 message = document.querySelector("#message")
 again_button = document.querySelector("#again")
+retry_button = document.querySelector("#retry")
+cont_button = document.querySelector("#cont")
 go_button = document.querySelector("#go")
 SAVED = "g68-best"
 
@@ -1334,7 +1369,12 @@ def refresh() -> None:
     else:
         message.textContent = ""
     again_button.hidden = not world.over
+    again_button.textContent = "最初から" if world.over and not world.won and world.stage > 0 else "もう一度"
+    retry_button.hidden = not (world.over and not world.won and world.stage > 0)
+    retry_button.textContent = f"面 {world.stage + 1} からリトライ"
     go_button.hidden = world.started
+    cont_button.hidden = world.started or best.resume_at() == 0
+    cont_button.textContent = f"つづきから（面 {best.resume_at() + 1}）"
 
 
 async def loop():
@@ -1440,6 +1480,30 @@ def again(event):
     world = World(seed=int(window.performance.now()))
     world.started = True
     improved = False
+    refresh()
+
+
+@when("click", "#retry")
+def retry(event):
+    """負けた面からやり直す（玉 3 つ、点は 0 から）。"""
+    global world, improved
+    world = World(seed=int(window.performance.now()), start=world.stage)
+    world.started = True
+    world.tell(f"面 {world.stage + 1} からリトライ", 1.5)
+    improved = False
+    refresh()
+
+
+@when("click", "#cont")
+def cont(event):
+    """つづきから：ベストで到達した面から始める。"""
+    global world, improved
+    wake_sound()
+    world = World(seed=int(window.performance.now()), start=best.resume_at())
+    world.started = True
+    world.tell(f"面 {world.stage + 1} から", 1.5)
+    improved = False
+    cont_button.blur()
     refresh()
 
 
