@@ -49,7 +49,7 @@ GATE_R = 16.0                                       # 輪の半径
 GATE_GAP = 130.0                                    # 輪の間隔（m）
 GATE_FIRST = 200.0                                  # 最初の輪までの距離
 MISS_PENALTY = 3.0                                  # 輪を外したときに足す秒数
-BOOST_SPEED = 25.0                                  # 輪をくぐった直後の加速（m/s）
+BOOST_SPEED = 20.0                                  # 輪をくぐった直後の加速（m/s）
 BOOST_TIME = 1.0                                    # ブーストの長さ（秒）。連続なら +0.3 秒ずつ、2.5 秒まで
 LOW_ALT = 8.0                                       # これより低く飛ぶと「低空」
 LOW_BONUS = 0.5                                     # 低空 1 秒ごとに引く秒数
@@ -89,6 +89,11 @@ RING_MISS = (220, 70, 60)
 POLE = (120, 116, 110)
 PILLAR = (128, 112, 96)
 BRIDGE = (150, 60, 50)
+TUNNEL_WALL = (74, 70, 66)
+TUNNEL_FLOOR = (58, 56, 54)
+TUNNEL_LAMP = (255, 236, 170)
+TUNNEL_MOUTH = (40, 38, 36)
+FOAM = (226, 236, 244)
 BODY_COLOR = (230, 220, 80)
 WING_COLOR = (215, 60, 50)
 TAIL_COLOR = (215, 60, 50)
@@ -339,9 +344,18 @@ def catmull(p0: V, p1: V, p2: V, p3: V, t: float) -> V:
     return (a + b + c + d).scale(0.5)
 
 
-# 峡谷の道すじの制御点 (x, z)。地図（2560 m 四方）を大きく S 字に横切る
-KNOTS = [(200, 300), (500, 700), (400, 1200), (800, 1600), (1300, 1500), (1500, 1000),
-         (1900, 800), (2200, 1200), (2100, 1800), (1700, 2200), (1200, 2300)]
+# 峡谷の道すじの制御点 (x, z)。地図（2560 m 四方）を大きく S 字に横切る。真ん中あたりで急な S 字
+KNOTS = [(200, 300), (500, 700), (400, 1200), (800, 1600), (1300, 1500), (1450, 1150), (1600, 1350), (1750, 1000),
+         (1950, 800), (2200, 1200), (2100, 1800), (1700, 2200), (1200, 2300)]
+
+# 区間（道のり m で区切る）。name は表示、kind で谷の幅・障害物・輪の並びが変わる
+#   canyon: ふつうの谷     narrow: 狭い峡谷（幅半分）     bridges: 橋が 3 本連続     snake: 急な S 字（輪が大きく左右）
+#   tunnel: 山を貫くトンネル（暗い筒）     climb: 滝の脇を急上昇（谷底が上る）
+SECTIONS = [("谷", "canyon", 0, 900), ("狭い峡谷", "narrow", 900, 1500), ("三連橋", "bridges", 1500, 2100),
+            ("S 字", "snake", 2100, 2900), ("谷", "canyon", 2900, 3400), ("トンネル", "tunnel", 3400, 3800),
+            ("谷", "canyon", 3800, 4500), ("滝の上昇", "climb", 4500, 5400)]
+TUNNEL_R = 28.0                                     # トンネルの筒の半径
+TUNNEL_DARK = 0.45                                  # トンネルの中の暗さ
 
 
 def make_path(spacing: float = PATH_STEP) -> list[V]:
@@ -372,6 +386,42 @@ PATH = make_path()
 PATH_LEN = (len(PATH) - 1) * PATH_STEP
 
 
+def section_at(s: float) -> tuple[str, str]:
+    """道のり s の区間（名前, 種類）。"""
+    for name, kind, lo, hi in SECTIONS:
+        if lo <= s < hi:
+            return name, kind
+    return SECTIONS[-1][0], SECTIONS[-1][1]
+
+
+def floor_width(k: int) -> float:
+    """点 k の谷底の半分の幅。狭い峡谷は半分、トンネルの前後は少しずつ狭く。"""
+    kind = section_at(k * PATH_STEP)[1]
+    if kind == "narrow":
+        return FLOOR_W * 0.5
+    return FLOOR_W
+
+
+def climb_lift(k: int) -> float:
+    """滝の上昇の区間で足す高さ（900 m で 180 m）。谷底だけでなく、まわりの山も一緒に持ち上げる。"""
+    s = k * PATH_STEP
+    lo, hi = SECTIONS[-1][2], SECTIONS[-1][3]
+    if s <= lo:
+        return 0.0
+    t = min(1.0, (s - lo) / (hi - lo))
+    return 180 * t * t
+
+
+def floor_at(k: int) -> float:
+    """道すじの点 k の谷底の高さ。ゆっくり上下し、滝の上昇の区間では上る。"""
+    s = k * PATH_STEP
+    return FLOOR_BASE + 40 * math.sin(s / 600.0) + s * 0.012 + climb_lift(k)
+
+
+def in_tunnel(s: float) -> bool:
+    return section_at(s)[1] == "tunnel"
+
+
 def hills(x: float, z: float) -> float:
     """峡谷を掘る前の丘。sin をいくつか重ねた決まった形。100〜260 m。"""
     u, w = x / 500.0, z / 500.0
@@ -383,21 +433,25 @@ def carve() -> list[list[float]]:
     """丘に峡谷を掘る。道すじに近いマスほど低く：谷底（幅 FLOOR_W）は平ら、そこから WALL_W かけて丘の高さへ戻る。
     谷底の高さは道すじに沿ってゆっくり上下する（進むほど少し上る）。"""
     heights = [[hills(i * CELL, j * CELL) for i in range(GRID + 1)] for j in range(GRID + 1)]
-    near: dict[tuple[int, int], tuple[float, float]] = {}   # マス → (道すじまでの距離, 谷底の高さ)
+    near: dict[tuple[int, int], tuple[float, float, float, float]] = {}   # マス → (道すじまでの距離, 谷底の高さ, 谷底の幅, 持ち上げ)
     reach = int((FLOOR_W + WALL_W) / CELL) + 1
     for k, p in enumerate(PATH):
-        floor = FLOOR_BASE + 40 * math.sin(k * PATH_STEP / 600.0) + k * PATH_STEP * 0.012
+        if in_tunnel(k * PATH_STEP):                # トンネルの区間は掘らない（山がそのまま残り、筒で貫く）
+            continue
+        floor = floor_at(k)
+        width = floor_width(k)
         ci, cj = int(p.x / CELL), int(p.z / CELL)
         for j in range(cj - reach, cj + reach + 1):
             for i in range(ci - reach, ci + reach + 1):
                 if 0 <= i <= GRID and 0 <= j <= GRID:
                     d = math.hypot(i * CELL - p.x, j * CELL - p.z)
                     if (i, j) not in near or d < near[(i, j)][0]:
-                        near[(i, j)] = (d, floor)
-    for (i, j), (d, floor) in near.items():
-        t = max(0.0, min(1.0, (d - FLOOR_W) / WALL_W))
+                        near[(i, j)] = (d, floor, width, climb_lift(k))
+    for (i, j), (d, floor, width, lift) in near.items():
+        t = max(0.0, min(1.0, (d - width) / WALL_W))
         t = t * t * (3 - 2 * t)                       # なめらかに（smoothstep）
-        heights[j][i] = floor + (heights[j][i] - floor) * t
+        hill = heights[j][i] + lift                     # 上昇の区間では山も一緒に上げる
+        heights[j][i] = max(floor, floor + (hill - floor) * t)
     return heights
 
 
@@ -436,11 +490,6 @@ def land_color(height: float, steep: float, floor: float) -> tuple[int, int, int
     if height > floor + 60:
         return FOREST
     return GRASS
-
-
-def floor_at(k: int) -> float:
-    """道すじの点 k の谷底の高さ（carve と同じ式）。"""
-    return FLOOR_BASE + 40 * math.sin(k * PATH_STEP / 600.0) + k * PATH_STEP * 0.012
 
 
 def path_dir(k: int) -> V:
@@ -489,8 +538,19 @@ def make_gates() -> list[Gate]:
         p = PATH[k]
         d = path_dir(k)
         side = V(d.z, 0.0, -d.x)
+        kind = section_at(k * PATH_STEP)[1]
         lateral = 14.0 * math.sin(n * 1.9)
         lift = 28 + 12 * math.sin(n * 1.3 + 0.5)
+        if kind == "narrow":                        # 狭い峡谷：真ん中を低く
+            lateral, lift = 4.0 * math.sin(n * 1.9), 18 + 6 * math.sin(n * 1.3)
+        elif kind == "bridges":                     # 三連橋：橋の下（低め）
+            lateral, lift = 0.0, 22
+        elif kind == "snake":                       # S 字：大きく左右に振る
+            lateral, lift = 22.0 * (1 if n % 2 else -1), 26 + 8 * math.sin(n * 1.3)
+        elif kind == "tunnel" or in_tunnel(k * PATH_STEP + 300):   # トンネルの中と、その手前 300 m：筒の真ん中の高さへ導く
+            lateral, lift = 0.0, TUNNEL_R
+        elif kind == "climb":                       # 上昇：谷底が上るので、少し高め
+            lateral, lift = 10.0 * math.sin(n * 1.9), 34 + 8 * math.sin(n * 1.3)
         gates.append(Gate(V(p.x + side.x * lateral, floor_at(k) + lift, p.z + side.z * lateral), d, k * PATH_STEP))
         k += int(GATE_GAP / PATH_STEP)
         n += 1
@@ -509,14 +569,35 @@ def make_props() -> list[Prop]:
         p = PATH[k]
         d = path_dir(k)
         side = V(d.z, 0.0, -d.x)
-        if n % 5 == 2:
-            props.append(Prop("bridge", V(p.x, floor_at(k) + 48, p.z), d, FLOOR_W + 30))
+        kind = section_at(k * PATH_STEP)[1]
+        if kind == "bridges":                       # 三連橋：輪ごとに橋（輪はその下）
+            props.append(Prop("bridge", V(p.x, floor_at(k) + 44, p.z), d, floor_width(k) * 2 + 30))
+        elif kind == "tunnel":
+            pass                                    # トンネルの中に障害物は置かない
+        elif kind == "narrow":                      # 狭い峡谷：細い岩柱を真ん中寄りに
+            off = 9.0 if n % 2 else -9.0
+            props.append(Prop("pillar", V(p.x + side.x * off, floor_at(k), p.z + side.z * off), d, 40 + 10 * (n % 2)))
+        elif n % 5 == 2 and kind == "canyon":
+            props.append(Prop("bridge", V(p.x, floor_at(k) + 48, p.z), d, FLOOR_W * 2 + 30))
         else:
             off = (18.0 if n % 2 else -18.0) * (1 if n % 3 else -1)
             props.append(Prop("pillar", V(p.x + side.x * off, floor_at(k), p.z + side.z * off), d, 55 + 20 * (n % 3)))
         k += int(GATE_GAP / PATH_STEP)
         n += 1
     return props
+
+
+def tunnel_rings() -> list[tuple[V, V]]:
+    """トンネルの筒の軸の点と向き。区間の少し外まで、20 m おき。"""
+    lo, hi = next((a, b) for _, kind, a, b in SECTIONS if kind == "tunnel")
+    rings = []
+    for s_at in range(int(lo) - 20, int(hi) + 21, 20):
+        k = max(0, min(len(PATH) - 1, int(s_at / PATH_STEP)))
+        rings.append((V(PATH[k].x, floor_at(k) + TUNNEL_R, PATH[k].z), path_dir(k)))
+    return rings
+
+
+TUNNEL = tunnel_rings()
 
 
 def make_trees() -> list[tuple[V, float]]:
@@ -526,15 +607,31 @@ def make_trees() -> list[tuple[V, float]]:
         p = PATH[k]
         d = path_dir(k)
         side = V(d.z, 0.0, -d.x)
+        if in_tunnel(k * PATH_STEP):
+            continue
         for sign in (-1, 1):
-            off = sign * (40 + 30 * abs(math.sin(k * 0.7 + sign)))
+            off = sign * (floor_width(k) + 10 + 25 * abs(math.sin(k * 0.7 + sign)))
             x, z = p.x + side.x * off, p.z + side.z * off
             trees.append((V(x, ground_at(x, z), z), 9 + 5 * abs(math.sin(k * 1.3))))
     return trees
 
 
+def make_falls() -> list[Prop]:
+    """滝。上昇の区間の入口の右の壁に 2 本。"""
+    falls = []
+    lo = SECTIONS[-1][2]
+    for s_at in (lo + 150, lo + 520):
+        k = int(s_at / PATH_STEP)
+        p = PATH[k]
+        d = path_dir(k)
+        side = V(d.z, 0.0, -d.x)
+        foot = V(p.x + side.x * (floor_width(k) + 30), 0.0, p.z + side.z * (floor_width(k) + 30))
+        falls.append(Prop("falls", V(foot.x, ground_at(foot.x, foot.z), foot.z), side, 90.0))
+    return falls
+
+
 GATES_ALL = make_gates()
-PROPS = make_props()
+PROPS = make_props() + make_falls()
 TREES = make_trees()
 GATES = len(GATES_ALL)
 
@@ -651,6 +748,8 @@ class World:
             d = self.pos - prop.pos
             if abs(d.x) > 80 or abs(d.z) > 80:
                 continue
+            if prop.kind == "falls":
+                continue
             if prop.kind == "pillar":
                 if abs(d.x) < 5.5 and abs(d.z) < 5.5 and d.y < prop.size + 2:
                     n = V(d.x, 0.0, d.z).unit() if math.hypot(d.x, d.z) > 0.1 else V(1.0, 0.0, 0.0)
@@ -666,12 +765,22 @@ class World:
         return None
 
     def collide(self) -> bool:
-        """地面や壁、岩柱や橋にめり込んだら、法線の向きに押し出して、進む向きを跳ね返す。"""
+        """地面や壁、岩柱や橋、トンネルの筒にめり込んだら、法線の向きに押し出して、進む向きを跳ね返す。"""
         floor = ground_at(self.pos.x, self.pos.z) + 2.5
+        axis = self.tunnel_axis()
         n = self.hit_prop()
-        if n is None and self.pos.y >= floor:
+        if axis is not None:                            # トンネルの中：筒の壁が「地面」
+            center, d = axis
+            off = self.pos - center
+            off = off - d.scale(off.dot(d))             # 軸に直角な成分
+            if off.length() <= TUNNEL_R - 2.5:
+                return False
+            n = off.unit().scale(-1)                    # 軸へ向かう向き
+            self.pos = center + off.unit().scale(TUNNEL_R - 3.0) + d.scale(off.dot(d) * 0)
+            floor = self.pos.y
+        elif n is None and self.pos.y >= floor:
             return False
-        if n is None:
+        elif n is None:
             n = ground_normal(self.pos.x, self.pos.z)
         else:
             floor = self.pos.y                          # 障害物：地面には触っていない
@@ -684,7 +793,7 @@ class World:
         lift = max(0.05, min(BOUNCE_UP, bounced.y))  # ただし機首は少ししか上げない（谷から飛び出さない）
         bounced = level.unit().scale(math.sqrt(1 - lift * lift)) + V(0, lift, 0)
         self.frame = Frame(bounced, V(0, 1, 0), V(0, 1, 0).cross(bounced).unit()).tidy()
-        self.pos = V(self.pos.x, floor, self.pos.z) + n.scale(3.0)
+        self.pos = V(self.pos.x, max(self.pos.y, floor), self.pos.z) + n.scale(3.0)
         self.speed *= 0.5
         self.hurt = 0.8
         self.bumps += 1
@@ -783,6 +892,16 @@ class World:
     def altitude(self) -> float:
         return self.pos.y - ground_at(self.pos.x, self.pos.z)
 
+    def section(self) -> str:
+        return section_at(self.s)[0]
+
+    def tunnel_axis(self) -> tuple[V, V] | None:
+        """トンネルの中なら (軸の点, 向き)。"""
+        if not in_tunnel(self.s):
+            return None
+        k = self.hint
+        return V(PATH[k].x, floor_at(k) + TUNNEL_R, PATH[k].z), path_dir(k)
+
 
 def clock_text(seconds: float) -> str:
     return f"{int(seconds // 60)}:{seconds % 60:05.2f}"
@@ -790,9 +909,13 @@ def clock_text(seconds: float) -> str:
 
 # ── 描く ────────────────────────────────────────────────────────────────
 
+DIM = [1.0]                                         # いまの明るさ（トンネルの中で暗く）。draw() が決める
+
+
 def fog(color: tuple[int, int, int], z: float) -> tuple[int, int, int]:
     amount = max(0.0, min(0.92, (z - FOG_FROM) / (FAR - FOG_FROM)))
-    return tuple(int(c + (b - c) * amount) for c, b in zip(color, HAZE))
+    k = DIM[0]
+    return tuple(int((c + (b - c) * amount) * k) for c, b in zip(color, HAZE))
 
 
 def shade(base: tuple[int, int, int], normal: V, z: float) -> tuple[int, int, int]:
@@ -984,6 +1107,8 @@ def draw_gate(screen: Screen, gate: Gate, cam: Camera) -> None:
     paint = fog(color, view(gate.pos, cam).z)
     for k in range(12):
         draw_quad(screen, [outer[k], outer[(k + 1) % 12], inner[(k + 1) % 12], inner[k]], paint, scale)
+    if in_tunnel(gate.s):                           # トンネルの中の輪に柱は無い
+        return
     foot = view(V(gate.pos.x, ground_at(gate.pos.x, gate.pos.z), gate.pos.z), cam)   # 柱
     low = view(gate.pos - V(0, GATE_R, 0), cam)
     if foot.z > 25 and low.z > 25:                  # 近すぎる柱は描かない（画面いっぱいの線になる）
@@ -1007,6 +1132,41 @@ def draw_prop(screen: Screen, prop: Prop, cam: Camera) -> None:
             g = ground_at(foot.x, foot.z)
             column, cf = box(4.0, max(4.0, prop.pos.y - g), 4.0, V(foot.x, (prop.pos.y + g) / 2, foot.z))
             draw_solid(screen, [view(p, cam) for p in column], cf, PILLAR)
+
+
+def draw_tunnel(screen: Screen, k: int, cam: Camera) -> None:
+    """トンネルの筒の 1 区切り（20 m）。12 角形の輪と輪の間を塗る。天井に灯り。入口と出口は暗い口。"""
+    scale = screen.width / WIDTH
+    (c0, d0), (c1, d1) = TUNNEL[k], TUNNEL[k + 1]
+    side0, side1 = V(0, 1, 0).cross(d0).unit(), V(0, 1, 0).cross(d1).unit()
+    up0, up1 = d0.cross(side0).unit(), d1.cross(side1).unit()
+    ring0 = [view(c0 + side0.scale(TUNNEL_R * math.cos(a)) + up0.scale(TUNNEL_R * math.sin(a)), cam) for a in (i * math.tau / 12 for i in range(12))]
+    ring1 = [view(c1 + side1.scale(TUNNEL_R * math.cos(a)) + up1.scale(TUNNEL_R * math.sin(a)), cam) for a in (i * math.tau / 12 for i in range(12))]
+    depth = view(c0, cam).z
+    for i in range(12):
+        quad = [ring0[i], ring0[(i + 1) % 12], ring1[(i + 1) % 12], ring1[i]]
+        lamp = k % 2 == 0 and i in (2, 3)             # 上のほう、1 つおきの区切りに灯り
+        color = TUNNEL_LAMP if lamp else (TUNNEL_WALL if i in (0, 1, 2, 3, 4, 5, 6) else TUNNEL_FLOOR)
+        draw_quad(screen, quad, fog(color, max(NEAR, depth)), scale)
+    if k == 0 or k == len(TUNNEL) - 2:                 # 口：筒のまわりの暗い環（山の面との継ぎ目を隠す）
+        c, sd, up = (c0, side0, up0) if k == 0 else (c1, side1, up1)
+        outer = [view(c + sd.scale(TUNNEL_R * 1.7 * math.cos(a)) + up.scale(TUNNEL_R * 1.7 * math.sin(a)), cam) for a in (i * math.tau / 12 for i in range(12))]
+        inner = ring0 if k == 0 else ring1
+        for i in range(12):
+            draw_quad(screen, [outer[i], outer[(i + 1) % 12], inner[(i + 1) % 12], inner[i]], fog(TUNNEL_MOUTH, max(NEAR, depth)), scale)
+
+
+def draw_falls(screen: Screen, prop: Prop, cam: Camera) -> None:
+    """滝。壁に貼った縦長の板（水色）に白い筋。足元に水しぶきの円。"""
+    scale = screen.width / WIDTH
+    side = V(prop.dir.z, 0.0, -prop.dir.x)
+    top = prop.pos + V(0, prop.size, 0)
+    for w, color, dy in ((7.0, WATER, 0.0), (2.2, FOAM, 0.0), (2.2, FOAM, prop.size * 0.4)):
+        x0 = side.scale(w) if dy == 0 else side.scale(w + 3.0)
+        quad = [view(prop.pos - x0, cam), view(prop.pos + x0, cam), view(top + x0, cam), view(top - x0, cam)]
+        draw_quad(screen, quad, fog(color, max(NEAR, view(prop.pos, cam).z)), scale)
+    ring = [view(prop.pos + side.scale(14 * math.cos(a)) + prop.dir.scale(-9 * math.sin(a) - 6) + V(0, 0.5, 0), cam) for a in (i * math.tau / 10 for i in range(10))]
+    draw_quad(screen, ring, fog(FOAM, max(NEAR, view(prop.pos, cam).z)), scale)
 
 
 def draw_tree(screen: Screen, base: V, size: float, scale: float) -> None:
@@ -1067,6 +1227,9 @@ def draw(screen: Screen, world: World) -> None:
     """空 → 雲 → 地形 → 木・輪・障害物（奥から）→ 自機 → 印と HUD。"""
     cam = world.camera()
     scale = screen.width / WIDTH
+    lo, hi = next((a, b) for _, kind, a, b in SECTIONS if kind == "tunnel")
+    inside = max(0.0, min(world.s - lo + 40, hi - world.s + 40, 60)) / 60   # 口の前後 40 m で暗さが変わる
+    DIM[0] = 1.0 - (1.0 - TUNNEL_DARK) * inside
     draw_sky(screen, cam)
     draw_clouds(screen, cam)
     draw_terrain(screen, cam, floor_at(world.hint))
@@ -1083,11 +1246,19 @@ def draw(screen: Screen, world: World) -> None:
         q = view(prop.pos, cam)
         if -60 < q.z < 900 and abs(q.x) < q.z * 1.3 + 80:
             things.append((q.z, "prop", prop))
+    for k in range(len(TUNNEL) - 1):
+        q = view(TUNNEL[k][0], cam)
+        if -30 < q.z < 900:
+            things.append((q.z + 10, "tunnel", k))   # 少し奥扱い（同じ場所の輪より先に描く）
     for z, kind, thing in sorted(things, key=lambda t: -t[0]):
         if kind == "tree":
             draw_tree(screen, thing[0], thing[1], scale)
         elif kind == "gate":
             draw_gate(screen, thing, cam)
+        elif kind == "tunnel":
+            draw_tunnel(screen, thing, cam)
+        elif thing.kind == "falls":
+            draw_falls(screen, thing, cam)
         else:
             draw_prop(screen, thing, cam)
     draw_plane(screen, world, cam)
@@ -1186,8 +1357,8 @@ def status(world: World, best: Best, improved: bool = False) -> str:
         tail = ""
     else:
         tail = f"ベスト {clock_text(best.total) if best.total else '--:--.--'}  q でやめる"
-    return (f" {clock_text(world.total())}  輪 {world.next:2d}/{GATES}  外し {world.misses:2d}  連続 {world.combo:2d}  "
-            f"速さ {world.speed:3.0f}  高度 {world.altitude():3.0f}  {note:<20} " + tail)
+    return (f" {clock_text(world.total())} {world.section():<6} 輪 {world.next:2d}/{GATES} 外し {world.misses:2d} 連続 {world.combo:2d} "
+            f"速さ {world.speed:3.0f} 高度 {world.altitude():3.0f} {note:<20} " + tail)
 
 
 def run() -> None:
@@ -1265,7 +1436,7 @@ def autopilot(world: World) -> None:
     if world.finished_at is not None:
         return
     gate = world.gates[world.next] if world.next < GATES else None
-    k = min(len(PATH) - 1, world.hint + int(90 / PATH_STEP))
+    k = min(len(PATH) - 1, world.hint + int(max(90.0, world.speed * 1.3) / PATH_STEP))   # 速いほど先を見る
     target = V(PATH[k].x, floor_at(k) + 30.0, PATH[k].z)
     if gate is not None and (gate.pos - world.pos).length() < 220:
         target = gate.pos
@@ -1309,7 +1480,11 @@ def check() -> None:
     gaps = [(b - a).length() for a, b in zip(PATH, PATH[1:])]
     assert max(gaps) - min(gaps) < 0.5, "道すじの点は等間隔"
     deeper = 0
+    checked = 0
     for k in range(0, len(PATH), 20):
+        if in_tunnel(k * PATH_STEP):
+            continue
+        checked += 1
         p = PATH[k]
         d = path_dir(k)
         side = V(d.z, 0.0, -d.x)
@@ -1318,22 +1493,52 @@ def check() -> None:
         if wall - mid > 40:
             deeper += 1
         assert abs(mid - floor_at(k)) < 8, (k, mid, floor_at(k))
-    assert deeper > len(range(0, len(PATH), 20)) * 0.8, deeper
+    assert deeper > checked * 0.85, (deeper, checked)
     n = ground_normal(PATH[0].x, PATH[0].z)
     assert n.y > 0.9, "谷底の法線はほぼ上向き"
-    print(f"  道すじ {PATH_LEN:.0f} m（{len(PATH)} 点）。谷底は式どおりの高さで、両岸は 150 m 先で 40 m 以上高い（{deeper} / {len(range(0, len(PATH), 20))} 箇所）")
+    print(f"  道すじ {PATH_LEN:.0f} m（{len(PATH)} 点）。谷底は式どおりの高さで、両岸は 150 m 先で 40 m 以上高い（{deeper} / {checked} 箇所）")
+    print("● 区間")
+    names = [section_at(s_at)[1] for s_at in (100, 1000, 1700, 2500, 3600, 5000)]
+    assert names == ["canyon", "narrow", "bridges", "snake", "tunnel", "climb"], names
+    k_wide, k_narrow = int(100 / PATH_STEP), int(1000 / PATH_STEP)
+    assert floor_width(k_narrow) < floor_width(k_wide)
+    for k, want in ((k_wide, 2 * FLOOR_W), (k_narrow, FLOOR_W)):   # 谷底の幅：左右に半幅 + 15 m 行くと壁が立ち上がっている
+        p, d = PATH[k], path_dir(k)
+        side = V(d.z, 0.0, -d.x)
+        edge = floor_width(k) + 20
+        assert ground_at(p.x + side.x * edge, p.z + side.z * edge) > floor_at(k) + 5, (k, want)
+    k_t = int(3600 / PATH_STEP)
+    assert ground_at(PATH[k_t].x, PATH[k_t].z) > floor_at(k_t) + 40, "トンネルの区間は山が残る"
+    assert floor_at(int(5300 / PATH_STEP)) - floor_at(int(4500 / PATH_STEP)) > 120, "滝の上昇で谷底が上る"
+    world = World(seed=1)
+    world.started = True
+    world.clock = 0.0
+    world.time = 0.001
+    c, d = TUNNEL[3]
+    world.hint, world.s = locate(c, int(3400 / PATH_STEP))
+    world.pos = c + V(0, 1, 0).cross(d).unit().scale(TUNNEL_R + 2)     # 筒の壁にめり込む
+    world.frame = Frame(d, V(0, 1, 0), V(0, 1, 0).cross(d).unit()).tidy()
+    assert world.tunnel_axis() is not None and world.collide() and (world.pos - c).length() < TUNNEL_R
+    print(f"  {len(SECTIONS)} 区間：{'→'.join(n for n, _, _, _ in SECTIONS)}。狭い峡谷は幅半分、トンネルは山を筒で貫く（壁で跳ね返る）、滝の上昇は谷底が 180 m 上る")
     print("● 輪と障害物")
     assert GATES >= 20
     for k, gate in enumerate(GATES_ALL):
+        assert abs(gate.dir.length() - 1) < 1e-9
+        if in_tunnel(gate.s):                        # トンネルの中の輪は筒の真ん中
+            kk = int(gate.s / PATH_STEP)
+            assert abs(gate.pos.y - (floor_at(kk) + TUNNEL_R)) < 1e-6, k
+            continue
         clearance = gate.pos.y - ground_at(gate.pos.x, gate.pos.z)
         assert 10 <= clearance <= 60, (k, clearance)
-        assert abs(gate.dir.length() - 1) < 1e-9
     bridges = [p for p in PROPS if p.kind == "bridge"]
     pillars = [p for p in PROPS if p.kind == "pillar"]
-    assert bridges and pillars
+    falls = [p for p in PROPS if p.kind == "falls"]
+    assert bridges and pillars and len(falls) == 2
+    in_row = [p for p in bridges if section_at(locate(p.pos, int(1500 / PATH_STEP))[1])[1] == "bridges"]
+    assert len(in_row) >= 3, "三連橋の区間に橋が 3 本以上"
     for b in bridges:
         assert b.pos.y - ground_at(b.pos.x, b.pos.z) > 30
-    print(f"  輪 {GATES} 個を {GATE_GAP:.0f} m おき、谷底から 10〜60 m。岩柱 {len(pillars)} 本、橋 {len(bridges)} 本、木 {len(TREES)} 本")
+    print(f"  輪 {GATES} 個を {GATE_GAP:.0f} m おき、谷底から 10〜60 m。岩柱 {len(pillars)} 本、橋 {len(bridges)} 本、滝 {len(falls)} 本、木 {len(TREES)} 本")
     print("● 飛行機の動き")
     world = World(seed=1)
     world.started = True
