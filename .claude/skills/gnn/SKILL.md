@@ -153,6 +153,10 @@ python3 .claude/skills/gnn/scripts/extract_shared.py gNN-<slug>/main.py \
     --drop-methods render,draw > $SCRATCH/shared.py
 ```
 
+切り出せるのは**代入・関数・クラス**だけ。`CX, CY = …` のタプル代入や `KEYS[" "] = …`、`load_course("峡谷")` のような
+呼び出しだけの文は拾われない（g78・g81 で起きた）。1 行 1 つの代入、`{...} | {...}`、`LOADED = load_course(...)` の形にする。
+組み立てたら `check_names.py` の「未定義の名前」を必ず見る——新しい定数を `--names` に足し忘れると、ブラウザ版だけが固まる。
+
 `--names` にはデコレータ付きの定義（`@dataclass` のクラスなど）も普通に書ける
 （デコレータ行から取る。g11 でここが抜けて `Card() takes no arguments` になった）。
 型ヒント付きの代入（`ITEM_KINDS: list[Item] = [...]`）も拾う。`--drop-methods` で落とすメソッドは
