@@ -61,6 +61,8 @@ PITCH_RATE = 1.2
 PITCH_LIMIT = math.radians(50)
 BANK_LIMIT = math.radians(75)
 TURN_PER_BANK = 1.2                                 # 傾き 1 ラジアンあたりの旋回（ラジアン/秒）
+YAW_RATE = 0.35                                     # ← → を押している間、傾きとは別に少し向きも変える（小さく曲がるとき傾けすぎない）
+CAM_LEAD = 0.9                                      # カメラが曲がる先を見る量（傾き 1 ラジアンあたりの秒数ぶん先）
 CLIMB_DRAG = 0.35
 BOUNCE_UP = 0.3                                     # ぶつかって跳ね返るときの機首の上げ（sin。約 17°）
 CAM_BACK = 22.0                                     # カメラは自機の後ろ何 m か
@@ -723,7 +725,7 @@ class World:
             back = max(-LEVEL_RATE * dt, min(LEVEL_RATE * dt, -bank))
             self.frame = self.frame.roll(back)
         bank = self.frame.bank()
-        turn = bank * TURN_PER_BANK * dt
+        turn = (bank * TURN_PER_BANK + self.roll_in * YAW_RATE) * dt   # 傾きで曲がる ＋ 押している間は少しヨー
         self.frame = Frame(spin(self.frame.forward, V(0, 1, 0), turn), spin(self.frame.up, V(0, 1, 0), turn),
                            spin(self.frame.right, V(0, 1, 0), turn))
         climb = self.frame.climb()
@@ -881,7 +883,9 @@ class World:
         want = self.pos - V(self.frame.forward.x, 0.0, self.frame.forward.z).unit().scale(CAM_BACK) + V(0, CAM_UP, 0)
         ease = min(1.0, 8 * dt)
         self.cam_pos = self.cam_pos + (want - self.cam_pos).scale(ease)
-        look = (self.pos + self.frame.forward.scale(12.0) - self.cam_pos).unit()
+        ahead = self.frame.forward.scale(12.0)
+        lead = spin(self.frame.forward, V(0, 1, 0), self.frame.bank() * TURN_PER_BANK * CAM_LEAD)   # 曲がる先の向き
+        look = (self.pos + ahead + lead.scale(self.speed * 0.35 * abs(self.frame.bank())) - self.cam_pos).unit()
         up_hint = spin(V(0, 1, 0), look, -self.frame.bank() * 0.25)
         right = up_hint.cross(look).unit()
         self.cam_frame = Frame(look, look.cross(right).unit(), right)
@@ -1560,6 +1564,21 @@ def check() -> None:
         world.update(STEP)
     assert abs(world.frame.bank()) < 0.05, "手を離せば 2 秒で水平"
     print(f"  右ロール 1 秒で傾き {math.degrees(bank):.0f}°、2 秒で方位 {math.degrees(turned):.0f}° 変わる。離すと水平に戻る")
+    world = World(seed=1)
+    world.started = True
+    world.clock = 0.0
+    world.time = 0.001
+    world.pos = V(1280.0, 600.0, 1280.0)
+    h0 = world.frame.heading()
+    world.roll_in = 1.0
+    world.update(STEP)                               # 1 コマ：傾きはまだ小さいのに、少し向きが変わる（ヨー）
+    assert math.remainder(world.frame.heading() - h0, math.tau) > YAW_RATE * STEP * 0.9
+    cam0 = world.camera().frame.forward
+    for _ in range(20):
+        world.update(STEP)
+    cam1 = world.camera().frame.forward
+    assert math.remainder(math.atan2(cam1.x, cam1.z) - math.atan2(cam0.x, cam0.z), math.tau) > 0, "カメラは曲がる先を見る"
+    print("  押した瞬間から少し向きが変わり（ヨー）、カメラは曲がる先を先読みして見る")
     world = World(seed=1)
     world.started = True
     world.clock = 0.0
