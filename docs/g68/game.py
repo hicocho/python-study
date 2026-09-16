@@ -95,6 +95,43 @@ STAGE_PAUSE = 1.5                                   # 面が変わるときの�
 LAUNCH_ANGLE = math.radians(20)                     # 放したときの角度
 
 
+TRAIL = 6                                           # 残像の数
+
+
+DROP_RATE = 0.12                                    # ブロックを壊したときにカプセルが落ちる確率
+
+
+CAPSULE_SPEED = 22.0                                # カプセルの落ちる速さ
+
+
+CAPSULE_W = 7.0
+
+
+CAPSULE_H = 3.6
+
+
+WIDE_SCALE = 1.5                                    # 広いバー
+
+
+SHRINK_SCALE = 0.6                                  # 縮んだバー
+
+
+SLOW_SCALE = 0.65                                   # ゆっくり
+
+
+SPLIT_ANGLE = math.radians(25)                      # 分裂した玉の開き
+
+
+POWERS = {
+    "split": dict(word="玉が 3 つ！", seconds=0.0, weight=22, color=(120, 200, 255)),
+    "wide": dict(word="バーが広い", seconds=12.0, weight=22, color=(110, 220, 120)),
+    "pierce": dict(word="貫通！", seconds=8.0, weight=14, color=(255, 120, 60)),
+    "slow": dict(word="ゆっくり", seconds=8.0, weight=16, color=(240, 220, 90)),
+    "magnet": dict(word="磁石：拾って狙う", seconds=10.0, weight=14, color=(200, 130, 255)),
+    "shrink": dict(word="バーが縮んだ…", seconds=8.0, weight=12, color=(160, 160, 170)),
+}
+
+
 KINDS = {
     "r": dict(name="赤", hits=1, points=10, color=(226, 72, 66)),
     "o": dict(name="橙", hits=1, points=10, color=(240, 140, 50)),
@@ -213,6 +250,10 @@ def sound_bytes(kind: str) -> bytes:
         samples = tone(1800, 0.025, VOLUME * 0.9) + noise(0.05, VOLUME * 0.7, 60.0, 5)
     elif kind == "boom":                            # 爆発
         samples = noise(0.35, VOLUME * 1.8, 9.0, 9) + tone(90, 0.2, VOLUME)
+    elif kind == "power":                           # パワーアップを拾った（上がる 2 音）
+        samples = tone(660, 0.06) + tone(990, 0.1)
+    elif kind == "bad":                             # 悪いのを拾った（下がる 2 音）
+        samples = tone(500, 0.06) + tone(330, 0.12)
     elif kind == "launch":                          # 放す（ピッ）
         samples = tone(880, 0.05)
     elif kind == "lose":                            # 玉を落とした
@@ -232,7 +273,7 @@ def sound_bytes(kind: str) -> bytes:
     return buffer.getvalue()
 
 
-EVENTS = ("end", "clear", "lose", "boom", "brick", "clank", "paddle", "wall", "launch")   # 目立つ順
+EVENTS = ("end", "clear", "lose", "boom", "power", "bad", "brick", "clank", "paddle", "wall", "launch")   # 目立つ順
 
 
 SOUNDS = EVENTS + ("best",)
@@ -266,6 +307,24 @@ CRACK = (60, 60, 70)
 
 
 SHINE = (255, 255, 255)
+
+
+HOT = (255, 190, 60)                                # 連続 ×4 の玉
+
+
+HOT_LIGHT = (255, 240, 170)
+
+
+PIERCE = (255, 110, 50)
+
+
+PIERCE_LIGHT = (255, 200, 150)
+
+
+MAGNET = (200, 130, 255)
+
+
+SHRUNK = (160, 160, 170)
 
 
 def shade(color: tuple[int, int, int], k: float) -> tuple[int, int, int]:
@@ -348,6 +407,8 @@ class Ball:
     vx: float = 0.0
     vy: float = 0.0
     stuck: bool = True                              # バーに乗っている（放す前）
+    offset: float = 0.0                             # 乗っているときのバー中心からのずれ（磁石で拾った位置）
+    trail: list[tuple[float, float]] = field(default_factory=list)   # 残像（少し前の位置）
 
 
 @dataclass
@@ -359,6 +420,14 @@ class Spark:
     vy: float
     life: float
     color: tuple[int, int, int]
+
+
+@dataclass
+class Capsule:
+    """落ちてくるパワーアップ。"""
+    x: float
+    y: float
+    kind: str
 
 
 @dataclass
@@ -389,7 +458,8 @@ class World:
     seed: int = 0
     stage: int = 0                                  # いまの面（0 から）
     bricks: list[Brick] = field(default_factory=list)
-    ball: Ball = field(default_factory=Ball)
+    balls: list[Ball] = field(default_factory=list)
+    capsules: list[Capsule] = field(default_factory=list)
     paddle_x: float = WIDTH / 2                     # バーの中心
     target_x: float = WIDTH / 2                     # 指（キー）が指している中心
     time: float = 0.0
@@ -402,11 +472,15 @@ class World:
     best_streak: int = 0
     paddle_hits: int = 0                            # この玉で打ち返した回数（速くなる）
     broken: int = 0
+    caught: int = 0                                 # 拾ったパワーアップの数
     pause_until: float = 0.0                        # 面が変わるときの間
     note: str = ""
     note_until: float = 0.0
     sparks: list[Spark] = field(default_factory=list)
     flash_until: float = 0.0                        # バーが光る
+    shake_until: float = 0.0                        # 画面が揺れる
+    shake_size: float = 0.0
+    powers: dict[str, float] = field(default_factory=dict)   # 効いているパワーアップ → 切れる時刻
 
     def __post_init__(self):
         self.luck = random.Random(self.seed)
@@ -416,12 +490,24 @@ class World:
     def load_stage(self, index: int) -> None:
         self.stage = index
         self.bricks = parse_stage(STAGES[index][1])
+        self.capsules = []
+        self.powers = {}
         self.reset_ball()
 
     def reset_ball(self) -> None:
-        self.ball = Ball(x=self.paddle_x, y=PADDLE_Y - BALL_R, stuck=True)
+        self.balls = [Ball(x=self.paddle_x, y=PADDLE_Y - BALL_R, stuck=True)]
         self.paddle_hits = 0
         self.streak = 0
+
+    @property
+    def ball(self) -> Ball:
+        """代表の玉（乗っている玉があればそれ、無ければ一番下の玉）。"""
+        stuck = [b for b in self.balls if b.stuck]
+        return stuck[0] if stuck else max(self.balls, key=lambda b: b.y)
+
+    @ball.setter
+    def ball(self, ball: Ball) -> None:
+        self.balls = [ball]
 
     @property
     def stage_name(self) -> str:
@@ -431,9 +517,21 @@ class World:
     def multiplier(self) -> int:
         return min(4, 1 + self.streak // STREAK_STEP)
 
+    def has(self, power: str) -> bool:
+        return self.time < self.powers.get(power, 0.0)
+
+    @property
+    def paddle_w(self) -> float:
+        if self.has("wide"):
+            return PADDLE_W * WIDE_SCALE
+        if self.has("shrink"):
+            return PADDLE_W * SHRINK_SCALE
+        return PADDLE_W
+
     @property
     def speed(self) -> float:
-        return SPEED_BASE + SPEED_STAGE * self.stage + min(SPEED_HIT_MAX, SPEED_HIT * self.paddle_hits)
+        speed = SPEED_BASE + SPEED_STAGE * self.stage + min(SPEED_HIT_MAX, SPEED_HIT * self.paddle_hits)
+        return speed * SLOW_SCALE if self.has("slow") else speed
 
     def remaining(self) -> int:
         return sum(1 for b in self.bricks if b.breakable)
@@ -441,20 +539,33 @@ class World:
     def tell(self, text: str, seconds: float = 1.5) -> None:
         self.note, self.note_until = text, self.time + seconds
 
+    def shake(self, size: float, seconds: float = 0.2) -> None:
+        self.shake_size = max(self.shake_size if self.time < self.shake_until else 0.0, size)
+        self.shake_until = self.time + seconds
+
     # ── 入力 ──
     def launch(self) -> str | None:
-        """玉を放す。乗っていなければ何もしない。"""
-        if not self.ball.stuck or self.time < self.pause_until:
+        """乗っている玉を放す。乗っていなければ何もしない。"""
+        if self.time < self.pause_until:
             return None
-        self.ball.stuck = False
-        side = 1 if self.luck.random() < 0.5 else -1
-        self.ball.vx = self.speed * math.sin(LAUNCH_ANGLE) * side
-        self.ball.vy = -self.speed * math.cos(LAUNCH_ANGLE)
-        return "launch"
+        launched = False
+        for ball in self.balls:
+            if not ball.stuck:
+                continue
+            ball.stuck = False
+            if ball.offset:                         # 磁石で拾った玉は、その場所の角度で放す
+                angle = max(-1.0, min(1.0, ball.offset / (self.paddle_w / 2))) * MAX_ANGLE
+            else:
+                angle = LAUNCH_ANGLE * (1 if self.luck.random() < 0.5 else -1)
+            ball.vx, ball.vy = self.speed * math.sin(angle), -self.speed * math.cos(angle)
+            ball.offset = 0.0
+            launched = True
+        return "launch" if launched else None
 
     def aim(self, x: float) -> None:
         """バーの目標の中心を決める（指・傾き・自動）。"""
-        self.target_x = max(PADDLE_W / 2, min(WIDTH - PADDLE_W / 2, x))
+        half = self.paddle_w / 2
+        self.target_x = max(half, min(WIDTH - half, x))
 
     def nudge(self, dx: float) -> None:
         """キーで少しずらす。"""
@@ -465,25 +576,34 @@ class World:
         if not self.started or self.over:
             return None
         self.time += dt
+        half = self.paddle_w / 2
         step = max(-PADDLE_SPEED * dt, min(PADDLE_SPEED * dt, self.target_x - self.paddle_x))
-        self.paddle_x = max(PADDLE_W / 2, min(WIDTH - PADDLE_W / 2, self.paddle_x + step))
+        self.paddle_x = max(half, min(WIDTH - half, self.paddle_x + step))
         self.age_sparks(dt)
         if self.time < self.pause_until:
-            return None
-        ball = self.ball
-        if ball.stuck:
-            ball.x, ball.y = self.paddle_x, PADDLE_Y - BALL_R
+            if self.luck.random() < dt * 6:         # 面クリアの花火
+                self.burst(self.luck.uniform(20, WIDTH - 20), self.luck.uniform(15, 50),
+                           self.luck.choice([k["color"] for k in KINDS.values()]), 12)
             return None
         happened = set()
-        speed = self.speed                          # 向きはそのまま、速さだけそろえる
-        length = math.hypot(ball.vx, ball.vy) or 1.0
-        ball.vx, ball.vy = ball.vx / length * speed, ball.vy / length * speed
-        steps = max(1, math.ceil(speed * dt / 1.0))  # 1 ドットずつ歩む
+        happened |= self.fall_capsules(dt)
         hit_now: set[int] = set()
-        for _ in range(steps):
-            happened |= self.walk(dt / steps, hit_now)
-            if self.over or ball.stuck:
-                break
+        for ball in list(self.balls):
+            if ball.stuck:
+                ball.x, ball.y = self.paddle_x + ball.offset, PADDLE_Y - BALL_R
+                continue
+            speed = self.speed                      # 向きはそのまま、速さだけそろえる
+            length = math.hypot(ball.vx, ball.vy) or 1.0
+            ball.vx, ball.vy = ball.vx / length * speed, ball.vy / length * speed
+            ball.trail.append((ball.x, ball.y))
+            del ball.trail[:-TRAIL]
+            steps = max(1, math.ceil(speed * dt / 1.0))  # 1 ドットずつ歩む
+            for _ in range(steps):
+                happened |= self.walk(ball, dt / steps, hit_now)
+                if ball.stuck or ball not in self.balls:
+                    break
+        if not self.balls:                          # 全部落とした
+            happened.add(self.lose_life())
         if self.remaining() == 0 and not self.over:
             happened.add(self.next_stage())
         for name in EVENTS:
@@ -491,9 +611,9 @@ class World:
                 return name
         return None
 
-    def walk(self, dt: float, hit_now: set[int]) -> set[str]:
+    def walk(self, ball: Ball, dt: float, hit_now: set[int]) -> set[str]:
         """玉を少し進める。x を動かして調べ、次に y を動かして調べる。"""
-        ball, happened = self.ball, set()
+        happened = set()
         ball.x += ball.vx * dt
         if ball.x - BALL_R < 0:
             ball.x, ball.vx = BALL_R, abs(ball.vx)
@@ -501,38 +621,49 @@ class World:
         elif ball.x + BALL_R > WIDTH:
             ball.x, ball.vx = WIDTH - BALL_R, -abs(ball.vx)
             happened.add("wall")
-        happened |= self.hit_bricks("x", hit_now)
+        happened |= self.hit_bricks(ball, "x", hit_now)
         ball.y += ball.vy * dt
         if ball.y - BALL_R < 0:
             ball.y, ball.vy = BALL_R, abs(ball.vy)
             happened.add("wall")
-        happened |= self.hit_bricks("y", hit_now)
+        happened |= self.hit_bricks(ball, "y", hit_now)
         if ball.vy > 0 and ball.y + BALL_R >= PADDLE_Y and ball.y - BALL_R <= PADDLE_Y + PADDLE_H \
-                and abs(ball.x - self.paddle_x) <= PADDLE_W / 2 + BALL_R:
-            self.bounce_paddle()
+                and abs(ball.x - self.paddle_x) <= self.paddle_w / 2 + BALL_R:
+            self.bounce_paddle(ball)
             happened.add("paddle")
         if ball.y - BALL_R > HEIGHT:                # 落とした
-            happened.add(self.lose_ball())
+            self.balls.remove(ball)
+            if self.balls:
+                self.tell(f"玉が落ちた（あと {len(self.balls)} 個）", 1.0)
         return happened
 
-    def bounce_paddle(self) -> None:
-        """当たった場所で角度が決まる。真ん中は真上、端は MAX_ANGLE。"""
-        ball = self.ball
-        offset = max(-1.0, min(1.0, (ball.x - self.paddle_x) / (PADDLE_W / 2)))
-        angle = offset * MAX_ANGLE
+    def bounce_paddle(self, ball: Ball) -> None:
+        """当たった場所で角度が決まる。真ん中は真上、端は MAX_ANGLE。磁石なら乗せる。"""
+        offset = max(-1.0, min(1.0, (ball.x - self.paddle_x) / (self.paddle_w / 2)))
         self.paddle_hits += 1
-        speed = self.speed
-        ball.vx, ball.vy = speed * math.sin(angle), -speed * math.cos(angle)
-        ball.y = PADDLE_Y - BALL_R
         self.streak = 0
         self.flash_until = self.time + 0.12
+        ball.y = PADDLE_Y - BALL_R
+        if self.has("magnet"):
+            ball.stuck, ball.offset = True, ball.x - self.paddle_x
+            ball.vx = ball.vy = 0.0
+            return
+        angle = offset * MAX_ANGLE
+        speed = self.speed
+        ball.vx, ball.vy = speed * math.sin(angle), -speed * math.cos(angle)
 
-    def hit_bricks(self, axis: str, hit_now: set[int]) -> set[str]:
-        ball, happened = self.ball, set()
-        for index, brick in enumerate(self.bricks):
+    def hit_bricks(self, ball: Ball, axis: str, hit_now: set[int]) -> set[str]:
+        happened = set()
+        for brick in self.bricks:
             bx, by, bw, bh = brick.rect(self.time)
             if not (ball.x + BALL_R > bx and ball.x - BALL_R < bx + bw and ball.y + BALL_R > by and ball.y - BALL_R < by + bh):
                 continue
+            if self.has("pierce") and brick.breakable:      # 貫通：止まらずに壊す
+                if id(brick) not in hit_now:
+                    hit_now.add(id(brick))
+                    brick.left = 1
+                    happened.add(self.damage(brick))
+                break
             if axis == "x":                         # 横から当たった → 左右に押し戻す
                 if ball.vx > 0:
                     ball.x = bx - BALL_R
@@ -545,8 +676,8 @@ class World:
                 else:
                     ball.y = by + bh + BALL_R
                 ball.vy = -ball.vy
-            if index not in hit_now:
-                hit_now.add(index)
+            if id(brick) not in hit_now:
+                hit_now.add(id(brick))
                 happened.add(self.damage(brick))
             break                                   # 1 歩で当たるのは 1 つ
         if abs(ball.vy) < self.speed * MIN_RISE:    # 横に走りすぎない
@@ -558,6 +689,7 @@ class World:
     def damage(self, brick: Brick) -> str:
         """ブロックに 1 発。壊れたら点と粒。爆発は周りも壊す。"""
         if not brick.breakable:
+            self.shake(0.5, 0.1)
             return "clank"
         brick.left -= 1
         if brick.left > 0:
@@ -575,15 +707,56 @@ class World:
         self.score += gained
         bx, by, bw, bh = brick.rect(self.time)
         self.burst(bx + bw / 2, by + bh / 2, KINDS[brick.kind]["color"], 6)
+        self.shake(1.0, 0.12)
         if self.multiplier > 1:
             self.tell(f"{self.streak} 連続 ×{self.multiplier}", 1.0)
+        if self.luck.random() < DROP_RATE:          # たまにパワーアップが落ちる
+            names = list(POWERS)
+            kind = self.luck.choices(names, weights=[POWERS[k]["weight"] for k in names])[0]
+            self.capsules.append(Capsule(bx + bw / 2, by + bh / 2, kind))
         if brick.kind == "X":                       # 周り 8 つも壊す（鉄は残る。爆発は連鎖する）
             self.burst(bx + bw / 2, by + bh / 2, (255, 200, 80), 14)
+            self.shake(2.5, 0.3)
             for other in list(self.bricks):
                 if other.breakable and abs(other.col - brick.col) <= 1 and abs(other.row - brick.row) <= 1:
                     self.destroy(other)
             return "boom"
         return "brick"
+
+    def fall_capsules(self, dt: float) -> set[str]:
+        """カプセルが落ちる。バーで拾えば効く。"""
+        happened = set()
+        for cap in list(self.capsules):
+            cap.y += CAPSULE_SPEED * dt
+            if cap.y + CAPSULE_H / 2 >= PADDLE_Y and cap.y - CAPSULE_H / 2 <= PADDLE_Y + PADDLE_H \
+                    and abs(cap.x - self.paddle_x) <= self.paddle_w / 2 + CAPSULE_W / 2:
+                self.capsules.remove(cap)
+                happened.add(self.apply_power(cap.kind))
+            elif cap.y > HEIGHT + CAPSULE_H:
+                self.capsules.remove(cap)
+        return happened
+
+    def apply_power(self, kind: str) -> str:
+        spec = POWERS[kind]
+        self.caught += 1
+        self.tell(spec["word"], 1.5)
+        self.burst(self.paddle_x, PADDLE_Y, spec["color"], 10)
+        if kind == "split":                         # 玉を 3 つに（いま飛んでいる玉から分ける）
+            flying = [b for b in self.balls if not b.stuck]
+            source = flying[0] if flying else self.balls[0]
+            for turn in (-SPLIT_ANGLE, SPLIT_ANGLE):
+                c, s = math.cos(turn), math.sin(turn)
+                self.balls.append(Ball(source.x, source.y, source.vx * c - source.vy * s, source.vx * s + source.vy * c, stuck=False))
+            if source.stuck:                        # 乗っている玉から分けたときは、分身だけ上へ放す
+                for b in self.balls[-2:]:
+                    b.vx, b.vy = self.speed * math.sin(LAUNCH_ANGLE) * (1 if b is self.balls[-1] else -1), -self.speed * math.cos(LAUNCH_ANGLE)
+            return "power"
+        if kind == "wide":
+            self.powers.pop("shrink", None)
+        elif kind == "shrink":
+            self.powers.pop("wide", None)
+        self.powers[kind] = self.time + spec["seconds"]
+        return "power" if kind != "shrink" else "bad"
 
     def burst(self, x: float, y: float, color: tuple[int, int, int], count: int) -> None:
         for _ in range(count):
@@ -599,8 +772,10 @@ class World:
             s.life -= dt
         self.sparks = [s for s in self.sparks if s.life > 0]
 
-    def lose_ball(self) -> str:
+    def lose_life(self) -> str:
         self.lives -= 1
+        self.powers = {}
+        self.shake(2.0, 0.3)
         if self.lives <= 0:
             self.over = True
             self.tell("ゲームオーバー", 99)
@@ -623,15 +798,23 @@ class World:
 
 def draw(screen: Screen, world: World) -> None:
     scale = screen.width // WIDTH
+    ox = oy = 0.0                                                  # 揺れ
+    if world.time < world.shake_until:
+        k = world.shake_size * (world.shake_until - world.time) / 0.3
+        ox = math.sin(world.time * 90) * k
+        oy = math.cos(world.time * 70) * k * 0.6
     for y in range(screen.height):                  # 上から下へ少し明るく
         t = y / screen.height
         screen.band(y, y + 1, tuple(int(a + (b - a) * t) for a, b in zip(BACK_TOP, BACK_BOTTOM)))
+    blink = world.remaining() <= 3 and int(world.time * 6) % 2 == 0
     for brick in world.bricks:
         bx, by, bw, bh = brick.rect(world.time)
         color = KINDS[brick.kind]["color"]
         if brick.kind == "H" and brick.left == 1:
             color = shade(color, 0.7)
-        x0, y0 = int(bx * scale), int(by * scale)
+        if blink and brick.breakable:
+            color = shade(color, 1.4)
+        x0, y0 = int((bx + ox) * scale), int((by + oy) * scale)
         w, h = bw * scale, bh * scale
         screen.box(x0, y0, w, h, shade(color, 0.55))              # 縁
         screen.box(x0 + scale, y0 + scale, w - 2 * scale, h - 2 * scale, color)
@@ -647,18 +830,68 @@ def draw(screen: Screen, world: World) -> None:
         elif brick.kind in "<>":                                  # 動く：矢印の向き
             dx = bw - 3 if brick.kind == ">" else 2
             screen.box(x0 + dx * scale, y0 + scale, scale, (bh - 2) * scale, shade(color, 0.6))
+    for cap in world.capsules:                                     # カプセル
+        spec = POWERS[cap.kind]
+        cx, cy = (cap.x + ox) * scale, (cap.y + oy) * scale
+        screen.ellipse(cx, cy, CAPSULE_W / 2 * scale, CAPSULE_H / 2 * scale, shade(spec["color"], 0.6))
+        screen.ellipse(cx, cy - 0.3 * scale, (CAPSULE_W / 2 - 0.8) * scale, (CAPSULE_H / 2 - 0.6) * scale, spec["color"])
+        draw_icon(screen, cap.kind, cx, cy, scale)
     for s in world.sparks:
-        screen.box(int(s.x * scale), int(s.y * scale), scale, scale, s.color)
-    px = int((world.paddle_x - PADDLE_W / 2) * scale)              # バー
+        screen.box(int((s.x + ox) * scale), int((s.y + oy) * scale), scale, scale, s.color)
+    half = world.paddle_w / 2
+    px = int((world.paddle_x - half + ox) * scale)                  # バー
+    py = int((PADDLE_Y + oy) * scale)
     paddle = SHINE if world.time < world.flash_until else PADDLE
-    screen.box(px, PADDLE_Y * scale, PADDLE_W * scale, PADDLE_H * scale, paddle)
-    screen.box(px, PADDLE_Y * scale, scale, PADDLE_H * scale, PADDLE_EDGE)
-    screen.box(px + (PADDLE_W - 1) * scale, PADDLE_Y * scale, scale, PADDLE_H * scale, PADDLE_EDGE)
-    ball = world.ball                                              # 玉
-    screen.ellipse(ball.x * scale, ball.y * scale, BALL_R * scale, BALL_R * scale, BALL_SHADE)
-    screen.ellipse(ball.x * scale - scale * 0.3, ball.y * scale - scale * 0.3, BALL_R * scale * 0.7, BALL_R * scale * 0.7, BALL)
+    if world.has("magnet"):
+        paddle = MAGNET
+    elif world.has("shrink"):
+        paddle = SHRUNK
+    screen.box(px, py, int(world.paddle_w * scale), PADDLE_H * scale, paddle)
+    screen.box(px, py, scale, PADDLE_H * scale, PADDLE_EDGE)
+    screen.box(px + int((world.paddle_w - 1) * scale), py, scale, PADDLE_H * scale, PADDLE_EDGE)
+    hot = world.multiplier >= 4
+    for ball in world.balls:                                       # 玉と残像
+        for i, (tx, ty) in enumerate(ball.trail):
+            k = (i + 1) / (len(ball.trail) + 1)
+            screen.ellipse((tx + ox) * scale, (ty + oy) * scale, BALL_R * scale * k * 0.8, BALL_R * scale * k * 0.8,
+                           shade(HOT if hot else BALL, 0.35 + 0.4 * k))
+        color, light = (HOT, HOT_LIGHT) if hot else (BALL_SHADE, BALL)
+        if world.has("pierce"):
+            color, light = PIERCE, PIERCE_LIGHT
+        bx, by = (ball.x + ox) * scale, (ball.y + oy) * scale
+        screen.ellipse(bx, by, BALL_R * scale, BALL_R * scale, color)
+        screen.ellipse(bx - scale * 0.3, by - scale * 0.3, BALL_R * scale * 0.7, BALL_R * scale * 0.7, light)
     for i in range(world.lives - 1):                               # 残りの玉（左上）
         screen.ellipse((3 + i * 4) * scale, 2.5 * scale, 1.2 * scale, 1.2 * scale, LIFE)
+    x = WIDTH - 3                                                  # 効いているパワーアップ（右上、残り時間の棒）
+    for kind, until in world.powers.items():
+        if until <= world.time:
+            continue
+        left = (until - world.time) / POWERS[kind]["seconds"]
+        screen.box(int((x - 8) * scale), int(1 * scale), int(8 * left * scale), int(2 * scale), POWERS[kind]["color"])
+        x -= 10
+
+
+def draw_icon(screen: Screen, kind: str, cx: float, cy: float, scale: int) -> None:
+    """カプセルの中の印。"""
+    ink = (30, 30, 40)
+    if kind == "split":                                            # 点 3 つ
+        for dx in (-1.8, 0, 1.8):
+            screen.box(int(cx + dx * scale - scale * 0.5), int(cy - scale * 0.5), scale, scale, ink)
+    elif kind == "wide":                                           # 横の棒
+        screen.box(int(cx - 2.5 * scale), int(cy - scale * 0.5), 5 * scale, scale, ink)
+    elif kind == "shrink":                                         # 短い棒
+        screen.box(int(cx - 1 * scale), int(cy - scale * 0.5), 2 * scale, scale, ink)
+    elif kind == "pierce":                                         # 上向きの矢
+        screen.box(int(cx - scale * 0.5), int(cy - 1.5 * scale), scale, 3 * scale, ink)
+        screen.box(int(cx - 1.5 * scale), int(cy - 1 * scale), 3 * scale, scale, ink)
+    elif kind == "slow":                                           # 砂時計（上下の棒）
+        screen.box(int(cx - 1.5 * scale), int(cy - 1.5 * scale), 3 * scale, scale, ink)
+        screen.box(int(cx - 1.5 * scale), int(cy + 0.5 * scale), 3 * scale, scale, ink)
+    elif kind == "magnet":                                         # U の字
+        screen.box(int(cx - 1.5 * scale), int(cy - 1.5 * scale), scale, 3 * scale, ink)
+        screen.box(int(cx + 0.5 * scale), int(cy - 1.5 * scale), scale, 3 * scale, ink)
+        screen.box(int(cx - 1.5 * scale), int(cy + 0.5 * scale), 3 * scale, scale, ink)
 
 
 KEY_STEP = 12.0                                     # キー 1 回でバーが動く距離
@@ -748,13 +981,13 @@ def refresh() -> None:
     note_label.textContent = (world.note if world.time < world.note_until else "") or " "
     if world.over:
         message.textContent = (("全部クリア！ " if world.won else "ゲームオーバー。") +
-                               f"点 {world.score}、面 {world.stage + 1}、壊した {world.broken} 個、最長 {world.best_streak} 連続"
+                               f"点 {world.score}、面 {world.stage + 1}、壊した {world.broken} 個、最長 {world.best_streak} 連続、拾った {world.caught} 個"
                                + ("  ベスト更新！" if improved else ""))
     elif not world.started:
         message.textContent = ("「スタート」で始める。画面のどこでも指を左右に動かすとバーが追いかける（← → キーでも）。"
                                "タップ（スペース）で玉を放す。玉は 3 つ、8 面")
     elif world.ball.stuck:
-        message.textContent = "タップ（スペース）で玉を放す"
+        message.textContent = "タップ（スペース）で玉を放す" + ("（磁石：拾った場所の角度で飛ぶ）" if world.has("magnet") else "")
     else:
         message.textContent = ""
     again_button.hidden = not world.over
