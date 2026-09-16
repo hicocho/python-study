@@ -107,16 +107,22 @@ LOW_BONUS = 0.5                                     # 低空 1 秒ごとに引�
 SPEEDS = (55.0, 80.0, 110.0)                        # スロットル 3 段階の速さ（m/s）
 
 
-ROLL_RATE = 2.8                                     # ロールの速さ（ラジアン/秒）。きびきび
+TURN_MAX = 1.3                                      # ← → を押し切ったときの旋回（ラジアン/秒）
 
 
-LEVEL_RATE = 1.6                                    # 手を離したとき水平に戻る速さ（ロール）
+TURN_EASE = 0.15                                    # 押してから旋回が立ち上がる／離してから止まるまでの秒数
+
+
+ROLL_RATE = 4.0                                     # 翼の傾きが「曲がっている量」に追いつく速さ（見た目）
+
+
+BANK_SHOW = math.radians(60)                        # 押し切ったときの翼の傾き（見た目）
 
 
 PITCH_LEVEL = 1.4                                   # 手を離したとき機首が水平に戻る速さ
 
 
-PITCH_RATE = 1.2
+PITCH_RATE = 0.7                                    # 機首の上げ下げの速さ（1.2 では 1 秒で 27 m 上下して敏感すぎた）
 
 
 PITCH_LIMIT = math.radians(50)
@@ -125,13 +131,13 @@ PITCH_LIMIT = math.radians(50)
 BANK_LIMIT = math.radians(75)
 
 
-TURN_PER_BANK = 1.2                                 # 傾き 1 ラジアンあたりの旋回（ラジアン/秒）
+MAGNET_RANGE = 120.0                                # 次の輪がこの距離より近いと、高さだけ少し吸い寄せる
 
 
-YAW_RATE = 0.35                                     # ← → を押している間、傾きとは別に少し向きも変える（小さく曲がるとき傾けすぎない）
+MAGNET_PULL = 0.8                                   # 吸い寄せの強さ（高さの差 × これ ＝ 1 秒あたりの寄る量）
 
 
-CAM_LEAD = 0.9                                      # カメラが曲がる先を見る量（傾き 1 ラジアンあたりの秒数ぶん先）
+CAM_LEAD = 0.3                                      # カメラが曲がる先を見る量（0.9 では傾けると輪が画面の中で動いて狙えなかった）
 
 
 CLIMB_DRAG = 0.35
@@ -246,6 +252,9 @@ PROP_COLOR = (40, 40, 44)
 
 
 SHADOW_COLOR = (40, 70, 40)
+
+
+PLUMB = (255, 255, 200)                             # 自機から真下へ落ちる線
 
 
 GAUGE = (120, 200, 140)
@@ -951,6 +960,7 @@ class World:
     counted: int = 4
     roll_in: float = 0.0
     pitch_in: float = 0.0
+    turning: float = 0.0                            # いま曲がっている量（-1〜+1）。roll_in に 0.15 秒で追いつく
     hurt: float = 0.0
     bumps: int = 0
     misses: int = 0
@@ -982,19 +992,22 @@ class World:
         return self.time + self.penalty
 
     def fly(self, dt: float) -> None:
-        """ロール → 傾きで旋回 → 機首 → 速さ → 位置。"""
-        bank = self.frame.bank()
-        if self.roll_in:
-            want = self.roll_in * ROLL_RATE * dt
-            want = max(-BANK_LIMIT - bank, min(BANK_LIMIT - bank, want))
-            self.frame = self.frame.roll(want)
-        else:
-            back = max(-LEVEL_RATE * dt, min(LEVEL_RATE * dt, -bank))
-            self.frame = self.frame.roll(back)
-        bank = self.frame.bank()
-        turn = (bank * TURN_PER_BANK + self.roll_in * YAW_RATE) * dt   # 傾きで曲がる ＋ 押している間は少しヨー
+        """旋回（押した量に直結）→ 翼の傾き（見た目）→ 機首 → 速さ → 位置。
+
+        前は「翼を傾ける → 傾きに比例して曲がる」の 2 段階で、押してから 0.3 秒遅れて曲がり始め、
+        離しても 0.5〜1 秒曲がり続けた。今は押した量 roll_in に turning が 0.15 秒で追いつき、その量で曲がる。
+        翼の傾きは turning に合わせて見せるだけ（曲がりの原因ではない）。
+        """
+        ease = min(1.0, dt / TURN_EASE)
+        self.turning += (self.roll_in - self.turning) * ease
+        if abs(self.turning) < 0.01 and not self.roll_in:
+            self.turning = 0.0
+        turn = self.turning * TURN_MAX * dt
         self.frame = Frame(spin(self.frame.forward, V(0, 1, 0), turn), spin(self.frame.up, V(0, 1, 0), turn),
                            spin(self.frame.right, V(0, 1, 0), turn))
+        bank = self.frame.bank()
+        want_bank = self.turning * BANK_SHOW
+        self.frame = self.frame.roll(max(-ROLL_RATE * dt, min(ROLL_RATE * dt, want_bank - bank)))
         climb = self.frame.climb()
         want = self.pitch_in * PITCH_RATE * dt
         if not self.pitch_in:                        # 手を離すと機首も水平へ
@@ -1096,6 +1109,11 @@ class World:
         self.boost = max(0.0, self.boost - dt)
         before = self.pos
         self.fly(dt)
+        if self.next < GATES:                        # 次の輪が近ければ、高さだけ少し吸い寄せる（上下の狙いを助ける）
+            gate = self.gates[self.next]
+            ahead = (gate.pos - self.pos).dot(gate.dir)
+            if 0 < ahead < MAGNET_RANGE and abs(gate.pos.y - self.pos.y) < 30:
+                self.pos = V(self.pos.x, self.pos.y + (gate.pos.y - self.pos.y) * MAGNET_PULL * dt, self.pos.z)
         if self.collide():
             self.tell("ぶつかった！", 1.0)
             happened = "bump"
@@ -1151,8 +1169,8 @@ class World:
         ease = min(1.0, 8 * dt)
         self.cam_pos = self.cam_pos + (want - self.cam_pos).scale(ease)
         ahead = self.frame.forward.scale(12.0)
-        lead = spin(self.frame.forward, V(0, 1, 0), self.frame.bank() * TURN_PER_BANK * CAM_LEAD)   # 曲がる先の向き
-        look = (self.pos + ahead + lead.scale(self.speed * 0.35 * abs(self.frame.bank())) - self.cam_pos).unit()
+        lead = spin(self.frame.forward, V(0, 1, 0), self.turning * TURN_MAX * CAM_LEAD)   # 曲がる先の向き
+        look = (self.pos + ahead + lead.scale(self.speed * 0.35 * abs(self.turning)) - self.cam_pos).unit()
         up_hint = spin(V(0, 1, 0), look, -self.frame.bank() * 0.25)
         right = up_hint.cross(look).unit()
         self.cam_frame = Frame(look, look.cross(right).unit(), right)
@@ -1273,8 +1291,12 @@ def draw_plane(screen: Screen, world: World, cam: Camera) -> None:
             screen.fill([project(p, scale) for p in tri], fog(PROP_COLOR, tri[0].z))
     shadow = [world.pos + r.scale(4.5 * math.cos(a)) + f.scale(3.0 * math.sin(a)) for a in (i * math.tau / 8 for i in range(8))]
     ground = [view(V(p.x, ground_at(p.x, p.z) + 0.3, p.z), cam) for p in shadow]
-    if world.altitude() < 60 and max(p.z for p in ground) > NEAR:
+    if max(p.z for p in ground) > NEAR:              # 真下の影（高さの当たりをつける）と、そこへ落ちる細い線
         draw_quad(screen, ground, fog(SHADOW_COLOR, ground[0].z), scale)
+        foot = view(V(world.pos.x, ground_at(world.pos.x, world.pos.z) + 0.3, world.pos.z), cam)
+        top = view(world.pos - u.scale(0.6), cam)
+        if foot.z > NEAR and top.z > NEAR:
+            screen.line(project(top, scale), project(foot, scale), fog(PLUMB, foot.z))
 
 
 def draw_sky(screen: Screen, cam: Camera) -> None:
