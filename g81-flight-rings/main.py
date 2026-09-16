@@ -620,8 +620,8 @@ class World:
         want = self.pitch_in * PITCH_RATE * dt
         if not self.pitch_in:                        # 手を離すと機首も水平へ
             want = max(-LEVEL_RATE * 0.5 * dt, min(LEVEL_RATE * 0.5 * dt, -climb))
-        if climb + want > PITCH_LIMIT or climb + want < -PITCH_LIMIT:
-            want = 0.0
+        want = max(-PITCH_LIMIT - climb, min(PITCH_LIMIT - climb, want)) if abs(climb) < PITCH_LIMIT else (
+            want if want * climb < 0 else 0.0)      # 限界の中では限界で止め、外にいる（ぶつかって上を向いた）ときは戻る向きだけ許す
         if want:
             self.frame = self.frame.pitch(want)
         self.frame = self.frame.tidy()
@@ -1298,6 +1298,16 @@ def check() -> None:
         world.update(STEP)
     assert abs(world.frame.bank()) < 0.05, "手を離せば 2 秒で水平"
     print(f"  右ロール 1 秒で傾き {math.degrees(bank):.0f}°、2 秒で方位 {math.degrees(turned):.0f}° 変わる。離すと水平に戻る")
+    world = World(seed=1)
+    world.started = True
+    world.clock = 0.0
+    world.time = 0.001
+    world.pos = V(1280.0, 600.0, 1280.0)
+    world.frame = Frame().pitch(math.radians(70))    # 限界（50°）を超えて上を向いた状態（ぶつかった直後に起きる）
+    for _ in range(90):
+        world.update(STEP)
+    assert abs(world.frame.climb()) < 0.05, f"限界の外からでも水平に戻る: {math.degrees(world.frame.climb()):.0f}°"
+    print("  機首が限界の外（70°）にあっても、手を離せば 3 秒で水平に戻る（前は限界の判定に阻まれて上を向いたままだった）")
     print("● 壁に跳ね返る")
     world = World(seed=1)
     world.started = True

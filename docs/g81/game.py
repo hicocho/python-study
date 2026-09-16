@@ -728,8 +728,8 @@ class World:
         want = self.pitch_in * PITCH_RATE * dt
         if not self.pitch_in:                        # 手を離すと機首も水平へ
             want = max(-LEVEL_RATE * 0.5 * dt, min(LEVEL_RATE * 0.5 * dt, -climb))
-        if climb + want > PITCH_LIMIT or climb + want < -PITCH_LIMIT:
-            want = 0.0
+        want = max(-PITCH_LIMIT - climb, min(PITCH_LIMIT - climb, want)) if abs(climb) < PITCH_LIMIT else (
+            want if want * climb < 0 else 0.0)      # 限界の中では限界で止め、外にいる（ぶつかって上を向いた）ときは戻る向きだけ許す
         if want:
             self.frame = self.frame.pitch(want)
         self.frame = self.frame.tidy()
