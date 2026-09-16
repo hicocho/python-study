@@ -30,25 +30,48 @@ WIDTH = 120                                         # 画面の横（ドット�
 HEIGHT = 72                                         # 縦。端末では 2 ドット = 1 行 → 36 行
 
 
-COLS = 3
-
-
-ROWS = 3
-
-
-CELL_W = WIDTH // COLS                              # 穴 1 つの幅（40）
-
-
-CELL_H = 22                                         # 穴 1 つの高さ
-
-
 TOP = 4                                             # 一番上の穴の上端
 
 
 STEP = 1 / 30
 
 
-ROUND = 60.0                                        # 1 ラウンドの秒数
+STAGE_TIME = 25.0                                   # 1 ステージの秒数
+
+
+STAGE_PAUSE = 2.5                                   # ステージが変わるときの間
+
+
+STAGES = [
+    dict(name="モグラの野原", cols=3, rows=3, weights={"normal": 70, "gold": 10, "helmet": 10, "hourglass": 4, "bomb": 6},
+         king_at=None, lids=False, grass=(92, 160, 70)),
+    dict(name="スライムの沼", cols=3, rows=3, weights={"normal": 28, "slime": 36, "metal": 8, "gold": 6, "bomb": 8, "cactus": 6, "hourglass": 4, "hive": 4},
+         king_at=None, lids=False, grass=(70, 150, 125)),
+    dict(name="おばけ屋敷", cols=3, rows=3, weights={"normal": 24, "ghost": 30, "mouse": 20, "gold": 6, "bomb": 8, "hive": 5, "hourglass": 4, "turtle": 3},
+         king_at=None, lids=False, grass=(105, 118, 150)),
+    dict(name="トラップ畑", cols=4, rows=3, weights={"normal": 30, "gold": 8, "helmet": 8, "bomb": 14, "hive": 12, "cactus": 12, "turtle": 12, "hourglass": 4},
+         king_at=None, lids=False, grass=(150, 140, 78)),
+    dict(name="動物園", cols=4, rows=4, weights={"normal": 24, "rabbit": 26, "turtle": 12, "mouse": 12, "slime": 10, "gold": 6, "bomb": 6, "hourglass": 4},
+         king_at=10.0, lids=False, grass=(96, 168, 88)),
+    dict(name="ごちゃまぜ", cols=4, rows=4, weights=None,                  # None は表の重みそのまま（全部出る）
+         king_at=12.0, lids=True, grass=(118, 108, 140)),
+]
+
+
+ROUND = STAGE_TIME * len(STAGES)                    # ゲーム全体の秒数（難しさの階段の目盛り）
+
+
+LID_PERIOD = 2.4                                    # ふたが開いて閉じる周期（秒）
+
+
+LID_OPEN = 1.4                                      # そのうち開いている秒数
+
+
+KEYMAPS = {                                         # 端末のキー。穴の並びと同じ形に並んだキーの列
+    (3, 3): ("789", "456", "123", "qwe", "asd", "zxc"),   # テンキーの並びと、qwe の並びの両方
+    (4, 3): ("qwer", "asdf", "zxcv"),
+    (4, 4): ("1234", "qwer", "asdf", "zxcv"),
+}
 
 
 RISE = 0.15                                         # 出るのにかかる秒数
@@ -102,7 +125,7 @@ SWARM_BONUS = 6                                     # 群れを全部叩いた�
 TIME_BONUS = 3.0                                    # 砂時計で足す秒数
 
 
-KING_TIMES = (18.0, 42.0)                           # 王様が出る時刻（ラウンドの中で 2 回）
+EXTRA_MAX = 9.0                                     # 1 ステージで延びる上限（砂時計 3 つぶん）
 
 
 KING_COMBO = 3                                      # 王様を倒すとコンボが伸びる数
@@ -167,6 +190,8 @@ def sound_bytes(kind: str) -> bytes:
         samples = array("h", (int(v * (0.7 + 0.3 * math.sin(i / 40))) for i, v in enumerate(tone(180, 0.5, VOLUME * 0.9))))
     elif kind == "ouch":                            # サボテン（チクッ）
         samples = tone(2400, 0.03, VOLUME * 0.9) + tone(300, 0.12, VOLUME * 0.7)
+    elif kind == "stage":                           # ステージが変わる（上がる 3 音）
+        samples = tone(660, 0.1) + tone(880, 0.1) + tone(1100, 0.22)
     elif kind == "shell":                           # カメがこもる（コトッ）
         samples = noise(0.05, VOLUME * 0.9, 60.0, 12) + tone(260, 0.08, VOLUME * 0.6)
     elif kind == "best":
@@ -182,7 +207,7 @@ def sound_bytes(kind: str) -> bytes:
     return buffer.getvalue()
 
 
-EVENTS = ("pop", "miss", "clank", "hop", "hit", "tick", "gold", "king", "shell", "ouch", "buzz", "bomb", "end")   # 目立つ順
+EVENTS = ("pop", "miss", "clank", "hop", "hit", "tick", "gold", "king", "shell", "ouch", "buzz", "bomb", "stage", "end")   # 目立つ順
 
 
 SOUNDS = EVENTS + ("best",)
@@ -244,6 +269,12 @@ GAUGE = (60, 60, 70)
 
 
 GAUGE_ON = (255, 200, 80)
+
+
+LID = (150, 110, 60)
+
+
+LID_EDGE = (190, 150, 90)
 
 
 @dataclass(frozen=True)
@@ -815,8 +846,18 @@ class Hole:
             return 1.0
         return 0.0
 
+    lids: bool = False                              # ふた付きの穴か（ステージで決まる）
+
+    def lid_open(self, now: float) -> bool:
+        """ふたが開いているか。周期 LID_PERIOD のうち LID_OPEN 秒だけ開く。穴ごとに位相をずらす。"""
+        if not self.lids:
+            return True
+        return (now + self.index * 0.37) % LID_PERIOD < LID_OPEN
+
     def visible(self, now: float) -> bool:
-        """おばけは UP の間 BLINK 秒ごとに見え隠れする。ほかは出ていれば見える。"""
+        """おばけは UP の間 BLINK 秒ごとに見え隠れする。ふたが閉じていれば見えない。ほかは出ていれば見える。"""
+        if not self.lid_open(now):
+            return False
         if self.kind == "ghost" and self.state == State.UP:
             return int((now - self.since) / BLINK) % 2 == 0
         return True
@@ -868,7 +909,11 @@ class Best:
 class World:
     seed: int = 0
     luck: random.Random = field(default_factory=random.Random)
-    holes: list[Hole] = field(default_factory=lambda: [Hole(index=i) for i in range(COLS * ROWS)])
+    holes: list[Hole] = field(default_factory=list)
+    stage: int = 0                                  # いまのステージ（0 から）
+    stage_start: float = 0.0                        # このステージが始まった時刻
+    pause_until: float = 0.0                        # ステージの間の休み（この時刻まで出さない）
+    kings_this_stage: int = 0
     time: float = 0.0
     started: bool = False
     over: bool = False
@@ -892,6 +937,26 @@ class World:
 
     def __post_init__(self):
         self.luck = random.Random(self.seed)
+        self.holes = self.new_holes()
+
+    @property
+    def spec(self) -> dict:
+        return STAGES[min(self.stage, len(STAGES) - 1)]
+
+    @property
+    def cols(self) -> int:
+        return self.spec["cols"]
+
+    @property
+    def rows(self) -> int:
+        return self.spec["rows"]
+
+    def new_holes(self) -> list[Hole]:
+        return [Hole(index=i, lids=self.spec["lids"]) for i in range(self.cols * self.rows)]
+
+    def stage_left(self) -> float:
+        """このステージの残り秒数（砂時計のぶん伸びる）。"""
+        return max(0.0, self.stage_start + STAGE_TIME + self.extra - self.time)
 
     @property
     def multiplier(self) -> int:
@@ -900,11 +965,6 @@ class World:
     def tell(self, text: str, seconds: float = 1.0) -> None:
         self.note = text
         self.note_until = self.time + seconds
-
-    @property
-    def limit(self) -> float:
-        """ラウンドの長さ（砂時計のぶん伸びる）。"""
-        return ROUND + self.extra
 
     def place(self, hole: Hole, kind: str, swarm: int = 0) -> None:
         """穴にキャラを出す。表から点・回数・時間を引く。"""
@@ -922,13 +982,16 @@ class World:
         empty = [h for h in self.holes if h.state == State.EMPTY]
         if not empty:
             return None
-        if self.kings_done < len(KING_TIMES) and self.time >= KING_TIMES[self.kings_done]:
+        king_at = self.spec["king_at"]
+        if king_at is not None and self.kings_this_stage == 0 and self.time - self.stage_start >= king_at:
+            self.kings_this_stage += 1
             self.kings_done += 1
             hole = self.luck.choice(empty)
             self.place(hole, "king")
             return hole
-        names = [k for k in KINDS if KINDS[k]["weight"] > 0]
-        weights = [KINDS[k]["weight"] * ((0.4 + 1.2 * self.time / ROUND) if k == "hourglass" else 1.0) for k in names]
+        table = self.spec["weights"] or {k: v["weight"] for k, v in KINDS.items()}
+        names = [k for k in table if table[k] > 0]
+        weights = [table[k] for k in names]
         kind = self.luck.choices(names, weights=weights)[0]
         if kind == "mouse" and len(empty) >= SWARM:
             self.swarm_count += 1
@@ -944,9 +1007,9 @@ class World:
 
     def hop(self, hole: Hole) -> bool:
         """スライムが隣の空いた穴へ跳ねる。跳べる穴が無ければ False。"""
-        col, row = hole.index % COLS, hole.index // COLS
+        col, row = hole.index % self.cols, hole.index // self.cols
         near = [h for h in self.holes if h.state == State.EMPTY
-                and abs(h.index % COLS - col) + abs(h.index // COLS - row) == 1]
+                and abs(h.index % self.cols - col) + abs(h.index // self.cols - row) == 1]
         if not near:
             return False
         target = self.luck.choice(near)
@@ -961,11 +1024,26 @@ class World:
             return None
         self.time += dt
         happened = None
-        if self.time >= self.limit:
-            self.over = True
-            for hole in self.holes:
-                hole.enter(State.EMPTY, self.time)
-            return "end"
+        if self.time < self.pause_until:            # ステージの間の休み
+            return None
+        if self.stage_left() <= 0:                  # ステージ終了 → 次へ。最後なら終わり
+            self.stage += 1
+            self.extra = 0.0
+            if self.stage >= len(STAGES):
+                self.stage = len(STAGES) - 1
+                self.over = True
+                for hole in self.holes:
+                    hole.enter(State.EMPTY, self.time)
+                return "end"
+            self.holes = self.new_holes()
+            self.swarms = {}
+            self.kings_this_stage = 0
+            self.bees_until = self.numb_until = 0.0
+            self.stage_start = self.time + STAGE_PAUSE
+            self.pause_until = self.time + STAGE_PAUSE
+            self.next_pop = self.stage_start + 0.6
+            self.tell(f"ステージ {self.stage + 1}：{self.spec['name']}", STAGE_PAUSE)
+            return "stage"
         for hole in self.holes:
             passed = self.time - hole.since
             if hole.state == State.RISING and passed >= RISE:
@@ -1049,7 +1127,7 @@ class World:
                        "king": f"王様！ あと {hole.armor} 回", "slime": "スライム！ もう 1 回"}[hole.kind])
             return "clank"
         if hole.kind == "hourglass":                # 点ではなく時間
-            self.extra += TIME_BONUS
+            self.extra = min(EXTRA_MAX, self.extra + TIME_BONUS)
             hole.enter(State.HIT, self.time)
             self.tell(f"砂時計 +{TIME_BONUS:.0f} 秒", 1.2)
             return "tick"
@@ -1084,32 +1162,48 @@ class World:
         return min(self.reactions) if self.reactions else 0.0
 
 
-def hole_rect(index: int) -> tuple[int, int, int, int]:
+def cell_size(cols: int, rows: int) -> tuple[int, int]:
+    """穴 1 つの幅と高さ。4 行のときは低く（板に収める）。"""
+    return WIDTH // cols, 22 if rows <= 3 else 16
+
+
+def hole_rect(index: int, cols: int = 3, rows: int = 3) -> tuple[int, int, int, int]:
     """穴 index の四角 (x, y, w, h)。"""
-    col, row = index % COLS, index // COLS
-    return col * CELL_W, TOP + row * CELL_H, CELL_W, CELL_H
+    w, h = cell_size(cols, rows)
+    col, row = index % cols, index // cols
+    return col * w, TOP + row * h, w, h
 
 
 def draw(screen: Screen, world: World) -> None:
     """草の地面 → 穴（奥の行から）→ モグラ（穴の縁より下は隠す）→ ハンマー → 残り時間の棒。"""
     scale = screen.width // WIDTH
-    screen.band(0, screen.height, GRASS)
-    for row in range(ROWS):                         # 草の色を行ごとに少し変える（奥行き）
-        y = (TOP + row * CELL_H) * scale
-        screen.band(y, y + CELL_H * scale, GRASS if row % 2 else GRASS_DARK)
+    cols, rows = world.cols, world.rows
+    cw, ch = cell_size(cols, rows)
+    grass = world.spec["grass"]
+    dark = tuple(int(c * 0.86) for c in grass)
+    screen.band(0, screen.height, grass)
+    for row in range(rows):                         # 草の色を行ごとに少し変える（奥行き）
+        y = (TOP + row * ch) * scale
+        screen.band(y, y + ch * scale, grass if row % 2 else dark)
+    rx = min(15, cw // 2 - 3)
     for index, hole in enumerate(world.holes):
-        x, y, w, h = hole_rect(index)
-        cx, cy = (x + w / 2) * scale, (y + h - 4) * scale          # 穴は升の下のほう
-        screen.ellipse(cx, cy, 15 * scale, 3.5 * scale, HOLE_RIM)
-        screen.ellipse(cx, cy, 13 * scale, 2.5 * scale, HOLE)
+        x, y, w, h = hole_rect(index, cols, rows)
+        cx, cy = (x + w / 2) * scale, (y + h - 3) * scale          # 穴は升の下のほう
+        screen.ellipse(cx, cy, rx * scale, 3.0 * scale, HOLE_RIM)
+        screen.ellipse(cx, cy, (rx - 2) * scale, 2.2 * scale, HOLE)
         lift = hole.lift(world.time)
-        if lift > 0 and hole.visible(world.time):
+        open_lid = hole.lid_open(world.time)
+        if lift > 0 and open_lid and hole.visible(world.time):
             face, hit_face = SPRITES[hole.kind]
             spr = hit_face if hole.state in (State.HIT, State.SHELL) else (HELMET_CRACKED if hole.kind == "helmet" and hole.armor == 1 else face)
             top_y = cy - spr.height * scale * lift                 # 出ているぶんだけ上に
             screen.blit(spr, int(cx - spr.width * scale / 2), int(top_y), scale, clip_bottom=int(cy))
-        screen.ellipse(cx, cy, 15 * scale, 3.5 * scale, HOLE_RIM)   # 穴の手前の縁（モグラの下端を隠す）
-        screen.ellipse(cx, cy + 1.2 * scale, 13 * scale, 2.0 * scale, HOLE)
+        screen.ellipse(cx, cy, rx * scale, 3.0 * scale, HOLE_RIM)   # 穴の手前の縁（モグラの下端を隠す）
+        screen.ellipse(cx, cy + 1.2 * scale, (rx - 2) * scale, 1.8 * scale, HOLE)
+        if hole.lids and not open_lid:                             # ふた：穴にかぶせた丸い板と取っ手
+            screen.ellipse(cx, cy - 1 * scale, (rx + 1) * scale, 4.0 * scale, LID_EDGE)
+            screen.ellipse(cx, cy - 1.5 * scale, (rx - 1) * scale, 2.8 * scale, LID)
+            screen.box(int(cx - 1.5 * scale), int(cy - 4 * scale), int(3 * scale), int(2 * scale), LID_EDGE)
     if world.time < world.bees_until:               # ハチ：黄色い点が飛び回る（時間から決まる動き。乱数なし）
         left = world.bees_until - world.time
         for k in range(8):
@@ -1125,26 +1219,39 @@ def draw(screen: Screen, world: World) -> None:
         screen.box(screen.width - thick, 0, thick, screen.height, NUMB)
     if world.hammer is not None and world.time - world.hammer[1] < 0.2:   # 振り下ろしたハンマー
         index, when = world.hammer
-        x, y, w, h = hole_rect(index)
-        swing = (world.time - when) / 0.2
-        screen.blit(HAMMER, int((x + w / 2 - 5 + 6) * scale), int((y + 2 + 6 * swing) * scale), scale)
-    bar_y = (TOP + ROWS * CELL_H + 1) * scale                       # 残り時間の棒
+        if index < len(world.holes):
+            x, y, w, h = hole_rect(index, cols, rows)
+            swing = (world.time - when) / 0.2
+            screen.blit(HAMMER, int((x + w / 2 + 1) * scale), int((y + 1 + 5 * swing) * scale), scale)
+    bar_y = (TOP + rows * ch + 1) * scale                           # このステージの残り時間の棒
     screen.box(2 * scale, bar_y, (WIDTH - 4) * scale, 2 * scale, GAUGE)
-    left = max(0.0, ROUND - world.time) / ROUND
-    screen.box(2 * scale, bar_y, int((WIDTH - 4) * scale * left), 2 * scale, GAUGE_ON)
+    left = world.stage_left() / (STAGE_TIME + world.extra) if world.started else 1.0
+    screen.box(2 * scale, bar_y, int((WIDTH - 4) * scale * max(0.0, min(1.0, left))), 2 * scale, GAUGE_ON)
 
 
-KEYPAD = {"7": 0, "8": 1, "9": 2, "4": 3, "5": 4, "6": 5, "1": 6, "2": 7, "3": 8}   # テンキーの並び → 穴の番号
+def keypad(cols: int, rows: int) -> dict[str, int]:
+    """キー → 穴の番号。穴の並びと同じ形に並んだキーの列（KEYMAPS）から作る。"""
+    table = {}
+    for r, line in enumerate(KEYMAPS[(cols, rows)]):
+        for c, ch in enumerate(line):
+            table[ch] = (r % rows) * cols + c
+    return table
+
+
+ALL_KEYS = set("123456789qwerasdfzxcv")
 
 
 def obey(world: World, key: str) -> str | None:
-    """キーを 1 つ受ける。数字は穴を叩く、go は始める。出来事を返す。"""
+    """キーを 1 つ受ける。穴のキーは叩く、go は始める。出来事を返す。"""
     if key == "go":
         if not world.started:
             world.started = True
+            world.stage_start = world.time
+            world.next_pop = world.time + 0.8
         return None
-    if key in KEYPAD:
-        return world.whack(KEYPAD[key])
+    table = keypad(world.cols, world.rows)
+    if key in table:
+        return world.whack(table[key])
     return None
 
 
@@ -1165,6 +1272,7 @@ react_label = document.querySelector("#react")
 best_label = document.querySelector("#best")
 fps_label = document.querySelector("#fps")
 note_label = document.querySelector("#note")
+stage_label = document.querySelector("#stage")
 message = document.querySelector("#message")
 again_button = document.querySelector("#again")
 go_button = document.querySelector("#go")
@@ -1210,7 +1318,8 @@ frames = []
 def refresh() -> None:
     draw(screen, world)
     screen.flush()
-    time_label.textContent = f"{max(0.0, world.limit - world.time):.1f}"
+    time_label.textContent = f"{world.stage_left() if world.started else STAGE_TIME:.1f}"
+    stage_label.textContent = f"{world.stage + 1}/{len(STAGES)} {world.spec['name']}"
     score_label.textContent = str(world.score)
     combo_label.textContent = f"{world.combo}（×{world.multiplier}）"
     hits_label.textContent = str(world.hits)
@@ -1224,7 +1333,8 @@ def refresh() -> None:
                                f"反応 平均 {world.average_reaction():.2f} 秒・最速 {world.fastest_reaction():.2f} 秒"
                                + ("  ベスト更新！" if improved else ""))
     elif not world.started:
-        message.textContent = "「スタート」で 60 秒。穴をタップ（または 7 8 9 / 4 5 6 / 1 2 3 のキー）で叩く。爆弾は叩かない"
+        message.textContent = (f"「スタート」で {len(STAGES)} ステージ（{STAGE_TIME:.0f} 秒ずつ）。穴をタップ、またはキー"
+                               "（3×3 は 7 8 9 / 4 5 6 / 1 2 3、4×3 は q w e r / a s d f / z x c v、4×4 は 1 2 3 4 / q w e r / a s d f / z x c v）で叩く。爆弾は叩かない")
     else:
         message.textContent = ""
     again_button.hidden = not world.over
@@ -1260,7 +1370,7 @@ async def loop():
 def on_down(event):
     if event.repeat:
         return
-    if event.key in KEYPAD:
+    if event.key in ALL_KEYS:
         event.preventDefault()
         speaker.say(obey(world, event.key))
     elif event.key in (" ", "Enter"):
@@ -1276,13 +1386,15 @@ def tap(event):
     rect = canvas.getBoundingClientRect()
     x = (event.clientX - rect.left) / rect.width * WIDTH
     y = (event.clientY - rect.top) / rect.height * HEIGHT
-    col = min(COLS - 1, max(0, int(x // CELL_W)))
-    row = min(ROWS - 1, max(0, int((y - TOP) // CELL_H)))
+    cols, rows = world.cols, world.rows
+    cw, ch = cell_size(cols, rows)
+    col = min(cols - 1, max(0, int(x // cw)))
+    row = min(rows - 1, max(0, int((y - TOP) // ch)))
     if not world.started:
         obey(world, "go")
         refresh()
         return
-    speaker.say(world.whack(row * COLS + col))
+    speaker.say(world.whack(row * cols + col))
 
 
 @when("click", "#go")
