@@ -49,6 +49,10 @@ GATE_R = 16.0                                       # 輪の半径
 GATE_GAP = 130.0                                    # 輪の間隔（m）
 GATE_FIRST = 200.0                                  # 最初の輪までの距離
 MISS_PENALTY = 3.0                                  # 輪を外したときに足す秒数
+BOOST_SPEED = 25.0                                  # 輪をくぐった直後の加速（m/s）
+BOOST_TIME = 1.0                                    # ブーストの長さ（秒）。連続なら +0.3 秒ずつ、2.5 秒まで
+LOW_ALT = 8.0                                       # これより低く飛ぶと「低空」
+LOW_BONUS = 0.5                                     # 低空 1 秒ごとに引く秒数
 SPEEDS = (55.0, 80.0, 110.0)                        # スロットル 3 段階の速さ（m/s）
 ROLL_RATE = 2.8                                     # ロールの速さ（ラジアン/秒）。きびきび
 LEVEL_RATE = 1.6                                    # 手を離したとき水平に戻る速さ（ロール）
@@ -93,6 +97,8 @@ PROP_COLOR = (40, 40, 44)
 SHADOW_COLOR = (40, 70, 40)
 GAUGE = (120, 200, 140)
 GAUGE_BG = (28, 30, 34)
+BOOST_COLOR = (255, 170, 60)
+LOW_COLOR = (255, 230, 90)
 MARK = (255, 240, 160)
 BUMP_RED = (240, 70, 60)
 RATE = 22050
@@ -131,6 +137,8 @@ def sound_bytes(kind: str) -> bytes:
         samples = tone(1047, 0.07) + tone(1319, 0.07) + tone(1568, 0.14)
     elif kind == "miss":
         samples = tone(330, 0.12, VOLUME * 0.8) + tone(262, 0.16, VOLUME * 0.8)
+    elif kind == "low":
+        samples = tone(1760, 0.04, VOLUME * 0.6) + tone(2093, 0.05, VOLUME * 0.6)
     elif kind == "bump":
         samples = noise(0.3, VOLUME * 1.6, 12.0, 4) + tone(110, 0.2, VOLUME)
     elif kind == "best":
@@ -146,7 +154,7 @@ def sound_bytes(kind: str) -> bytes:
     return buffer.getvalue()
 
 
-EVENTS = ("count", "go", "gate", "miss", "bump", "finish")
+EVENTS = ("count", "go", "low", "gate", "miss", "bump", "finish")
 SOUNDS = EVENTS + ("best",)
 
 
@@ -583,6 +591,9 @@ class World:
     misses: int = 0
     combo: int = 0
     finished_at: float | None = None
+    boost: float = 0.0                              # ブーストの残り秒数
+    low_time: float = 0.0                           # 低空を続けている秒数（1 秒ごとにボーナス）
+    low_total: float = 0.0                          # 低空で稼いだ秒数
     note: str = ""
     note_until: float = -1.0
     cam_pos: V = V(0.0, 0.0, 0.0)
@@ -627,19 +638,44 @@ class World:
         if want:
             self.frame = self.frame.pitch(want)
         self.frame = self.frame.tidy()
-        target = SPEEDS[self.throttle]
-        self.speed += (target - self.speed) * min(1.0, 0.8 * dt)
+        target = SPEEDS[self.throttle] + (BOOST_SPEED if self.boost > 0 else 0.0)
+        self.speed += (target - self.speed) * min(1.0, (2.5 if self.boost > 0 else 0.8) * dt)
         self.speed -= 9.8 * self.frame.forward.y * CLIMB_DRAG * dt
-        self.speed = max(30.0, min(130.0, self.speed))
+        self.speed = max(30.0, min(140.0, self.speed))
         self.pos = self.pos + self.frame.forward.scale(self.speed * dt)
         self.prop_spin += self.speed * 0.4 * dt
 
+    def hit_prop(self) -> V | None:
+        """岩柱や橋にめり込んでいれば、押し出す向き（法線）を返す。"""
+        for prop in PROPS:
+            d = self.pos - prop.pos
+            if abs(d.x) > 80 or abs(d.z) > 80:
+                continue
+            if prop.kind == "pillar":
+                if abs(d.x) < 5.5 and abs(d.z) < 5.5 and d.y < prop.size + 2:
+                    n = V(d.x, 0.0, d.z).unit() if math.hypot(d.x, d.z) > 0.1 else V(1.0, 0.0, 0.0)
+                    return n if d.y < prop.size - 2 else V(0, 1, 0)   # 上面ならはね上げる
+                continue
+            side = V(prop.dir.z, 0.0, -prop.dir.x)
+            along, across = d.dot(prop.dir), d.dot(side)
+            if abs(along) < 4.5 and abs(across) < prop.size / 2 + 2 and abs(d.y) < 3.5:   # 梁
+                return V(0, -1.0, 0) if d.y < 0 else V(0, 1.0, 0)
+            for sign in (-1, 1):                                                    # 両端の柱
+                if abs(along) < 3.5 and abs(across - sign * prop.size / 2) < 3.5 and d.y < 2:
+                    return prop.dir.scale(1 if along > 0 else -1)
+        return None
+
     def collide(self) -> bool:
-        """地面や壁にめり込んだら、法線の向きに押し出して、進む向きを跳ね返す。"""
+        """地面や壁、岩柱や橋にめり込んだら、法線の向きに押し出して、進む向きを跳ね返す。"""
         floor = ground_at(self.pos.x, self.pos.z) + 2.5
-        if self.pos.y >= floor:
+        n = self.hit_prop()
+        if n is None and self.pos.y >= floor:
             return False
-        n = ground_normal(self.pos.x, self.pos.z)
+        if n is None:
+            n = ground_normal(self.pos.x, self.pos.z)
+        else:
+            floor = self.pos.y                          # 障害物：地面には触っていない
+            self.pos = self.pos + n.scale(6.0)          # めり込みから出す
         f = self.frame.forward
         bounced = (f - n.scale(2 * f.dot(n))).scale(0.6) + n.scale(0.4)   # 反射して、少し法線の向きへ
         level = V(bounced.x, 0.0, bounced.z)        # 横向きの成分。真上に跳ねそうなら、もとの向きの横成分を使う
@@ -653,6 +689,7 @@ class World:
         self.hurt = 0.8
         self.bumps += 1
         self.combo = 0
+        self.boost = 0.0
         return True
 
     def update(self, dt: float) -> str | None:
@@ -678,11 +715,22 @@ class World:
             return None
         self.time += dt
         self.hurt = max(0.0, self.hurt - dt)
+        self.boost = max(0.0, self.boost - dt)
         before = self.pos
         self.fly(dt)
         if self.collide():
             self.tell("ぶつかった！", 1.0)
             happened = "bump"
+        if self.altitude() < LOW_ALT and self.speed > 50:   # 低空：1 秒続けるごとにタイムを引く
+            self.low_time += dt
+            if self.low_time >= 1.0:
+                self.low_time -= 1.0
+                self.low_total += LOW_BONUS
+                self.penalty -= LOW_BONUS
+                self.tell(f"低空！ −{LOW_BONUS} 秒", 1.0)
+                happened = happened or "low"
+        else:
+            self.low_time = 0.0
         self.hint, self.s = locate(self.pos, self.hint)
         gate = self.gates[self.next]
         side_before = (before - gate.pos).dot(gate.dir)
@@ -707,7 +755,8 @@ class World:
         if hit:
             gate.state = "hit"
             self.combo += 1
-            self.tell(f"輪 {self.next + 1}/{GATES}" + (f"  {self.combo} 連続" if self.combo > 1 else ""))
+            self.boost = min(2.5, BOOST_TIME + 0.3 * (self.combo - 1))   # くぐるとブースト。連続なら長く
+            self.tell(f"輪 {self.next + 1}/{GATES}  ブースト" + (f"  {self.combo} 連続" if self.combo > 1 else ""))
         else:
             gate.state = "miss"
             self.misses += 1
@@ -1000,11 +1049,12 @@ def draw_hud(screen: Screen, world: World) -> None:
     """板の中の表示：速さの棒（左下）、高度の棒（右下）、ぶつかった直後の赤い縁。文字は HTML と端末の行に任せる。"""
     scale = screen.width / WIDTH
     w, h = screen.width, screen.height
-    for x0, value, top_value in ((4 * scale, world.speed, 130.0), (w - 7 * scale, world.altitude(), 150.0)):
+    for x0, value, top_value, color in ((4 * scale, world.speed, 140.0, BOOST_COLOR if world.boost > 0 else GAUGE),
+                                        (w - 7 * scale, world.altitude(), 150.0, LOW_COLOR if world.altitude() < LOW_ALT else GAUGE)):
         bar_h, y1 = 24 * scale, h - 4 * scale
         screen.fill([(x0, y1 - bar_h), (x0 + 3 * scale, y1 - bar_h), (x0 + 3 * scale, y1), (x0, y1)], GAUGE_BG)
         fill_h = bar_h * max(0.0, min(1.0, value / top_value))
-        screen.fill([(x0, y1 - fill_h), (x0 + 3 * scale, y1 - fill_h), (x0 + 3 * scale, y1), (x0, y1)], GAUGE)
+        screen.fill([(x0, y1 - fill_h), (x0 + 3 * scale, y1 - fill_h), (x0 + 3 * scale, y1), (x0, y1)], color)
     if world.hurt > 0:
         thick = int(3 * scale)
         screen.fill([(0, 0), (w, 0), (w, thick), (0, thick)], BUMP_RED)
@@ -1334,6 +1384,34 @@ def check() -> None:
         world.update(STEP)
     assert world.pos.y - y0 < 40 and abs(world.frame.climb()) < 0.05, (world.pos.y - y0, world.frame.climb())
     print(f"  {world.time:.1f} 秒で壁。法線の向きに押し出され、進む向きが反射する（機首は 17° まで）。2 秒で水平、上がるのは {world.pos.y - y0:.0f} m")
+    print("● 岩柱と橋に当たる")
+    world = World(seed=1)
+    world.started = True
+    world.clock = 0.0
+    world.time = 0.001
+    pillar = next(p for p in PROPS if p.kind == "pillar")
+    world.pos = pillar.pos + V(-9.0, pillar.size * 0.5, 0.0)
+    world.frame = Frame(V(1, 0, 0), V(0, 1, 0), V(0, 0, -1)).tidy()   # 岩柱へ真横から
+    got = [world.update(STEP) for _ in range(12)]
+    assert "bump" in got and world.bumps == 1 and world.frame.forward.x < 0.3, (got, world.frame.forward)
+    bridge = next(p for p in PROPS if p.kind == "bridge")
+    world = World(seed=1)
+    world.started = True
+    world.clock = 0.0
+    world.time = 0.001
+    world.pos = bridge.pos - bridge.dir.scale(8.0)                 # 梁の高さで正面から
+    world.frame = Frame(bridge.dir, V(0, 1, 0), V(0, 1, 0).cross(bridge.dir).unit()).tidy()
+    got = [world.update(STEP) for _ in range(12)]
+    assert "bump" in got, got
+    world = World(seed=1)
+    world.started = True
+    world.clock = 0.0
+    world.time = 0.001
+    world.pos = bridge.pos - bridge.dir.scale(8.0) - V(0, 12.0, 0)   # 梁の 12 m 下（輪の高さ）なら通れる
+    world.frame = Frame(bridge.dir, V(0, 1, 0), V(0, 1, 0).cross(bridge.dir).unit()).tidy()
+    got = [world.update(STEP) for _ in range(12)]
+    assert "bump" not in got, got
+    print("  岩柱に当たると跳ね返り、橋は梁に当たると跳ね返るが、下はくぐれる")
     print("● 輪の判定")
     world = World(seed=1)
     world.started = True
@@ -1345,13 +1423,32 @@ def check() -> None:
     world.hint, world.s = locate(world.pos, 0)
     got = [world.update(STEP) for _ in range(8)]
     assert "gate" in got and world.next == 1 and gate.state == "hit" and world.combo == 1, got
+    assert world.boost > 0.5, "くぐるとブースト"
+    speed0 = world.speed
+    for _ in range(15):
+        world.update(STEP)
+    assert world.speed > speed0 + 5, "ブースト中は速くなる"
     gate2 = world.gates[1]
     world.pos = gate2.pos - gate2.dir.scale(5.0) + V(0, GATE_R * 1.3, 0)
     world.frame = Frame(gate2.dir, V(0, 1, 0), V(0, 1, 0).cross(gate2.dir).unit()).tidy()
     world.hint, world.s = locate(world.pos, world.hint)
     got = [world.update(STEP) for _ in range(8)]
     assert "miss" in got and world.next == 2 and gate2.state == "miss" and world.penalty == MISS_PENALTY and world.combo == 0, got
-    print(f"  中なら「くぐった」で連続が伸び、外したら +{MISS_PENALTY:.0f} 秒で次へ（戻らない）")
+    print(f"  中なら「くぐった」で連続が伸びてブースト、外したら +{MISS_PENALTY:.0f} 秒で次へ（戻らない）")
+    print("● 低空ボーナス")
+    world = World(seed=1)
+    world.started = True
+    world.clock = 0.0
+    world.time = 0.001
+    world.gates = [Gate(V(9e5, 0, 9e5), V(0, 0, 1), 9e9)]   # 輪に届かないように遠くへ
+    world.pos = V(world.pos.x, ground_at(world.pos.x, world.pos.z) + 5.0, world.pos.z)
+    lows = 0
+    for _ in range(75):
+        world.pos = V(world.pos.x, ground_at(world.pos.x, world.pos.z) + 5.0, world.pos.z)   # 低空を保つ
+        if world.update(STEP) == "low":
+            lows += 1
+    assert lows == 2 and world.penalty == -2 * LOW_BONUS, (lows, world.penalty)
+    print(f"  高度 {LOW_ALT:.0f} m 未満を 1 秒続けるごとに −{LOW_BONUS} 秒（2.5 秒で 2 回）")
     print("● 自動操縦で 1 本")
     world = World(seed=2)
     world.started = True

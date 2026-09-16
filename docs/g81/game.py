@@ -89,6 +89,18 @@ GATE_FIRST = 200.0                                  # 最初の輪までの距�
 MISS_PENALTY = 3.0                                  # 輪を外したときに足す秒数
 
 
+BOOST_SPEED = 25.0                                  # 輪をくぐった直後の加速（m/s）
+
+
+BOOST_TIME = 1.0                                    # ブーストの長さ（秒）。連続なら +0.3 秒ずつ、2.5 秒まで
+
+
+LOW_ALT = 8.0                                       # これより低く飛ぶと「低空」
+
+
+LOW_BONUS = 0.5                                     # 低空 1 秒ごとに引く秒数
+
+
 SPEEDS = (55.0, 80.0, 110.0)                        # スロットル 3 段階の速さ（m/s）
 
 
@@ -218,6 +230,12 @@ GAUGE = (120, 200, 140)
 GAUGE_BG = (28, 30, 34)
 
 
+BOOST_COLOR = (255, 170, 60)
+
+
+LOW_COLOR = (255, 230, 90)
+
+
 MARK = (255, 240, 160)
 
 
@@ -260,6 +278,8 @@ def sound_bytes(kind: str) -> bytes:
         samples = tone(1047, 0.07) + tone(1319, 0.07) + tone(1568, 0.14)
     elif kind == "miss":
         samples = tone(330, 0.12, VOLUME * 0.8) + tone(262, 0.16, VOLUME * 0.8)
+    elif kind == "low":
+        samples = tone(1760, 0.04, VOLUME * 0.6) + tone(2093, 0.05, VOLUME * 0.6)
     elif kind == "bump":
         samples = noise(0.3, VOLUME * 1.6, 12.0, 4) + tone(110, 0.2, VOLUME)
     elif kind == "best":
@@ -275,7 +295,7 @@ def sound_bytes(kind: str) -> bytes:
     return buffer.getvalue()
 
 
-EVENTS = ("count", "go", "gate", "miss", "bump", "finish")
+EVENTS = ("count", "go", "low", "gate", "miss", "bump", "finish")
 
 
 SOUNDS = EVENTS + ("best",)
@@ -695,6 +715,9 @@ class World:
     misses: int = 0
     combo: int = 0
     finished_at: float | None = None
+    boost: float = 0.0                              # ブーストの残り秒数
+    low_time: float = 0.0                           # 低空を続けている秒数（1 秒ごとにボーナス）
+    low_total: float = 0.0                          # 低空で稼いだ秒数
     note: str = ""
     note_until: float = -1.0
     cam_pos: V = V(0.0, 0.0, 0.0)
@@ -739,19 +762,44 @@ class World:
         if want:
             self.frame = self.frame.pitch(want)
         self.frame = self.frame.tidy()
-        target = SPEEDS[self.throttle]
-        self.speed += (target - self.speed) * min(1.0, 0.8 * dt)
+        target = SPEEDS[self.throttle] + (BOOST_SPEED if self.boost > 0 else 0.0)
+        self.speed += (target - self.speed) * min(1.0, (2.5 if self.boost > 0 else 0.8) * dt)
         self.speed -= 9.8 * self.frame.forward.y * CLIMB_DRAG * dt
-        self.speed = max(30.0, min(130.0, self.speed))
+        self.speed = max(30.0, min(140.0, self.speed))
         self.pos = self.pos + self.frame.forward.scale(self.speed * dt)
         self.prop_spin += self.speed * 0.4 * dt
 
+    def hit_prop(self) -> V | None:
+        """岩柱や橋にめり込んでいれば、押し出す向き（法線）を返す。"""
+        for prop in PROPS:
+            d = self.pos - prop.pos
+            if abs(d.x) > 80 or abs(d.z) > 80:
+                continue
+            if prop.kind == "pillar":
+                if abs(d.x) < 5.5 and abs(d.z) < 5.5 and d.y < prop.size + 2:
+                    n = V(d.x, 0.0, d.z).unit() if math.hypot(d.x, d.z) > 0.1 else V(1.0, 0.0, 0.0)
+                    return n if d.y < prop.size - 2 else V(0, 1, 0)   # 上面ならはね上げる
+                continue
+            side = V(prop.dir.z, 0.0, -prop.dir.x)
+            along, across = d.dot(prop.dir), d.dot(side)
+            if abs(along) < 4.5 and abs(across) < prop.size / 2 + 2 and abs(d.y) < 3.5:   # 梁
+                return V(0, -1.0, 0) if d.y < 0 else V(0, 1.0, 0)
+            for sign in (-1, 1):                                                    # 両端の柱
+                if abs(along) < 3.5 and abs(across - sign * prop.size / 2) < 3.5 and d.y < 2:
+                    return prop.dir.scale(1 if along > 0 else -1)
+        return None
+
     def collide(self) -> bool:
-        """地面や壁にめり込んだら、法線の向きに押し出して、進む向きを跳ね返す。"""
+        """地面や壁、岩柱や橋にめり込んだら、法線の向きに押し出して、進む向きを跳ね返す。"""
         floor = ground_at(self.pos.x, self.pos.z) + 2.5
-        if self.pos.y >= floor:
+        n = self.hit_prop()
+        if n is None and self.pos.y >= floor:
             return False
-        n = ground_normal(self.pos.x, self.pos.z)
+        if n is None:
+            n = ground_normal(self.pos.x, self.pos.z)
+        else:
+            floor = self.pos.y                          # 障害物：地面には触っていない
+            self.pos = self.pos + n.scale(6.0)          # めり込みから出す
         f = self.frame.forward
         bounced = (f - n.scale(2 * f.dot(n))).scale(0.6) + n.scale(0.4)   # 反射して、少し法線の向きへ
         level = V(bounced.x, 0.0, bounced.z)        # 横向きの成分。真上に跳ねそうなら、もとの向きの横成分を使う
@@ -765,6 +813,7 @@ class World:
         self.hurt = 0.8
         self.bumps += 1
         self.combo = 0
+        self.boost = 0.0
         return True
 
     def update(self, dt: float) -> str | None:
@@ -790,11 +839,22 @@ class World:
             return None
         self.time += dt
         self.hurt = max(0.0, self.hurt - dt)
+        self.boost = max(0.0, self.boost - dt)
         before = self.pos
         self.fly(dt)
         if self.collide():
             self.tell("ぶつかった！", 1.0)
             happened = "bump"
+        if self.altitude() < LOW_ALT and self.speed > 50:   # 低空：1 秒続けるごとにタイムを引く
+            self.low_time += dt
+            if self.low_time >= 1.0:
+                self.low_time -= 1.0
+                self.low_total += LOW_BONUS
+                self.penalty -= LOW_BONUS
+                self.tell(f"低空！ −{LOW_BONUS} 秒", 1.0)
+                happened = happened or "low"
+        else:
+            self.low_time = 0.0
         self.hint, self.s = locate(self.pos, self.hint)
         gate = self.gates[self.next]
         side_before = (before - gate.pos).dot(gate.dir)
@@ -819,7 +879,8 @@ class World:
         if hit:
             gate.state = "hit"
             self.combo += 1
-            self.tell(f"輪 {self.next + 1}/{GATES}" + (f"  {self.combo} 連続" if self.combo > 1 else ""))
+            self.boost = min(2.5, BOOST_TIME + 0.3 * (self.combo - 1))   # くぐるとブースト。連続なら長く
+            self.tell(f"輪 {self.next + 1}/{GATES}  ブースト" + (f"  {self.combo} 連続" if self.combo > 1 else ""))
         else:
             gate.state = "miss"
             self.misses += 1
@@ -1109,11 +1170,12 @@ def draw_hud(screen: Screen, world: World) -> None:
     """板の中の表示：速さの棒（左下）、高度の棒（右下）、ぶつかった直後の赤い縁。文字は HTML と端末の行に任せる。"""
     scale = screen.width / WIDTH
     w, h = screen.width, screen.height
-    for x0, value, top_value in ((4 * scale, world.speed, 130.0), (w - 7 * scale, world.altitude(), 150.0)):
+    for x0, value, top_value, color in ((4 * scale, world.speed, 140.0, BOOST_COLOR if world.boost > 0 else GAUGE),
+                                        (w - 7 * scale, world.altitude(), 150.0, LOW_COLOR if world.altitude() < LOW_ALT else GAUGE)):
         bar_h, y1 = 24 * scale, h - 4 * scale
         screen.fill([(x0, y1 - bar_h), (x0 + 3 * scale, y1 - bar_h), (x0 + 3 * scale, y1), (x0, y1)], GAUGE_BG)
         fill_h = bar_h * max(0.0, min(1.0, value / top_value))
-        screen.fill([(x0, y1 - fill_h), (x0 + 3 * scale, y1 - fill_h), (x0 + 3 * scale, y1), (x0, y1)], GAUGE)
+        screen.fill([(x0, y1 - fill_h), (x0 + 3 * scale, y1 - fill_h), (x0 + 3 * scale, y1), (x0, y1)], color)
     if world.hurt > 0:
         thick = int(3 * scale)
         screen.fill([(0, 0), (w, 0), (w, thick), (0, thick)], BUMP_RED)
@@ -1184,6 +1246,7 @@ time_label = document.querySelector("#time")
 ring_label = document.querySelector("#ring")
 miss_label = document.querySelector("#miss")
 combo_label = document.querySelector("#combo")
+low_label = document.querySelector("#low")
 speed_label = document.querySelector("#speed")
 alt_label = document.querySelector("#alt")
 heading_label = document.querySelector("#heading")
@@ -1240,6 +1303,7 @@ def refresh() -> None:
     time_label.textContent = clock_text(world.total())
     ring_label.textContent = f"{world.next}/{GATES}"
     miss_label.textContent = str(world.misses)
+    low_label.textContent = f"{world.low_total:.1f}"
     combo_label.textContent = str(world.combo)
     speed_label.textContent = f"{world.speed:.0f}"
     alt_label.textContent = f"{world.altitude():.0f}"
