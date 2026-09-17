@@ -18,6 +18,8 @@ apply_move() / count_stones() / move_name() / result_text() は
 play() が async になり、動きが終わるまで手番を渡さない。
 （3 回目）Tone.js で音を足した。置く「カッ」、裏返る「パタ」（枚数ぶん音程が上がる）、パス、終局の和音。
 鳴る時刻は動きと同じ計算から出している。
+（4 回目）postprocessing で光。置ける場所の輪と最後の石の印がにじんで光り、画面の隅が暗くなる。
+終局は勝った色の石が脈打って光り、カメラが盤のまわりを回る。
 """
 
 import asyncio
@@ -174,7 +176,9 @@ THREE = window.THREE
 ADDONS = window.ADDONS
 gsap = window.gsap                                    # 動きの補間。「y を 0.45 秒で 0.11 に、跳ねながら」を 1 行で
 Tone = window.Tone                                    # 音。楽器（Synth）を作って triggerAttackRelease(音名, 長さ, 時刻)
+PP = window.PP                                        # 後処理。描いた絵にブルーム（光のにじみ）とビネット（周辺減光）をかける
 VIEW = 480
+ORBIT_SPEED = 0.25                                    # 終局のカメラが盤を回る速さ（ラジアン／秒）
 SOUND_KEY = "g05-sound"                               # 音のオン／オフを覚えておく localStorage のキー
 
 WOOD = 0x7A4E2A        # 盤の木枠
@@ -195,7 +199,7 @@ renderer.setPixelRatio(min(2.0, window.devicePixelRatio))
 renderer.setSize(VIEW, VIEW, False)                   # False: CSS の大きさは触らない（スマホでは縮む）
 renderer.shadowMap.enabled = True                     # 石の影を落とす
 renderer.shadowMap.type = THREE.PCFSoftShadowMap
-renderer.toneMapping = THREE.ACESFilmicToneMapping
+renderer.toneMapping = THREE.NoToneMapping           # 色の丸め込みは後処理の最後で 1 回だけやる（2 重にかけると白っぽくなる）
 
 scene = THREE.Scene.new()
 scene.background = THREE.Color.new(0x1A1D24)
@@ -203,8 +207,16 @@ pmrem = THREE.PMREMGenerator.new(renderer)            # 「部屋」を映り込
 scene.environment = pmrem.fromScene(ADDONS.RoomEnvironment.new(), 0.04).texture
 
 camera = THREE.PerspectiveCamera.new(40, 1.0, 0.5, 100)
-camera.position.set(0.0, 9.8, 8.2)                    # 手前の斜め上から盤を見下ろす
+CAM_Y, CAM_R = 9.8, 8.2                               # カメラの高さと、盤の中心からの水平距離
+camera.position.set(0.0, CAM_Y, CAM_R)                # 手前の斜め上から盤を見下ろす
 camera.lookAt(0.0, 0.0, 0.0)
+
+# 後処理の列。描く → ブルーム＋ビネット＋色の丸め込み → 画面
+composer = PP.EffectComposer.new(renderer, js(frameBufferType=THREE.HalfFloatType))
+composer.addPass(PP.RenderPass.new(scene, camera))
+bloom = PP.BloomEffect.new(js(luminanceThreshold=1.5, luminanceSmoothing=0.2, intensity=1.0, mipmapBlur=True, radius=0.65))  # しきい値 1.5: 白い石のハイライト（1.3 前後）は光らず、emissive を足した物（2 以上）だけ光る
+vignette = PP.VignetteEffect.new(js(darkness=0.5, offset=0.3))
+composer.addPass(PP.EffectPass.new(camera, bloom, vignette, PP.ToneMappingEffect.new(js(mode=PP.ToneMappingMode.ACES_FILMIC))))
 
 key_light = THREE.DirectionalLight.new(0xFFF4E0, 1.8)   # 主光。少し暖かい色で右上から
 key_light.position.set(5.0, 10.0, 4.0)
@@ -257,8 +269,8 @@ STONE_GEO = THREE.CylinderGeometry.new(0.42, 0.42, 0.1, 40)
 side_mat = THREE.MeshStandardMaterial.new(js(color=0x8A8A88, roughness=0.5, metalness=0.0))
 black_mat = THREE.MeshPhysicalMaterial.new(js(color=STONE_BLACK, roughness=0.35, metalness=0.0,
                                               clearcoat=1.0, clearcoatRoughness=0.15, envMapIntensity=0.35))  # 映り込みが強いと黒が灰色になる
-white_mat = THREE.MeshPhysicalMaterial.new(js(color=STONE_WHITE, roughness=0.3, metalness=0.0,
-                                              clearcoat=1.0, clearcoatRoughness=0.2, envMapIntensity=0.5))
+white_mat = THREE.MeshPhysicalMaterial.new(js(color=STONE_WHITE, roughness=0.45, metalness=0.0,
+                                              clearcoat=0.8, clearcoatRoughness=0.35, envMapIntensity=0.5))  # 白はつやを抑える。強いと光の反射がブルームに拾われる
 STONE_MATS = to_js([side_mat, black_mat, white_mat])   # CylinderGeometry の面の順: 側面・上面・下面
 FACE_UP = {BLACK: 0.0, WHITE: math.pi}                 # 色 → 石の回転（x 軸まわり）
 
@@ -273,10 +285,10 @@ for row in range(SIZE):
         scene.add(stone)
         stones.append(stone)
 
-# 置ける場所の印。薄い輪
+# 置ける場所の印。淡く光る輪（emissive をしきい値より明るくして、ブルームに拾わせる）
 RING_GEO = THREE.TorusGeometry.new(0.3, 0.035, 8, 40)
-ring_mat = THREE.MeshBasicMaterial.new(js(color=0xFFFFFF, transparent=True, opacity=0.35))
-ring_hover_mat = THREE.MeshBasicMaterial.new(js(color=0xFFFFFF, transparent=True, opacity=0.8))
+ring_mat = THREE.MeshStandardMaterial.new(js(color=0xFFFFFF, emissive=0xFFF3C0, emissiveIntensity=2.0, transparent=True, opacity=0.5))
+ring_hover_mat = THREE.MeshStandardMaterial.new(js(color=0xFFFFFF, emissive=0xFFF3C0, emissiveIntensity=4.0, transparent=True, opacity=0.95))
 rings = []
 for row in range(SIZE):
     for col in range(SIZE):
@@ -360,7 +372,7 @@ sound_button.className = "mode is-on" if speaker.on else "mode"
 
 # 最後に置いた石の印。小さな赤い玉
 marker = THREE.Mesh.new(THREE.SphereGeometry.new(0.07, 16, 12),
-                        THREE.MeshStandardMaterial.new(js(color=0xE0483A, roughness=0.4, metalness=0.0)))
+                        THREE.MeshStandardMaterial.new(js(color=0xE0483A, emissive=0xFF3A2A, emissiveIntensity=3.0, roughness=0.4)))
 marker.visible = False
 scene.add(marker)
 
@@ -401,6 +413,8 @@ state = {
     "hover": None,      # マウスが乗っているマス
     "last": None,       # 最後に置いたマス
     "busy": False,      # 石が動いているあいだ True。クリックを受けない
+    "orbit": False,     # 終局。カメラが盤のまわりをゆっくり回る
+    "angle": 0.0,       # カメラの向き（盤の中心まわりの角度）
 }
 
 
@@ -508,8 +522,21 @@ def finish():
     state["moves"] = {}
     set_message(result_text(state["board"]))
     black, white = count_stones(state["board"])
-    speaker.finish(BLACK if black > white else WHITE if white > black else EMPTY)
+    winner = BLACK if black > white else WHITE if white > black else EMPTY
+    speaker.finish(winner)
     draw()
+    celebrate(winner)
+
+
+def celebrate(winner):
+    """終局の演出。勝った色の石が脈打つように光り、カメラが盤のまわりを回り始める"""
+    state["orbit"] = True
+    if winner == BLACK:
+        black_mat.emissive.set(0xFFB347)               # 黒は金色に、白はそのまま白く光る
+        gsap.to(black_mat, js(emissiveIntensity=2.0, duration=0.9, yoyo=True, repeat=-1, ease="sine.inOut"))
+    elif winner == WHITE:
+        white_mat.emissive.set(0xFFFFFF)
+        gsap.to(white_mat, js(emissiveIntensity=2.2, duration=0.9, yoyo=True, repeat=-1, ease="sine.inOut"))
 
 
 async def advance():
@@ -543,7 +570,11 @@ async def advance():
 
 
 def start():
-    gsap.globalTimeline.clear()                       # 動いている途中の石があれば止める
+    gsap.globalTimeline.clear()                       # 動いている途中の石や、終局の光があれば止める
+    black_mat.emissiveIntensity = 0.0
+    white_mat.emissiveIntensity = 0.0
+    state["orbit"] = False
+    gsap.to(state_js, js(angle=0.0, duration=0.8, ease="power2.out"))   # カメラを正面に戻す
     state["board"] = make_board()
     state["player"] = BLACK
     state["moves"] = {}
@@ -615,8 +646,18 @@ def on_mode_cpu(event):
 
 # ── 描画の輪。ブラウザの描画のたび（1 秒に 60 回ほど）に 1 枚描く ──────────
 
+state_js = js(angle=0.0)            # gsap に補間してもらう値は JS のオブジェクトに置く（Python の辞書は補間できない）
+last_t = [0.0]
+
+
 def frame(t):
-    renderer.render(scene, camera)
+    dt = min(0.05, (t - last_t[0]) / 1000.0)         # 前の描画からの秒数。タブを離れて戻ったときの飛びを抑える
+    last_t[0] = t
+    if state["orbit"]:
+        state_js.angle += ORBIT_SPEED * dt
+    camera.position.set(CAM_R * math.sin(state_js.angle), CAM_Y, CAM_R * math.cos(state_js.angle))
+    camera.lookAt(0.0, 0.0, 0.0)
+    composer.render()
     window.requestAnimationFrame(frame_proxy)
 
 
@@ -627,3 +668,5 @@ window.requestAnimationFrame(frame_proxy)
 document.querySelector("#loading").hidden = True
 document.querySelector("#start-btn").disabled = False
 start()
+
+window.g05_debug = js(finish=create_proxy(finish), white=white_mat, black=black_mat, bloom=bloom, stones=to_js(stones))  # DEBUG

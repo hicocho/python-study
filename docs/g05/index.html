@@ -11,7 +11,8 @@
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
                "gsap": "https://cdn.jsdelivr.net/npm/gsap@3.15.0/+esm",
-               "tone": "https://cdn.jsdelivr.net/npm/tone@15.5.42/+esm" } }
+               "tone": "https://cdn.jsdelivr.net/npm/tone@15.5.42/+esm",
+               "postprocessing": "https://cdn.jsdelivr.net/npm/postprocessing@6.39.5/build/index.js" } }
 </script>
 <script type="module">
   // Three.js を読み込んで window に置く。Python（PyScript）は window.THREE を通して舞台を作る
@@ -19,10 +20,13 @@
   import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
   import { gsap } from "gsap";                       // 動きの補間（落ちる・跳ねる・回る）
   import * as Tone from "tone";                      // 音。楽器を定義して、出来事ごとに鳴らす
+  import { EffectComposer, RenderPass, EffectPass, BloomEffect, VignetteEffect,
+           ToneMappingEffect, ToneMappingMode } from "postprocessing";   // 後処理：光のにじみ・周辺減光
   window.THREE = THREE;
   window.ADDONS = { RoomEnvironment };
   window.gsap = gsap;
   window.Tone = Tone;
+  window.PP = { EffectComposer, RenderPass, EffectPass, BloomEffect, VignetteEffect, ToneMappingEffect, ToneMappingMode };
 </script>
 <script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
 <style>
@@ -175,6 +179,6 @@
   </footer>
 </main>
 
-<script type="py" src="./game.py?v=2158ad8d"></script>
+<script type="py" src="./game.py?v=0951c30a"></script>
 </body>
 </html>
