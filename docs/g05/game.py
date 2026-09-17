@@ -214,7 +214,7 @@ camera.lookAt(0.0, 0.0, 0.0)
 # 後処理の列。描く → ブルーム＋ビネット＋色の丸め込み → 画面
 composer = PP.EffectComposer.new(renderer, js(frameBufferType=THREE.HalfFloatType))
 composer.addPass(PP.RenderPass.new(scene, camera))
-bloom = PP.BloomEffect.new(js(luminanceThreshold=1.5, luminanceSmoothing=0.2, intensity=1.0, mipmapBlur=True, radius=0.65))  # しきい値 1.5: 白い石のハイライト（1.3 前後）は光らず、emissive を足した物（2 以上）だけ光る
+bloom = PP.BloomEffect.new(js(luminanceThreshold=2.0, luminanceSmoothing=0.1, intensity=1.0, mipmapBlur=True, radius=0.65))  # しきい値 2.0: 白い石の光の反射（角度によって 1.5 を超える）は拾わず、emissive を 3 以上にした物だけ光る
 vignette = PP.VignetteEffect.new(js(darkness=0.5, offset=0.3))
 composer.addPass(PP.EffectPass.new(camera, bloom, vignette, PP.ToneMappingEffect.new(js(mode=PP.ToneMappingMode.ACES_FILMIC))))
 
@@ -287,8 +287,8 @@ for row in range(SIZE):
 
 # 置ける場所の印。淡く光る輪（emissive をしきい値より明るくして、ブルームに拾わせる）
 RING_GEO = THREE.TorusGeometry.new(0.3, 0.035, 8, 40)
-ring_mat = THREE.MeshStandardMaterial.new(js(color=0xFFFFFF, emissive=0xFFF3C0, emissiveIntensity=2.0, transparent=True, opacity=0.5))
-ring_hover_mat = THREE.MeshStandardMaterial.new(js(color=0xFFFFFF, emissive=0xFFF3C0, emissiveIntensity=4.0, transparent=True, opacity=0.95))
+ring_mat = THREE.MeshStandardMaterial.new(js(color=0xFFFFFF, emissive=0xFFF3C0, emissiveIntensity=3.0, transparent=True, opacity=0.5))
+ring_hover_mat = THREE.MeshStandardMaterial.new(js(color=0xFFFFFF, emissive=0xFFF3C0, emissiveIntensity=5.0, transparent=True, opacity=0.95))
 rings = []
 for row in range(SIZE):
     for col in range(SIZE):
@@ -372,7 +372,7 @@ sound_button.className = "mode is-on" if speaker.on else "mode"
 
 # 最後に置いた石の印。小さな赤い玉
 marker = THREE.Mesh.new(THREE.SphereGeometry.new(0.07, 16, 12),
-                        THREE.MeshStandardMaterial.new(js(color=0xE0483A, emissive=0xFF3A2A, emissiveIntensity=3.0, roughness=0.4)))
+                        THREE.MeshStandardMaterial.new(js(color=0xE0483A, emissive=0xFF3A2A, emissiveIntensity=4.0, roughness=0.4)))
 marker.visible = False
 scene.add(marker)
 
@@ -533,10 +533,10 @@ def celebrate(winner):
     state["orbit"] = True
     if winner == BLACK:
         black_mat.emissive.set(0xFFB347)               # 黒は金色に、白はそのまま白く光る
-        gsap.to(black_mat, js(emissiveIntensity=2.0, duration=0.9, yoyo=True, repeat=-1, ease="sine.inOut"))
+        gsap.to(black_mat, js(emissiveIntensity=4.0, duration=0.9, yoyo=True, repeat=-1, ease="sine.inOut"))
     elif winner == WHITE:
         white_mat.emissive.set(0xFFFFFF)
-        gsap.to(white_mat, js(emissiveIntensity=2.2, duration=0.9, yoyo=True, repeat=-1, ease="sine.inOut"))
+        gsap.to(white_mat, js(emissiveIntensity=3.0, duration=0.9, yoyo=True, repeat=-1, ease="sine.inOut"))
 
 
 async def advance():
@@ -610,6 +610,7 @@ def on_board_click(event):
     if pos is None or pos not in state["moves"]:  # 置けないマスは黙って無視する
         return
 
+    state["busy"] = True                              # 次の行の play() が動き出す前に 2 回目のクリックが来ても弾く
     asyncio.ensure_future(human_turn(pos))
 
 
@@ -669,4 +670,3 @@ document.querySelector("#loading").hidden = True
 document.querySelector("#start-btn").disabled = False
 start()
 
-window.g05_debug = js(finish=create_proxy(finish), white=white_mat, black=black_mat, bloom=bloom, stones=to_js(stones))  # DEBUG
