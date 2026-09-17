@@ -403,19 +403,23 @@ FLIP_NOTES = ["C5", "D5", "E5", "G5", "A5", "C6", "D6", "E6", "G6", "A6", "C7"] 
 
 
 class Speaker:
-    """出来事 → 音。楽器は 4 つ。start() までは鳴らない"""
+    """出来事 → 音。楽器は 4 つ。start() までは鳴らない。
+
+    楽器はすべて PolySynth（同時発音できる）にしてある。単音の Synth は「時刻が前より必ず後」でないと
+    例外を投げるので、同じ距離の石が 2 枚同時に裏返る（＝同じ時刻に 2 音）とゲームごと止まってしまった。
+    """
 
     def __init__(self):
         self.on = (window.localStorage.getItem(SOUND_KEY) or "on") == "on"
         self.ready = False
-        self.clack = Tone.MembraneSynth.new(js(pitchDecay=0.02, octaves=3,
-                                               envelope=js(attack=0.001, decay=0.12, sustain=0.0, release=0.05))).toDestination()
+        self.clack = Tone.PolySynth.new(Tone.MembraneSynth, js(pitchDecay=0.02, octaves=3,
+                                                                envelope=js(attack=0.001, decay=0.12, sustain=0.0, release=0.05))).toDestination()
         self.clack.volume.value = -6
-        self.pata = Tone.Synth.new(js(oscillator=js(type="triangle"),
-                                      envelope=js(attack=0.005, decay=0.12, sustain=0.0, release=0.08))).toDestination()
+        self.pata = Tone.PolySynth.new(Tone.Synth, js(oscillator=js(type="triangle"),
+                                                      envelope=js(attack=0.005, decay=0.12, sustain=0.0, release=0.08))).toDestination()
         self.pata.volume.value = -10
-        self.soft = Tone.Synth.new(js(oscillator=js(type="sine"),
-                                      envelope=js(attack=0.02, decay=0.3, sustain=0.0, release=0.2))).toDestination()
+        self.soft = Tone.PolySynth.new(Tone.Synth, js(oscillator=js(type="sine"),
+                                                      envelope=js(attack=0.02, decay=0.3, sustain=0.0, release=0.2))).toDestination()
         self.soft.volume.value = -12
         self.chord = Tone.PolySynth.new(Tone.Synth, js(oscillator=js(type="triangle"),
                                                        envelope=js(attack=0.02, decay=0.6, sustain=0.2, release=1.2))).toDestination()
@@ -430,29 +434,31 @@ class Speaker:
     def can(self):
         return self.on and self.ready
 
+    def play(self, synth, note, length, delay, velocity=1.0):
+        """1 音鳴らす。音の失敗（時刻の重なりなど）でゲームを止めないよう、例外はここで握りつぶす"""
+        if not self.can():
+            return
+        try:
+            synth.triggerAttackRelease(note, length, Tone.now() + delay, velocity)
+        except Exception as e:                        # 音が 1 つ抜けるだけ。盤は進む
+            print("sound:", e)
+
     def place(self, delay):
-        if self.can():
-            t = Tone.now() + delay
-            self.clack.triggerAttackRelease("C2", "16n", t)             # 盤に当たる
-            self.clack.triggerAttackRelease("C2", "32n", t + 0.17, 0.4)  # 小さく跳ね返る
+        self.play(self.clack, "C2", "16n", delay)             # 盤に当たる
+        self.play(self.clack, "C2", "32n", delay + 0.17, 0.4)  # 小さく跳ね返る
 
     def flip(self, order, delay):
-        if self.can():
-            note = FLIP_NOTES[min(order, len(FLIP_NOTES) - 1)]
-            self.pata.triggerAttackRelease(note, "16n", Tone.now() + delay)
+        note = FLIP_NOTES[min(order, len(FLIP_NOTES) - 1)]
+        self.play(self.pata, note, "16n", delay + order * 0.012)   # 同じ距離の石も少しだけずらす
 
     def pass_turn(self):
-        if self.can():
-            t = Tone.now()
-            self.soft.triggerAttackRelease("G4", "8n", t)
-            self.soft.triggerAttackRelease("E4", "8n", t + 0.18)
+        self.play(self.soft, "G4", "8n", 0.0)
+        self.play(self.soft, "E4", "8n", 0.18)
 
     def finish(self, winner):
-        if self.can():
-            t = Tone.now()
-            notes = ["C4", "E4", "G4", "C5"] if winner != EMPTY else ["C4", "Eb4", "G4", "Bb4"]  # 勝ちは明るく、引き分けは少し曇る
-            for i, n in enumerate(notes):
-                self.chord.triggerAttackRelease(n, "2n", t + i * 0.08)
+        notes = ["C4", "E4", "G4", "C5"] if winner != EMPTY else ["C4", "Eb4", "G4", "Bb4"]  # 勝ちは明るく、引き分けは少し曇る
+        for i, n in enumerate(notes):
+            self.play(self.chord, n, "2n", i * 0.08)
 
     def toggle(self):
         self.on = not self.on
@@ -609,8 +615,10 @@ async def play(pos):
 
     state["busy"] = True
     draw_rings()                                      # 動いている最中は輪を消す
-    await asyncio.sleep(animate_move(row, col, flips, player))
-    state["busy"] = False
+    try:
+        await asyncio.sleep(animate_move(row, col, flips, player))
+    finally:
+        state["busy"] = False                         # 動きの途中で何かが失敗しても、クリックを受けない状態のままにしない
     draw()                                            # 回転を 0 / π に揃え直す（π を足し続けない）
 
 
