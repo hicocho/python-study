@@ -106,6 +106,15 @@ def theme_for(level: int) -> dict:
     return THEMES[-1]
 
 
+SLOW_CHAIN = 3                                      # この連鎖から、消える瞬間がスローモーション
+
+
+SLOW_SCALE = 0.2                                    # スローの速さ（時間の進みの倍率）
+
+
+SLOW_PART = 0.5                                     # POP のうち前半だけスロー
+
+
 FEVER_CHAIN = 3                                     # この連鎖でフィーバーが始まる
 
 
@@ -406,6 +415,7 @@ class World:
     all_clears: int = 0
     mission: int = 0                                # いまのお題の番号
     stars: int = 0                                  # 達成した数
+    impact: tuple[int, int, float] = (0, 0, -9.0)   # 最後に組が固まった (列, 行, 時刻)。着地の波に使う
 
     def __post_init__(self):
         self.luck = random.Random(self.seed)
@@ -420,6 +430,12 @@ class World:
     @property
     def fever(self) -> bool:
         return self.time < self.fever_until
+
+    def time_scale(self) -> float:
+        """時間の進みの倍率。深い連鎖の消える瞬間だけスロー（端末もブラウザも update に渡す dt にかける）。"""
+        if self.phase == Phase.POP and self.chain >= SLOW_CHAIN and self.phase_left > POP_TIME * (1 - SLOW_PART):
+            return SLOW_SCALE
+        return 1.0
 
     def mission_text(self) -> str:
         return MISSIONS[self.mission]["text"] if self.mission < len(MISSIONS) else "全部達成！"
@@ -518,6 +534,7 @@ class World:
         p = self.piece
         for (c, r), blob in zip(p.cells(), (p.axis, p.mate)):
             self.grid[r][c] = blob
+        self.impact = (p.col, min(r for _, r in p.cells()), self.time)
         self.piece = None
         self.pieces += 1
         self.begin_settle()
@@ -715,9 +732,13 @@ scene.fog = THREE.FogExp2.new(rgb(BACK), 0.012)     # 奥ほど霞む（背景�
 pmrem = THREE.PMREMGenerator.new(renderer)          # 「部屋」を映り込みの環境に。球のつやが本物のガラス玉になる
 scene.environment = pmrem.fromScene(ADDONS.RoomEnvironment.new(), 0.04).texture
 camera = THREE.PerspectiveCamera.new(40, VIEW_W / VIEW_H, 0.5, 100)
-CAM = (0.6, 0.6, 21.0)                              # 少し右上から盤を見る
+CAM = (0.6, 0.6, 21.0)                              # 少し右上から盤を見る（基本の位置）
 camera.position.set(*CAM)
 camera.lookAt(0.0, 0.0, 0.0)
+# カメラは「いま」と「行きたい所」を持ち、毎コマ少しずつ近づく（寄る・引く・沈む・回る）
+cam = {"x": CAM[0], "y": CAM[1], "z": CAM[2], "look_x": 0.0, "look_y": 0.0, "spin": 0.0,
+       "focus": None, "focus_until": -9.0, "pull_until": -9.0, "dip_at": -9.0, "spin_at": -9.0, "fevers": 0, "pieces": 0}
+CAM_EASE = 0.12
 
 key_light = THREE.DirectionalLight.new(0xffffff, 1.8)   # 主光：ゆっくり動いて影が流れる
 key_light.position.set(5, 10, 12)
@@ -888,10 +909,32 @@ for _ in range(RINGS):
     scene.add(m)
     rings.append(m)
 ring_live: list[list] = []                          # [mesh, 始まった時刻, 色]
+POP_STAGGER = 0.03                                  # 消える玉は 1 つずつこれだけ遅れて弾ける
+WAVE_DELAY = 0.045                                  # 着地の波：1 マス離れるごとの遅れ
 RING_TIME = 0.4
 labels: dict[str, object] = {}                      # 文字 → 板（CanvasTexture）。連鎖の数を浮かべる
 label_live: list = []                               # [sprite, 始まった時刻]
 LABEL_TIME = 1.1
+
+
+def vignette_texture() -> object:
+    """真ん中が透けて端が暗い絵。スローの間だけ画面の端を暗くする。"""
+    cv = document.createElement("canvas")
+    cv.width, cv.height = 256, 256
+    ctx = cv.getContext("2d")
+    grad = ctx.createRadialGradient(128, 128, 60, 128, 128, 180)
+    grad.addColorStop(0.0, "rgba(0,0,0,0)")
+    grad.addColorStop(1.0, "rgba(0,0,0,1)")
+    ctx.fillStyle = grad
+    ctx.fillRect(0, 0, 256, 256)
+    return THREE.CanvasTexture.new(cv)
+
+
+vignette = THREE.Sprite.new(THREE.SpriteMaterial.new(js(map=vignette_texture(), transparent=True, opacity=0.0, depthTest=False)))
+vignette.scale.set(22, 22, 1)
+vignette.position.set(0, 0, -12)                    # カメラの 12 手前に張り付ける（カメラの子）
+camera.add(vignette)
+scene.add(camera)
 
 
 def make_label(text: str, color: str) -> object:
@@ -926,12 +969,19 @@ def show_label(text: str, color: str, x: float, y: float, now: float) -> None:
     label_live.append([sprite, now])
 
 
-def squash(uid: int, now: float) -> tuple[float, float]:
-    """着地直後の潰れ：横に広がり縦に縮んで戻る。(横, 縦) の倍率。"""
+def squash(uid: int, now: float, col: int = -1, row: int = -1, impact: tuple = (0, 0, -9.0)) -> tuple[float, float]:
+    """着地直後の潰れ：横に広がり縦に縮んで戻る。(横, 縦) の倍率。
+    着地の波：固まった組から離れた玉ほど遅れて、小さく潰れる（時間差がダイナミックさの正体）。"""
     t = now - landed.get(uid, -9.0)
+    amount = 1.0
     if t < 0 or t > SQUASH_TIME:
-        return 1.0, 1.0
-    k = math.sin(math.pi * t / SQUASH_TIME) * (1 - t / SQUASH_TIME)
+        ic, ir, when = impact
+        dist = abs(col - ic) + max(0, row - ir) * 0.5
+        t = now - when - dist * WAVE_DELAY
+        amount = max(0.0, 0.6 - dist * 0.12)
+        if t < 0 or t > SQUASH_TIME or amount <= 0:
+            return 1.0, 1.0
+    k = math.sin(math.pi * t / SQUASH_TIME) * (1 - t / SQUASH_TIME) * amount
     return 1.0 + 0.28 * k, 1.0 - 0.32 * k
 
 
@@ -1024,7 +1074,7 @@ def sync(world: World, dt: float) -> None:
             if blob.uid in moving:
                 sx, sy = 0.92, 1.12                 # 落ちている間は縦に伸びる
             else:
-                sx, sy = squash(blob.uid, now)
+                sx, sy = squash(blob.uid, now, col, row, world.impact)
                 breath = 1.0 + 0.025 * math.sin(now * 2.0 + blob.uid * 0.7)   # 待っている間は呼吸
                 sx, sy = sx * breath, sy / breath
             group.position.set(x, y - (1 - sy) * 0.44, 0)
@@ -1044,16 +1094,19 @@ def sync(world: World, dt: float) -> None:
                 n_links += 1
     for m in links[n_links:]:
         m.visible = False
-    k = max(0.0, world.phase_left / POP_TIME) if world.pops else 0.0
-    for blob, col, row in world.pops:               # 消えている玉：光って縮む。最初の瞬間に粒と輪
+    elapsed = POP_TIME - world.phase_left if world.pops else 0.0
+    span = max(0.1, POP_TIME - POP_STAGGER * len(world.pops))     # 1 つが縮むのにかけられる時間
+    for i, (blob, col, row) in enumerate(world.pops):   # 消えている玉：1 つずつ遅れて光って縮む。弾けた瞬間に粒と輪
         alive.add(blob.uid)
         group = ball_for(blob)
         x, y = cell_pos(col, row)
+        mine = elapsed - i * POP_STAGGER                # この玉の経過（まだなら負）
+        k = 1.0 if mine < 0 else max(0.0, 1 - mine / span)
         group.position.set(x, y, 0.2)
         group.scale.set(k * 1.3, k * 1.3, k * 1.3)
-        group.children[0].material = POP_MATS[blob.color]
+        group.children[0].material = POP_MATS[blob.color] if mine >= 0 else BALL_MATS[blob.color]
         group.visible = True
-        if blob.uid not in popped_seen:
+        if mine >= 0 and blob.uid not in popped_seen:
             popped_seen.add(blob.uid)
             r, g, b = [c / 255 for c in PALETTE[blob.color]["rgb"]]
             for _ in range(10 + 4 * world.chain):
@@ -1151,8 +1204,41 @@ def sync(world: World, dt: float) -> None:
     if now < world.shake_until:
         k = world.shake_size * (world.shake_until - now) / 0.25 * 0.08
         ox, oy = math.sin(now * 90) * k, math.cos(now * 70) * k
-    camera.position.set(CAM[0] + ox, CAM[1] + oy, CAM[2])
-    camera.lookAt(ox, oy, 0.0)
+    # ── カメラ：出来事ごとに行きたい所を決め、少しずつ近づく
+    if world.pops and world.phase_left > POP_TIME - 0.05:            # 消えた：その場所へ寄る（深い連鎖は引いて全体を見せる）
+        cx = sum(cell_pos(c, r)[0] for _, c, r in world.pops) / len(world.pops)
+        cy = sum(cell_pos(c, r)[1] for _, c, r in world.pops) / len(world.pops)
+        cam["focus"] = (cx * 0.5, cy * 0.5, 21.0 - 3.0 if world.chain < 3 else 21.0 + 2.5 + 0.5 * world.chain)
+        cam["focus_until"] = now + (0.5 if world.chain < 3 else 0.9)
+    if world.pieces != cam["pieces"]:                                # 固まった：下へ小さく沈む
+        cam["pieces"] = world.pieces
+        cam["dip_at"] = now
+    if world.fevers != cam["fevers"]:                                # フィーバー突入：カメラが大きく振れる
+        cam["fevers"] = world.fevers
+        cam["spin_at"] = now
+    slow = world.time_scale() < 1.0
+    want = list(CAM)
+    look = [0.0, 0.0]
+    if now < cam["focus_until"] and cam["focus"] is not None:
+        fx, fy, fz = cam["focus"]
+        want = [CAM[0] + fx, CAM[1] + fy, fz]
+        look = [fx, fy]
+    if slow:                                                          # スロー：さらに寄る
+        want[2] -= 2.0
+    dip = now - cam["dip_at"]
+    if 0 <= dip < 0.25:
+        want[1] -= 0.5 * math.sin(math.pi * dip / 0.25)
+    spin_t = now - cam["spin_at"]
+    angle = 0.0
+    if 0 <= spin_t < 1.4:
+        angle = 0.55 * math.sin(math.tau * spin_t / 1.4) * (1 - spin_t / 1.4)   # 左右へ大きく振って戻る（一周すると盤の裏が見える）
+    for key, value in (("x", want[0]), ("y", want[1]), ("z", want[2]), ("look_x", look[0]), ("look_y", look[1])):
+        cam[key] += (value - cam[key]) * CAM_EASE
+    radius = cam["z"]
+    camera.position.set(cam["x"] + ox + radius * math.sin(angle), cam["y"] + oy, radius * math.cos(angle))
+    camera.lookAt(cam["look_x"] + ox, cam["look_y"] + oy, 0.0)
+    vignette.material.opacity += ((0.75 if slow else 0.0) - vignette.material.opacity) * 0.2
+    vignette.visible = vignette.material.opacity > 0.01
     stars.rotation.z = now * 0.02
     key_light.position.set(5 + 4 * math.sin(now * 0.25), 10, 12 + 2 * math.cos(now * 0.25))   # 主光がゆっくり動く
     for i, m in enumerate(pillars):                                    # 光の柱はゆっくり揺れる
@@ -1237,14 +1323,14 @@ async def loop():
         lag = min(lag + now - last, 0.25)
         last = now
         while lag >= STEP:
-            event = world.update(STEP)
+            event = world.update(STEP * world.time_scale())
             if event == "end":
                 improved = best.take(world)
                 window.localStorage.setItem(SAVED, best.dump())
                 event = "best" if improved else event
             speaker.say(event)
             lag -= STEP
-        refresh(frame_dt)
+        refresh(frame_dt * world.time_scale())
         frames.append(window.performance.now() / 1000)
         del frames[:-30]
         if len(frames) >= 2:

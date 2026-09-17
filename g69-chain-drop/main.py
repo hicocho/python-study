@@ -54,6 +54,9 @@ GROUP_BONUS = {4: 0, 5: 2, 6: 3, 7: 4, 8: 5, 9: 6, 10: 7}
 ALL_CLEAR = 1000                                    # 盤が空になったら
 ROT = ((0, 1), (1, 0), (0, -1), (-1, 0))            # 回転 0〜3 のときの相方の位置（上・右・下・左）
 QUEUE = 2                                           # 次の玉を見せる数
+SLOW_CHAIN = 3                                      # この連鎖から、消える瞬間がスローモーション
+SLOW_SCALE = 0.2                                    # スローの速さ（時間の進みの倍率）
+SLOW_PART = 0.5                                     # POP のうち前半だけスロー
 FEVER_CHAIN = 3                                     # この連鎖でフィーバーが始まる
 FEVER_TIME = 12.0                                   # フィーバーの秒数（連鎖でさらに延びる）
 FEVER_SCALE = 2                                     # フィーバー中の点の倍率
@@ -425,6 +428,7 @@ class World:
     all_clears: int = 0
     mission: int = 0                                # いまのお題の番号
     stars: int = 0                                  # 達成した数
+    impact: tuple[int, int, float] = (0, 0, -9.0)   # 最後に組が固まった (列, 行, 時刻)。着地の波に使う
 
     def __post_init__(self):
         self.luck = random.Random(self.seed)
@@ -439,6 +443,12 @@ class World:
     @property
     def fever(self) -> bool:
         return self.time < self.fever_until
+
+    def time_scale(self) -> float:
+        """時間の進みの倍率。深い連鎖の消える瞬間だけスロー（端末もブラウザも update に渡す dt にかける）。"""
+        if self.phase == Phase.POP and self.chain >= SLOW_CHAIN and self.phase_left > POP_TIME * (1 - SLOW_PART):
+            return SLOW_SCALE
+        return 1.0
 
     def mission_text(self) -> str:
         return MISSIONS[self.mission]["text"] if self.mission < len(MISSIONS) else "全部達成！"
@@ -537,6 +547,7 @@ class World:
         p = self.piece
         for (c, r), blob in zip(p.cells(), (p.axis, p.mate)):
             self.grid[r][c] = blob
+        self.impact = (p.col, min(r for _, r in p.cells()), self.time)
         self.piece = None
         self.pieces += 1
         self.begin_settle()
@@ -868,7 +879,7 @@ def run() -> None:
             lag = min(lag + now - last, 0.25)
             last = now
             while lag >= STEP:
-                event = world.update(STEP)
+                event = world.update(STEP * world.time_scale())
                 if event == "end":
                     improved = best.take(world)
                     save_best(best)
@@ -1090,6 +1101,15 @@ def check() -> None:
         if world.phase == Phase.FALL and world.piece is not None:
             break
     assert events[:3] == ["pop1", "pop2", "fever"] and world.fever and world.fevers == 1, events
+    slow = World(seed=1)
+    slow.started = True
+    slow.phase, slow.chain, slow.phase_left = Phase.POP, 3, POP_TIME
+    assert slow.time_scale() == SLOW_SCALE
+    slow.phase_left = POP_TIME * 0.3
+    assert slow.time_scale() == 1.0, "後半は元の速さ"
+    slow.chain, slow.phase_left = 2, POP_TIME
+    assert slow.time_scale() == 1.0, "2 連鎖はスローにならない"
+    assert world.impact[2] >= 0 and world.impact[:2] == (3, 2), world.impact
     assert world.score == 60 * 3 + 40 * 8 + 40 * 16 + ALL_CLEAR + MISSION_BONUS, world.score   # 1 が 6 つ、3 が 4 つ、0 が 4 つ。×2 は次の消しから。全消し、お題「2 連鎖」
     assert world.stars == 1 and world.mission == 1 and "mission" in events, (world.stars, events)
     assert world.max_chain == 3 and events.count("mission") == 1, "お題は 1 回に 1 つ（3 連鎖はまだ）"
@@ -1106,7 +1126,8 @@ def check() -> None:
     assert all(m["check"](World(seed=9)) is False for m in MISSIONS), "始めは全部未達成"
     best = Best.parse(Best(1, 2, 3).dump())
     assert best.stars == 3
-    print(f"  {FEVER_CHAIN} 連鎖でフィーバー {FEVER_TIME:.0f} 秒（点 ×{FEVER_SCALE}、連鎖で延びる）。お題 {len(MISSIONS)} 個を順に、達成で ★ と +{MISSION_BONUS}")
+    print(f"  {FEVER_CHAIN} 連鎖でフィーバー {FEVER_TIME:.0f} 秒（点 ×{FEVER_SCALE}、連鎖で延びる）。{SLOW_CHAIN} 連鎖からは消える瞬間が {SLOW_SCALE} 倍速。"
+          f"お題 {len(MISSIONS)} 個を順に、達成で ★ と +{MISSION_BONUS}")
 
     print("● レベルと終わり")
     assert theme_for(1)["name"] == "夜" and theme_for(3)["name"] == "夜" and theme_for(4)["name"] == "夕焼け" and theme_for(50)["name"] == "黎明"
