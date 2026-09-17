@@ -4,9 +4,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>オセロ — python-study</title>
-<meta name="description" content="マスをクリックして遊ぶオセロ。挟んでひっくり返すルールは CLI 版と同じ Python がブラウザでそのまま動いています。">
+<meta name="description" content="立体の盤で遊ぶオセロ。石が回って裏返り、音が鳴る。挟んでひっくり返すルールは CLI 版と同じ Python がブラウザでそのまま動き、絵は Three.js。">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#9899;</text></svg>">
 <link rel="stylesheet" href="https://pyscript.net/releases/2025.8.1/core.css">
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+               "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }
+</script>
+<script type="module">
+  // Three.js を読み込んで window に置く。Python（PyScript）は window.THREE を通して舞台を作る
+  import * as THREE from "three";
+  import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+  window.THREE = THREE;
+  window.ADDONS = { RoomEnvironment };
+</script>
 <script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
 <style>
   :root {
@@ -58,35 +69,18 @@
   .status .chip.b { background: #15181c; border: 1px solid var(--line); }
   .status .chip.w { background: #f4f4f1; border: 1px solid var(--line); }
   #turn { color: var(--muted); font-size: .875rem; font-weight: 600; }
-  #board {
-    display: grid;
-    grid-template-columns: repeat(8, 1fr);
-    gap: 1px;
-    width: min(100%, 22rem);
-    margin: 0 auto;
-    padding: 1px;
+  /* Three.js の画面。480×480 の canvas。8×8 の盤を斜め上から見る */
+  .stage { width: min(100%, 480px); margin: 0 auto; }
+  #screen {
+    display: block;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    background: #1a1d24;
+    border: 1px solid var(--line);
     border-radius: .5rem;
-    overflow: hidden;
-    background: var(--felt-line);
-    border: 1px solid var(--felt-line);
     touch-action: manipulation;
+    user-select: none; -webkit-user-select: none;
   }
-  .cell {
-    position: relative;
-    aspect-ratio: 1;
-    background: var(--felt);
-  }
-  .cell::after {
-    content: "";
-    position: absolute;
-    inset: 11%;
-    border-radius: 50%;
-  }
-  .cell.b::after { background: #15181c; box-shadow: inset 0 2px 4px rgba(255, 255, 255, .16); }
-  .cell.w::after { background: #f4f4f1; box-shadow: inset 0 -2px 4px rgba(0, 0, 0, .22); }
-  .cell.hint { cursor: pointer; }
-  .cell.hint::after { inset: 37%; background: rgba(255, 255, 255, .45); }
-  .cell.hint:hover::after { inset: 11%; background: rgba(255, 255, 255, .3); }
   #message {
     margin: .75rem 0 0;
     text-align: center;
@@ -144,7 +138,7 @@
       <span class="count"><b id="white">2</b><span class="chip w"></span></span>
     </div>
 
-    <div id="board"></div>
+    <div class="stage"><canvas id="screen" width="480" height="480"></canvas></div>
 
     <p id="message" hidden></p>
 
@@ -162,6 +156,7 @@
   <p class="note">
     このページは <strong>Python のコードがブラウザの中でそのまま動いています</strong>（PyScript）。
     サーバーはなく、計算はすべて手元の端末で行われます。
+    立体の盤と石は Three.js が描いていますが、「どこに置けて、どの石が返るか」を決めているのは Python です。
   </p>
 
   <footer>
@@ -171,6 +166,6 @@
   </footer>
 </main>
 
-<script type="py" src="./game.py"></script>
+<script type="py" src="./game.py?v=65f7e439"></script>
 </body>
 </html>

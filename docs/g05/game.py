@@ -10,11 +10,17 @@ apply_move() / count_stones() / move_name() / result_text() は
 出口は文字の盤面ではなく 64 個の <div> になっている。
 
 ブラウザ版だけの追加として、白をコンピュータに任せるモードがある（choose_move）。
+
+（2026-09-18）出口を 64 個の <div> から Three.js の立体の盤に差し替えた。
+入口も <div> のクリックから「画面の点 → 盤のマス」の変換（Raycaster）に変わった。
+ルールの 9 関数は変えていない。
 """
 
 import asyncio
+import math
 
-from pyscript import document, when
+from pyodide.ffi import create_proxy, to_js
+from pyscript import document, when, window
 
 SIZE = 8
 
@@ -143,7 +149,7 @@ def choose_move(moves):
     return max(moves, key=lambda pos: len(moves[pos]))
 
 
-board_grid = document.querySelector("#board")
+canvas = document.querySelector("#screen")
 black_label = document.querySelector("#black")
 white_label = document.querySelector("#white")
 turn_label = document.querySelector("#turn")
@@ -151,13 +157,149 @@ message = document.querySelector("#message")
 two_button = document.querySelector("#mode-two")
 cpu_button = document.querySelector("#mode-cpu")
 
-cells = []  # 64 個のマス。作るのは一度だけで、あとは class を塗り替える
-for index in range(SIZE * SIZE):
-    cell = document.createElement("div")
-    cell.className = "cell"
-    cell.setAttribute("data-index", str(index))  # クリックされた場所を知るための目印
-    board_grid.appendChild(cell)
-    cells.append(cell)
+# ── Three.js の舞台 ──────────────────────────────────────────────────────
+#   index.html が window.THREE と window.ADDONS を置いてくれている。
+#   「JS のクラスは .new() で作る」「引数の辞書は js() で JS のオブジェクトに直す」の 2 つだけ覚えればよい。
+
+THREE = window.THREE
+ADDONS = window.ADDONS
+VIEW = 480
+
+WOOD = 0x7A4E2A        # 盤の木枠
+FELT = 0x2A6B4C        # 盤の緑のフェルト
+FELT_LINE = 0x1F5A3E   # マス目の線
+STONE_BLACK = 0x0A0C10
+STONE_WHITE = 0xF2F2EE
+STONE_Y = 0.11         # 石の中心の高さ（フェルトの上面 0.06 ＋ 厚み 0.1 の半分）
+
+
+def js(**kw):
+    """Python のキーワード引数 → JS のオブジェクト。Three.js のコンストラクタは {color: ..., roughness: ...} を受け取る"""
+    return to_js(kw, dict_converter=window.Object.fromEntries)
+
+
+renderer = THREE.WebGLRenderer.new(js(canvas=canvas, antialias=True))
+renderer.setPixelRatio(min(2.0, window.devicePixelRatio))
+renderer.setSize(VIEW, VIEW, False)                   # False: CSS の大きさは触らない（スマホでは縮む）
+renderer.shadowMap.enabled = True                     # 石の影を落とす
+renderer.shadowMap.type = THREE.PCFSoftShadowMap
+renderer.toneMapping = THREE.ACESFilmicToneMapping
+
+scene = THREE.Scene.new()
+scene.background = THREE.Color.new(0x1A1D24)
+pmrem = THREE.PMREMGenerator.new(renderer)            # 「部屋」を映り込みの環境に。石のつやが本物のプラスチックになる
+scene.environment = pmrem.fromScene(ADDONS.RoomEnvironment.new(), 0.04).texture
+
+camera = THREE.PerspectiveCamera.new(40, 1.0, 0.5, 100)
+camera.position.set(0.0, 9.8, 8.2)                    # 手前の斜め上から盤を見下ろす
+camera.lookAt(0.0, 0.0, 0.0)
+
+key_light = THREE.DirectionalLight.new(0xFFF4E0, 1.8)   # 主光。少し暖かい色で右上から
+key_light.position.set(5.0, 10.0, 4.0)
+key_light.castShadow = True
+key_light.shadow.mapSize.set(2048, 2048)
+key_light.shadow.camera.left = -6.0                     # 影を計算する範囲。盤がすっぽり入る大きさ
+key_light.shadow.camera.right = 6.0
+key_light.shadow.camera.top = 6.0
+key_light.shadow.camera.bottom = -6.0
+key_light.shadow.camera.near = 1.0
+key_light.shadow.camera.far = 30.0
+key_light.shadow.bias = -0.0005
+scene.add(key_light)
+scene.add(THREE.HemisphereLight.new(0xBFD4FF, 0x3A2A1A, 0.4))  # 空からの青と地面からの茶。影の中を真っ黒にしない
+
+
+def cell_pos(row, col):
+    """盤面の (row, col)（左上が 0,0）→ 舞台の (x, z)。盤の中心が原点、row が手前（+z）に増える"""
+    return (col - SIZE / 2 + 0.5, row - SIZE / 2 + 0.5)
+
+
+# 盤。木枠の上に緑のフェルト、その上にマス目の線。一度作ったら動かない
+frame = THREE.Mesh.new(THREE.BoxGeometry.new(SIZE + 1.2, 0.6, SIZE + 1.2),
+                       THREE.MeshStandardMaterial.new(js(color=WOOD, roughness=0.55, metalness=0.0)))
+frame.position.set(0.0, -0.3, 0.0)
+frame.receiveShadow = True
+scene.add(frame)
+
+felt = THREE.Mesh.new(THREE.BoxGeometry.new(SIZE + 0.1, 0.06, SIZE + 0.1),
+                      THREE.MeshStandardMaterial.new(js(color=FELT, roughness=1.0, metalness=0.0)))
+felt.position.set(0.0, 0.03, 0.0)
+felt.receiveShadow = True
+scene.add(felt)
+
+line_mat = THREE.MeshBasicMaterial.new(js(color=FELT_LINE))
+for i in range(SIZE + 1):
+    v = THREE.Mesh.new(THREE.BoxGeometry.new(0.03, 0.012, SIZE), line_mat)
+    v.position.set(i - SIZE / 2, 0.065, 0.0)
+    scene.add(v)
+    h = THREE.Mesh.new(THREE.BoxGeometry.new(SIZE, 0.012, 0.03), line_mat)
+    h.position.set(0.0, 0.065, i - SIZE / 2)
+    scene.add(h)
+for sx, sz in [(-2, -2), (2, -2), (-2, 2), (2, 2)]:     # 本物の盤にある 4 つの点
+    dot = THREE.Mesh.new(THREE.CylinderGeometry.new(0.07, 0.07, 0.012, 16), line_mat)
+    dot.position.set(sx, 0.066, sz)
+    scene.add(dot)
+
+# 石。円盤の上面が黒、下面が白。黒を見せるときは上向き、白は 180 度回して下面を見せる
+STONE_GEO = THREE.CylinderGeometry.new(0.42, 0.42, 0.1, 40)
+side_mat = THREE.MeshStandardMaterial.new(js(color=0x8A8A88, roughness=0.5, metalness=0.0))
+black_mat = THREE.MeshPhysicalMaterial.new(js(color=STONE_BLACK, roughness=0.35, metalness=0.0,
+                                              clearcoat=1.0, clearcoatRoughness=0.15, envMapIntensity=0.35))  # 映り込みが強いと黒が灰色になる
+white_mat = THREE.MeshPhysicalMaterial.new(js(color=STONE_WHITE, roughness=0.3, metalness=0.0,
+                                              clearcoat=1.0, clearcoatRoughness=0.2, envMapIntensity=0.5))
+STONE_MATS = to_js([side_mat, black_mat, white_mat])   # CylinderGeometry の面の順: 側面・上面・下面
+FACE_UP = {BLACK: 0.0, WHITE: math.pi}                 # 色 → 石の回転（x 軸まわり）
+
+stones = []   # 64 個の石。作るのは一度だけで、あとは「見せる／隠す」と向きを切り替える
+for row in range(SIZE):
+    for col in range(SIZE):
+        x, z = cell_pos(row, col)
+        stone = THREE.Mesh.new(STONE_GEO, STONE_MATS)
+        stone.position.set(x, STONE_Y, z)
+        stone.castShadow = True
+        stone.visible = False
+        scene.add(stone)
+        stones.append(stone)
+
+# 置ける場所の印。薄い輪
+RING_GEO = THREE.TorusGeometry.new(0.3, 0.035, 8, 40)
+ring_mat = THREE.MeshBasicMaterial.new(js(color=0xFFFFFF, transparent=True, opacity=0.35))
+ring_hover_mat = THREE.MeshBasicMaterial.new(js(color=0xFFFFFF, transparent=True, opacity=0.8))
+rings = []
+for row in range(SIZE):
+    for col in range(SIZE):
+        x, z = cell_pos(row, col)
+        ring = THREE.Mesh.new(RING_GEO, ring_mat)
+        ring.position.set(x, 0.075, z)
+        ring.rotation.x = math.pi / 2                  # 輪を寝かせる
+        ring.visible = False
+        scene.add(ring)
+        rings.append(ring)
+
+# ── 画面の点 → 盤のマス（Raycaster）───────────────────────────────────
+#   <div> のクリックが使えなくなった代わり。マウスの位置からカメラの向きに光線を飛ばし、
+#   フェルトに当たった点の x, z をマスの番号に直す。
+
+raycaster = THREE.Raycaster.new()
+pointer = THREE.Vector2.new()
+
+
+def pick(event):
+    """クリックやマウスの位置 → (row, col)。盤の外なら None"""
+    rect = canvas.getBoundingClientRect()
+    pointer.x = (event.clientX - rect.left) / rect.width * 2 - 1     # 画面の左端 -1 〜 右端 +1
+    pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1  # 上端 +1 〜 下端 -1（y は上が正）
+    raycaster.setFromCamera(pointer, camera)
+    hits = raycaster.intersectObject(felt)
+    if hits.length == 0:
+        return None
+    point = hits[0].point
+    col = math.floor(point.x + SIZE / 2)
+    row = math.floor(point.z + SIZE / 2)
+    if 0 <= row < SIZE and 0 <= col < SIZE:
+        return (row, col)
+    return None
+
 
 # CLI 版では素の変数だった board / player / passes を、辞書にまとめて持つ。
 # クリックのたびに中断・再開するので、ループの中には置けない。
@@ -168,6 +310,7 @@ state = {
     "passes": 0,
     "playing": False,
     "vs_cpu": True,
+    "hover": None,      # マウスが乗っているマス
 }
 
 
@@ -182,22 +325,19 @@ def cpu_thinking():
 
 
 def draw():
-    """CLI 版の board_text() にあたる。文字列ではなく、マスの class を塗り替える。"""
+    """CLI 版の board_text() にあたる。64 個の石の「見せる／隠す」と向き、置ける場所の輪を盤面に合わせる。"""
     board = state["board"]
     show_hints = state["playing"] and not cpu_thinking()
 
-    for index, cell in enumerate(cells):
+    for index, stone in enumerate(stones):
         row, col = divmod(index, SIZE)  # 1本のリストを2次元として使う
         value = board[row][col]
-
-        if value == BLACK:
-            cell.className = "cell b"
-        elif value == WHITE:
-            cell.className = "cell w"
-        elif show_hints and (row, col) in state["moves"]:
-            cell.className = "cell hint"
-        else:
-            cell.className = "cell"
+        stone.visible = value != EMPTY
+        if value != EMPTY:
+            stone.rotation.x = FACE_UP[value]
+        ring = rings[index]
+        ring.visible = show_hints and (row, col) in state["moves"]
+        ring.material = ring_hover_mat if state["hover"] == (row, col) else ring_mat
 
     black, white = count_stones(board)
     black_label.textContent = str(black)
@@ -277,19 +417,27 @@ def set_mode(vs_cpu):
     start()
 
 
-@when("click", "#board")
+@when("click", "#screen")
 def on_board_click(event):
-    """マスのクリックが CLI 版の input() にあたる。"""
-    index = event.target.getAttribute("data-index")  # 盤の隙間なら None
-    if index is None or not state["playing"] or cpu_thinking():
+    """盤のクリックが CLI 版の input() にあたる。"""
+    if not state["playing"] or cpu_thinking():
         return
 
-    pos = divmod(int(index), SIZE)
-    if pos not in state["moves"]:  # 置けないマスは黙って無視する
+    pos = pick(event)
+    if pos is None or pos not in state["moves"]:  # 置けないマスは黙って無視する
         return
 
     play(pos)
     asyncio.ensure_future(advance())
+
+
+@when("pointermove", "#screen")
+def on_board_move(event):
+    """マウスが乗っている置ける場所の輪を濃くする"""
+    pos = pick(event)
+    if pos != state["hover"]:
+        state["hover"] = pos
+        draw()
 
 
 @when("click", "#start-btn")
@@ -306,6 +454,16 @@ def on_mode_two(event):
 def on_mode_cpu(event):
     set_mode(True)
 
+
+# ── 描画の輪。ブラウザの描画のたび（1 秒に 60 回ほど）に 1 枚描く ──────────
+
+def frame(t):
+    renderer.render(scene, camera)
+    window.requestAnimationFrame(frame_proxy)
+
+
+frame_proxy = create_proxy(frame)   # Python の関数を JS に渡すときは proxy で包む
+window.requestAnimationFrame(frame_proxy)
 
 # Pyodide の読み込みが終わってから実行される＝ここが準備完了の合図
 document.querySelector("#loading").hidden = True
