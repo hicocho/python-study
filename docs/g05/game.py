@@ -20,6 +20,8 @@ play() が async になり、動きが終わるまで手番を渡さない。
 鳴る時刻は動きと同じ計算から出している。
 （4 回目）postprocessing で光。置ける場所の輪と最後の石の印がにじんで光り、画面の隅が暗くなる。
 終局は勝った色の石が脈打って光り、カメラが盤のまわりを回る。
+（5 回目）ゲーム性。CPU の強さ 3 段階（1 手読み／マスの値打ち表／3 手先読み）、待った、
+ドラッグで盤を回して見る角度を変える（OrbitControls）。
 """
 
 import asyncio
@@ -155,9 +157,94 @@ def result_text(board):
 
 # --- ここから下がブラウザ版だけの部分 ---
 
-def choose_move(moves):
-    """一番たくさんひっくり返せる手を選ぶ。先は読まない。"""
+# ── CPU（5 回目で 3 段階に）────────────────────────────────────────────
+
+WEIGHTS = [  # マスの値打ち。角が最高、角の隣（取られると角を渡す）は最低。上下左右対称
+    [120, -20,  20,   5,   5,  20, -20, 120],
+    [-20, -40,  -5,  -5,  -5,  -5, -40, -20],
+    [ 20,  -5,  15,   3,   3,  15,  -5,  20],
+    [  5,  -5,   3,   3,   3,   3,  -5,   5],
+    [  5,  -5,   3,   3,   3,   3,  -5,   5],
+    [ 20,  -5,  15,   3,   3,  15,  -5,  20],
+    [-20, -40,  -5,  -5,  -5,  -5, -40, -20],
+    [120, -20,  20,   5,   5,  20, -20, 120],
+]
+SEARCH_DEPTH = 3     # 「つよい」が読む手数（自分・相手・自分）
+LEVEL_KEY = "g05-level"
+
+
+def choose_greedy(board, moves, player):
+    """やさしい：一番たくさんひっくり返せる手。先は読まない（もとの choose_move）"""
     return max(moves, key=lambda pos: len(moves[pos]))
+
+
+def evaluate(board, player):
+    """player から見た盤面の点数。自分の石の値打ちの合計 − 相手の石の値打ちの合計"""
+    score = 0
+    for r in range(SIZE):
+        for c in range(SIZE):
+            v = board[r][c]
+            if v == player:
+                score += WEIGHTS[r][c]
+            elif v != EMPTY:
+                score -= WEIGHTS[r][c]
+    return score
+
+
+def after(board, pos, flips, player):
+    """置いたあとの盤面を新しく作って返す。元の盤面は変えない（place() と同じ考え）"""
+    new_board = [row[:] for row in board]
+    apply_move(new_board, pos[0], pos[1], flips, player)
+    return new_board
+
+
+def choose_weighted(board, moves, player):
+    """ふつう：置いたあとの盤面を WEIGHTS で採点して、一番高い手"""
+    return max(moves, key=lambda pos: evaluate(after(board, pos, moves[pos], player), player))
+
+
+def search(board, player, depth, alpha, beta):
+    """つよい の中身：depth 手先まで読んで、player から見た最善の点数を返す（ネガマックス＋αβ枝刈り）。
+
+    「自分の最善」は「相手の最善を最小にする手」なので、手番が替わるたびに符号を反転させて同じ関数で読む。
+    alpha/beta は「これより悪い枝はもう読まなくてよい」という足切り線。
+    """
+    if depth == 0:
+        return evaluate(board, player)
+
+    moves = valid_moves(board, player)
+    if not moves:
+        if not valid_moves(board, opponent(player)):          # 両者とも置けない＝終局。石の差で決める
+            black, white = count_stones(board)
+            diff = black - white if player == BLACK else white - black
+            return diff * 1000
+        return -search(board, opponent(player), depth - 1, -beta, -alpha)   # パス
+
+    best = -10 ** 9
+    for pos, flips in sorted(moves.items(), key=lambda kv: -WEIGHTS[kv[0][0]][kv[0][1]]):  # 良さそうな手から読むと枝刈りが効く
+        value = -search(after(board, pos, flips, player), opponent(player), depth - 1, -beta, -alpha)
+        best = max(best, value)
+        alpha = max(alpha, value)
+        if alpha >= beta:
+            break
+    return best
+
+
+def choose_search(board, moves, player):
+    """つよい：SEARCH_DEPTH 手先まで読んで一番点数の高い手"""
+    best, best_pos = -10 ** 9, None
+    for pos, flips in sorted(moves.items(), key=lambda kv: -WEIGHTS[kv[0][0]][kv[0][1]]):
+        value = -search(after(board, pos, flips, player), opponent(player), SEARCH_DEPTH - 1, -10 ** 9, 10 ** 9)
+        if value > best:
+            best, best_pos = value, pos
+    return best_pos
+
+
+LEVELS = {1: choose_greedy, 2: choose_weighted, 3: choose_search}   # 強さ → 手を選ぶ関数
+
+
+def choose_move(board, moves, player):
+    return LEVELS[state["level"]](board, moves, player)
 
 
 canvas = document.querySelector("#screen")
@@ -178,7 +265,6 @@ gsap = window.gsap                                    # 動きの補間。「y �
 Tone = window.Tone                                    # 音。楽器（Synth）を作って triggerAttackRelease(音名, 長さ, 時刻)
 PP = window.PP                                        # 後処理。描いた絵にブルーム（光のにじみ）とビネット（周辺減光）をかける
 VIEW = 480
-ORBIT_SPEED = 0.25                                    # 終局のカメラが盤を回る速さ（ラジアン／秒）
 SOUND_KEY = "g05-sound"                               # 音のオン／オフを覚えておく localStorage のキー
 
 WOOD = 0x7A4E2A        # 盤の木枠
@@ -210,6 +296,16 @@ camera = THREE.PerspectiveCamera.new(40, 1.0, 0.5, 100)
 CAM_Y, CAM_R = 9.8, 8.2                               # カメラの高さと、盤の中心からの水平距離
 camera.position.set(0.0, CAM_Y, CAM_R)                # 手前の斜め上から盤を見下ろす
 camera.lookAt(0.0, 0.0, 0.0)
+
+# ドラッグで盤のまわりを回れる。真上と真横には行かせない、寄りすぎ・引きすぎもさせない
+controls = ADDONS.OrbitControls.new(camera, canvas)
+controls.enablePan = False
+controls.minDistance = 10.0
+controls.maxDistance = 17.0
+controls.minPolarAngle = 0.15                         # 真上から（0）どれだけ傾けられるか
+controls.maxPolarAngle = 1.15
+controls.enableDamping = True                         # 指を離してもすっと止まらず、少し滑る
+controls.autoRotateSpeed = 1.2                        # 終局に回る速さ
 
 # 後処理の列。描く → ブルーム＋ビネット＋色の丸め込み → 画面
 composer = PP.EffectComposer.new(renderer, js(frameBufferType=THREE.HalfFloatType))
@@ -413,8 +509,10 @@ state = {
     "hover": None,      # マウスが乗っているマス
     "last": None,       # 最後に置いたマス
     "busy": False,      # 石が動いているあいだ True。クリックを受けない
-    "orbit": False,     # 終局。カメラが盤のまわりをゆっくり回る
-    "angle": 0.0,       # カメラの向き（盤の中心まわりの角度）
+    "level": int(window.localStorage.getItem(LEVEL_KEY) or "2"),   # CPU の強さ 1〜3
+    "history": [],      # 「待った」で戻る先。人が打つ直前の盤面の写し
+    "press": None,      # pointerdown の画面位置。動いていたらドラッグ（盤を回した）なのでクリックにしない
+    "gen": 0,           # 局の世代。「はじめから」「待った」で増える。古い世代の advance() は目を覚ましたら黙って終わる
 }
 
 
@@ -530,7 +628,7 @@ def finish():
 
 def celebrate(winner):
     """終局の演出。勝った色の石が脈打つように光り、カメラが盤のまわりを回り始める"""
-    state["orbit"] = True
+    controls.autoRotate = True
     if winner == BLACK:
         black_mat.emissive.set(0xFFB347)               # 黒は金色に、白はそのまま白く光る
         gsap.to(black_mat, js(emissiveIntensity=4.0, duration=0.9, yoyo=True, repeat=-1, ease="sine.inOut"))
@@ -544,7 +642,8 @@ async def advance():
 
     人が打つ番になったら return して、クリックを待つ。
     """
-    while state["playing"]:
+    gen = state["gen"]
+    while state["playing"] and state["gen"] == gen:
         state["moves"] = valid_moves(state["board"], state["player"])
         draw()
 
@@ -563,18 +662,52 @@ async def advance():
         state["passes"] = 0  # 置けたので、パスの連続は途切れた
 
         if not cpu_thinking():
+            state["history"].append(snapshot())        # 人が打つ直前を覚えておく＝「待った」で戻る先
             return  # ここから先は人のクリック待ち
 
         await asyncio.sleep(CPU_WAIT)
-        await play(choose_move(state["moves"]))
+        if state["gen"] != gen:                        # 眠っているあいだに「はじめから」か「待った」が押された
+            return
+        await play(choose_move(state["board"], state["moves"], state["player"]))
+
+
+def snapshot():
+    return ([row[:] for row in state["board"]], state["player"], state["last"], state["passes"])
+
+
+def undo():
+    """待った。人が最後に打つ直前の盤面に戻す。CPU の返しも一緒に消える"""
+    if state["busy"] or not state["history"]:
+        return
+    if state["playing"] and not cpu_thinking():
+        state["history"].pop()                         # いま人の番なら、その直前の写しは「今」なので 1 つ捨てて、その前へ
+        if not state["history"]:
+            return
+    board, player, last, passes = state["history"].pop()
+
+    gsap.globalTimeline.clear()
+    black_mat.emissiveIntensity = 0.0
+    white_mat.emissiveIntensity = 0.0
+    controls.autoRotate = False
+    state["gen"] += 1
+    state["board"] = board
+    state["player"] = player
+    state["last"] = last
+    state["passes"] = passes
+    state["playing"] = True
+    set_message("待った")
+    draw()
+    asyncio.ensure_future(advance())
 
 
 def start():
     gsap.globalTimeline.clear()                       # 動いている途中の石や、終局の光があれば止める
     black_mat.emissiveIntensity = 0.0
     white_mat.emissiveIntensity = 0.0
-    state["orbit"] = False
-    gsap.to(state_js, js(angle=0.0, duration=0.8, ease="power2.out"))   # カメラを正面に戻す
+    controls.autoRotate = False
+    gsap.to(camera.position, js(x=0.0, y=CAM_Y, z=CAM_R, duration=0.8, ease="power2.out"))   # カメラを正面に戻す
+    state["history"] = []
+    state["gen"] += 1
     state["board"] = make_board()
     state["player"] = BLACK
     state["moves"] = {}
@@ -588,8 +721,10 @@ def start():
 
 
 async def human_turn(pos):
+    gen = state["gen"]
     await play(pos)
-    await advance()
+    if state["gen"] == gen:
+        await advance()
 
 
 def set_mode(vs_cpu):
@@ -599,10 +734,29 @@ def set_mode(vs_cpu):
     start()
 
 
+def set_level(level):
+    """CPU の強さ。途中で変えてもよい（次の CPU の手から効く）"""
+    state["level"] = level
+    window.localStorage.setItem(LEVEL_KEY, str(level))
+    for n in LEVELS:
+        document.querySelector(f"#lv-{n}").className = "mode is-on" if n == level else "mode"
+
+
+set_level(state["level"])
+
+
+@when("pointerdown", "#screen")
+def on_board_down(event):
+    state["press"] = (event.clientX, event.clientY)
+
+
 @when("click", "#screen")
 def on_board_click(event):
-    """盤のクリックが CLI 版の input() にあたる。"""
+    """盤のクリックが CLI 版の input() にあたる。ドラッグ（盤を回した）の終わりは着手にしない。"""
     speaker.start()                                   # 音の許可は「触った中」でしか取れない
+    press = state["press"]
+    if press and abs(event.clientX - press[0]) + abs(event.clientY - press[1]) > 8:
+        return
     if not state["playing"] or cpu_thinking() or state["busy"]:
         return
 
@@ -635,6 +789,27 @@ def on_sound(event):
     speaker.toggle()
 
 
+@when("click", "#lv-1")
+def on_lv1(event):
+    set_level(1)
+
+
+@when("click", "#lv-2")
+def on_lv2(event):
+    set_level(2)
+
+
+@when("click", "#lv-3")
+def on_lv3(event):
+    set_level(3)
+
+
+@when("click", "#undo-btn")
+def on_undo(event):
+    speaker.start()
+    undo()
+
+
 @when("click", "#mode-two")
 def on_mode_two(event):
     set_mode(False)
@@ -647,17 +822,8 @@ def on_mode_cpu(event):
 
 # ── 描画の輪。ブラウザの描画のたび（1 秒に 60 回ほど）に 1 枚描く ──────────
 
-state_js = js(angle=0.0)            # gsap に補間してもらう値は JS のオブジェクトに置く（Python の辞書は補間できない）
-last_t = [0.0]
-
-
 def frame(t):
-    dt = min(0.05, (t - last_t[0]) / 1000.0)         # 前の描画からの秒数。タブを離れて戻ったときの飛びを抑える
-    last_t[0] = t
-    if state["orbit"]:
-        state_js.angle += ORBIT_SPEED * dt
-    camera.position.set(CAM_R * math.sin(state_js.angle), CAM_Y, CAM_R * math.cos(state_js.angle))
-    camera.lookAt(0.0, 0.0, 0.0)
+    controls.update()                                 # ドラッグの滑り・終局の自動回転はここで進む
     composer.render()
     window.requestAnimationFrame(frame_proxy)
 
@@ -669,4 +835,5 @@ window.requestAnimationFrame(frame_proxy)
 document.querySelector("#loading").hidden = True
 document.querySelector("#start-btn").disabled = False
 start()
+
 
