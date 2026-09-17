@@ -4,9 +4,21 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>テトリス — python-study</title>
-<meta name="description" content="矢印キーで遊ぶテトリス。落下・回転・ライン消去のロジックは CLI 版と同じ Python がブラウザでそのまま動いています。">
+<meta name="description" content="矢印キーで遊ぶテトリス。落下・回転・ライン消去のロジックは CLI 版と同じ Python がブラウザでそのまま動き、絵は Three.js の立体ブロック。">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#129513;</text></svg>">
 <link rel="stylesheet" href="https://pyscript.net/releases/2025.8.1/core.css">
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+               "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }
+</script>
+<script type="module">
+  // Three.js を読み込んで window に置く。Python（PyScript）は window.THREE を通して舞台を作る
+  import * as THREE from "three";
+  import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+  import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
+  window.THREE = THREE;
+  window.ADDONS = { RoomEnvironment, RoundedBoxGeometry };
+</script>
 <script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
 <style>
   :root {
@@ -54,25 +66,17 @@
   .status strong { font-size: .875rem; font-weight: 600; }
   .status span { color: var(--muted); font-size: .875rem; font-variant-numeric: tabular-nums; }
   .status b { color: var(--ink); font-weight: 700; }
-  #grid {
-    display: grid;
-    grid-template-columns: repeat(10, 1fr);
-    gap: 1px;
-    width: min(100%, 15rem);
-    margin: 0 auto;
-    padding: 3px;
+  /* Three.js の画面。360×640（縦長）の canvas。盤面 10×20 マスを立体で描く */
+  .stage { display: flex; justify-content: center; }
+  #screen {
+    width: min(100%, 360px);
+    aspect-ratio: 9 / 16;
+    background: #121222;
     border: 1px solid var(--line);
     border-radius: .5rem;
-    background: var(--line);
+    touch-action: none;
+    user-select: none; -webkit-user-select: none;
   }
-  .cell { aspect-ratio: 1; background: var(--empty); border-radius: 1px; }
-  .c-I { background: #4aa3c7; }
-  .c-O { background: #d4a72c; }
-  .c-T { background: #9a6bd4; }
-  .c-S { background: #4aa96c; }
-  .c-Z { background: #d4685e; }
-  .c-J { background: #4a72c7; }
-  .c-L { background: #d4894a; }
   #message {
     margin: .75rem 0 0;
     text-align: center;
@@ -131,7 +135,7 @@
       <span>消した列 <b id="lines">0</b></span>
     </div>
 
-    <div id="grid"></div>
+    <div class="stage"><canvas id="screen" width="360" height="640"></canvas></div>
 
     <p id="message" hidden></p>
 
@@ -152,6 +156,7 @@
   <p class="note">
     このページは <strong>Python のコードがブラウザの中でそのまま動いています</strong>（PyScript）。
     サーバーはなく、計算はすべて手元の端末で行われます。
+    立体のブロックは Three.js が描いていますが、「どのマスに何があるか」を決めているのは Python です。
   </p>
 
   <footer>

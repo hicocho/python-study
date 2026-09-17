@@ -5,15 +5,19 @@ can_place() / place() / rotate() / clear_lines() / spawn() は
 1 文字も変えずにそのまま持ってきている。
 
 違うのは入口と出口だけ。
-入口は os.read() の代わりにキーイベント、出口は文字の盤面の代わりに 200 個の <div>。
+入口は os.read() の代わりにキーイベント、出口は文字の盤面の代わりに Three.js の立体ブロック 200 個。
 時間を進めるのも select の時間切れではなく、asyncio の待ち合わせになっている。
+
+（2026-09-18）出口を 200 個の <div> から Three.js に差し替えた。
+盤面まわりの 5 関数は変えていない。変わったのは draw() と、その前の「舞台づくり」だけ。
 """
 
 import asyncio
 import random
 import time
 
-from pyscript import document, when
+from pyodide.ffi import to_js
+from pyscript import document, when, window
 
 WIDTH = 10
 HEIGHT = 20
@@ -114,18 +118,109 @@ def spawn():
 
 # --- ここから下がブラウザ版だけの部分 ---
 
-grid = document.querySelector("#grid")
 score_label = document.querySelector("#score")
 lines_label = document.querySelector("#lines")
 message = document.querySelector("#message")
 start_button = document.querySelector("#start-btn")
+canvas = document.querySelector("#screen")
 
-cells = []  # 200 個のマス。作るのは一度だけで、あとは色を塗り替える
-for _ in range(WIDTH * HEIGHT):
-    cell = document.createElement("div")
-    cell.className = "cell"
-    grid.appendChild(cell)
-    cells.append(cell)
+# ── Three.js の舞台 ──────────────────────────────────────────────────────
+#   index.html が window.THREE と window.ADDONS を置いてくれている。
+#   Python からは「JS のクラスを .new() で作る」「引数の辞書は js() で JS のオブジェクトに直す」の 2 つだけ覚えればよい。
+
+THREE = window.THREE
+ADDONS = window.ADDONS
+VIEW_W, VIEW_H = 360, 640
+
+COLORS = {  # <div> 時代の CSS（.c-I など）と同じ 7 色
+    "I": 0x4AA3C7,
+    "O": 0xD4A72C,
+    "T": 0x9A6BD4,
+    "S": 0x4AA96C,
+    "Z": 0xD4685E,
+    "J": 0x4A72C7,
+    "L": 0xD4894A,
+}
+BACK = 0x121222        # 画面の背景
+BOARD = 0x1C1C34       # 盤の板
+BOARD_LINE = 0x2C2C4A  # 板に引くマス目
+FRAME = 0x4E5378       # 盤を囲む金属のふち
+
+
+def js(**kw):
+    """Python の キーワード引数 → JS のオブジェクト。Three.js のコンストラクタは {color: ..., roughness: ...} を受け取る"""
+    return to_js(kw, dict_converter=window.Object.fromEntries)
+
+
+renderer = THREE.WebGLRenderer.new(js(canvas=canvas, antialias=True))
+renderer.setPixelRatio(min(2.0, window.devicePixelRatio))
+renderer.setSize(VIEW_W, VIEW_H, False)               # False: CSS の大きさは触らない（スマホでは縮む）
+renderer.toneMapping = THREE.ACESFilmicToneMapping   # 明るい所を白飛びさせず、フィルムのように丸める
+renderer.toneMappingExposure = 1.0
+
+scene = THREE.Scene.new()
+scene.background = THREE.Color.new(BACK)
+pmrem = THREE.PMREMGenerator.new(renderer)            # 「部屋」を映り込みの環境に。ブロックのつやが本物のガラスになる
+scene.environment = pmrem.fromScene(ADDONS.RoomEnvironment.new(), 0.04).texture
+
+camera = THREE.PerspectiveCamera.new(42, VIEW_W / VIEW_H, 0.5, 100)
+camera.position.set(1.2, 2.0, 28.0)                   # 少し右上から盤を見下ろす。ブロックの側面がのぞく
+camera.lookAt(0.0, 0.0, 0.0)
+
+key_light = THREE.DirectionalLight.new(0xFFFFFF, 1.3)   # 主光。右上から
+key_light.position.set(6.0, 12.0, 14.0)
+scene.add(key_light)
+fill_light = THREE.DirectionalLight.new(0x8FA8FF, 0.6)  # 補助光。左下から青っぽく
+fill_light.position.set(-8.0, -6.0, 10.0)
+scene.add(fill_light)
+scene.add(THREE.AmbientLight.new(0x404060, 0.5))
+
+
+def cell_pos(x, y):
+    """盤面の (x, y)（左上が 0,0）→ 舞台の座標（盤の中心が 0,0）"""
+    return (x - WIDTH / 2 + 0.5, HEIGHT / 2 - 0.5 - y, 0.0)
+
+
+# 盤の板・マス目・ふち。一度作ったら動かない
+board_mat = THREE.MeshStandardMaterial.new(js(color=BOARD, roughness=0.9, metalness=0.0, envMapIntensity=0.15))
+board_plate = THREE.Mesh.new(THREE.BoxGeometry.new(WIDTH + 0.3, HEIGHT + 0.3, 0.4), board_mat)
+board_plate.position.set(0.0, 0.0, -0.7)
+scene.add(board_plate)
+
+line_mat = THREE.MeshBasicMaterial.new(js(color=BOARD_LINE))
+for i in range(WIDTH + 1):
+    line = THREE.Mesh.new(THREE.BoxGeometry.new(0.02, HEIGHT, 0.02), line_mat)
+    line.position.set(i - WIDTH / 2, 0.0, -0.49)
+    scene.add(line)
+for i in range(HEIGHT + 1):
+    line = THREE.Mesh.new(THREE.BoxGeometry.new(WIDTH, 0.02, 0.02), line_mat)
+    line.position.set(0.0, HEIGHT / 2 - i, -0.49)
+    scene.add(line)
+
+frame_mat = THREE.MeshStandardMaterial.new(js(color=FRAME, roughness=0.4, metalness=0.7, envMapIntensity=0.3))
+for w, h, px, py in [(0.4, HEIGHT + 0.7, -(WIDTH / 2 + 0.35), 0.0),   # 左
+                     (0.4, HEIGHT + 0.7, WIDTH / 2 + 0.35, 0.0),      # 右
+                     (WIDTH + 1.1, 0.4, 0.0, -(HEIGHT / 2 + 0.35))]:  # 下
+    rail = THREE.Mesh.new(THREE.BoxGeometry.new(w, h, 1.0), frame_mat)
+    rail.position.set(px, py, -0.3)
+    scene.add(rail)
+
+# ブロック。角の丸い立方体にガラスのような表面（clearcoat）
+BLOCK_GEO = ADDONS.RoundedBoxGeometry.new(0.92, 0.92, 0.92, 4, 0.12)
+BLOCK_MATS = {
+    name: THREE.MeshPhysicalMaterial.new(js(color=color, roughness=0.3, metalness=0.0,
+                                            clearcoat=1.0, clearcoatRoughness=0.1, envMapIntensity=0.45))  # 映り込みは控えめ。強いと色が白っぽく飛ぶ
+    for name, color in COLORS.items()
+}
+
+cells = []  # 200 個のブロック。作るのは一度だけで、あとは「見せる／隠す」と色を切り替える
+for y in range(HEIGHT):
+    for x in range(WIDTH):
+        block = THREE.Mesh.new(BLOCK_GEO, BLOCK_MATS["T"])
+        block.position.set(*cell_pos(x, y))
+        block.visible = False
+        scene.add(block)
+        cells.append(block)
 
 # CLI 版では素の変数だった board / x / y / score を、辞書にまとめて持つ。
 # キーイベントから呼ばれるたびに中断・再開するので、ループの中には置けない。
@@ -143,7 +238,7 @@ state = {
 
 
 def draw():
-    """CLI 版の render() にあたる。文字列ではなく、マスの色を塗り替える。"""
+    """CLI 版の render() にあたる。文字列ではなく、200 個のブロックの「見せる／隠す」と色を切り替えて描き直す。"""
     if state["playing"]:
         view = place(state["board"], state["shape"], state["x"], state["y"], state["name"])
     else:
@@ -153,9 +248,12 @@ def draw():
         row = view[y]
         for x in range(WIDTH):
             value = row[x]
-            cell = cells[y * WIDTH + x]  # 1 本のリストを 2 次元として使う
-            cell.className = "cell" if value == 0 else f"cell c-{value}"
+            block = cells[y * WIDTH + x]  # 1 本のリストを 2 次元として使う
+            block.visible = value != 0
+            if value != 0:
+                block.material = BLOCK_MATS[value]
 
+    renderer.render(scene, camera)  # 盤面が変わったときだけ描く。動きの補間は次の回で
     score_label.textContent = str(state["score"])
     lines_label.textContent = str(state["lines"])
 
