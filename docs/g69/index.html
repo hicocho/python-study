@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>チェイン・ドロップ — python-study</title>
+<meta name="description" content="2 個組の玉を落として同じ色を 4 つつなげて消す落ちものパズル。連鎖で高得点。中身は Python、絵は Three.js。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128309;</text></svg>">
+<link rel="stylesheet" href="https://pyscript.net/releases/2025.8.1/core.css">
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+               "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }
+</script>
+<script type="module">
+  // Three.js を読み込んで window に置く。Python（PyScript）は window.THREE を通して舞台を作る
+  import * as THREE from "three";
+  window.THREE = THREE;
+</script>
+<script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #656d76;
+    --line: #d8dbe0;
+    --accent: #3b6f9c;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c;
+      --panel: #1f2229;
+      --ink: #e6e6e3;
+      --muted: #9aa2ad;
+      --line: #333842;
+      --accent: #8fc3ee;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 1.25rem 1rem 3rem;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    line-height: 1.7;
+  }
+  main { max-width: 34rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; letter-spacing: .02em; }
+  .sub { color: var(--muted); font-size: .875rem; margin: 0 0 1rem; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: .75rem;
+    padding: 1rem;
+  }
+  .status { display: flex; flex-wrap: wrap; gap: .15rem 1.2rem; justify-content: space-between; align-items: baseline;
+    margin-bottom: .6rem; color: var(--muted); font-size: .875rem;
+    font-variant-numeric: tabular-nums; }
+  .status b { color: var(--ink); font-weight: 700; }
+  .status span { white-space: nowrap; }
+
+  /* Three.js の画面。420×600（縦長）の canvas */
+  .stage { display: flex; justify-content: center; }
+  #screen {
+    width: min(100%, 420px);
+    aspect-ratio: 7 / 10;
+    background: #121222;
+    border: 2px solid var(--line);
+    border-radius: .35rem;
+    touch-action: none;
+    cursor: pointer;
+    user-select: none; -webkit-user-select: none;
+  }
+  .note-line { margin: .3rem 0 0; min-height: 1.4em; text-align: center; font-weight: 700; color: #b8860b; font-size: .95rem; }
+  #message { min-height: 1.6em; margin: .4rem 0 0; font-size: .8125rem; color: var(--ink); text-align: center; }
+  .pad { display: grid; gap: .4rem; margin-top: .6rem; grid-template-columns: 1fr; }
+  .pad button.go { grid-column: 1; }
+  .pad button { padding: .8rem 0; font-size: 1.05rem; font-family: inherit; font-weight: 600;
+    color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+    border-radius: .5rem; cursor: pointer; user-select: none; -webkit-user-select: none; }
+  .pad button:active { background: var(--accent); color: var(--panel); }
+  .pad button.go { background: #2f7d52; border-color: #2f7d52; color: #fff; }
+  @media (prefers-color-scheme: dark) {
+    .pad button.go { background: #3f8f62; border-color: #3f8f62; color: #0f1512; }
+  }
+  .howto { margin: .75rem 0 0; padding: .7rem .8rem; background: var(--bg);
+    border: 1px solid var(--line); border-radius: .5rem; font-size: .8125rem; }
+  .howto b { color: var(--ink); }
+  .howto ol { margin: .4rem 0 0; padding-left: 1.2rem; }
+  .howto li { margin: .15rem 0; }
+  .howto code { background: transparent; }
+  .cues { display: grid; grid-template-columns: 1fr 1fr; gap: .3rem .9rem; margin: .6rem 0 0; font-size: .8125rem;
+    color: var(--muted); }
+  .cues b { color: var(--ink); }
+  #loading { color: var(--muted); font-size: .875rem; text-align: center; padding: .5rem 0; margin: .5rem 0 0; }
+  .note { font-size: .875rem; color: var(--muted); margin-top: 1.5rem; }
+  .note a { color: inherit; }
+  .back { font-size: .875rem; margin: 0 0 1rem; }
+  .back a { color: var(--muted); text-decoration: none; }
+  .back a:hover { text-decoration: underline; }
+  footer { margin-top: 2rem; font-size: .8125rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <p class="back"><a href="../">← 課題一覧</a></p>
+  <h1>チェイン・ドロップ</h1>
+  <p class="sub">2 個組の玉が落ちてきます。同じ色が 4 つ以上つながると消え、上の玉が落ちてまたつながれば連鎖。積み上がったら終わり。消した数でレベルが上がり、落ちるのが速くなります。5 色。<strong>ゲームの中身は Python、絵は Three.js</strong>（つやのある球・光・消える粒は GPU）。<strong>音を出してお使いください。</strong></p>
+
+  <div class="card">
+    <div class="status">
+      <span>レベル <b id="level">1</b> ・ 点 <b id="score">0</b> ・ 最大 <b id="chain">0</b> 連鎖</span>
+      <span>消した <b id="cleared">0</b> ・ 組 <b id="pieces">0</b> ・ ベスト <b id="best">0</b> ・ <b id="fps">–</b> コマ/秒</span>
+    </div>
+
+    <div class="stage"><canvas id="screen" width="420" height="600"></canvas></div>
+    <p id="note" class="note-line">&nbsp;</p>
+    <p id="message"></p>
+
+    <div class="pad">
+      <button type="button" id="go" class="go">▶ スタート</button>
+      <button type="button" id="again" hidden>もう一度</button>
+    </div>
+
+    <div class="howto">
+      <b>やること</b>：盤の上で<b>左右にスワイプ</b>すると 1 マスずつ動き、<b>タップ</b>で回転、<b>下にスワイプ</b>で一気に落とす（パソコンは <code>←</code> <code>→</code> 移動、<code>↑</code> か <code>x</code> 回転、<code>z</code> 逆回転、<code>↓</code> 速く、スペースで一気に）。
+      <ol>
+        <li>同じ色が縦横に <b>4 つ以上</b>つながると消える。消えた上の玉が落ちてまたつながると<b>連鎖</b>。連鎖するほど点が跳ね上がる（1 連鎖 40 → 2 連鎖で 8 倍 → 3 連鎖で 16 倍…）。</li>
+        <li>薄い玉は落ちる先（影）。着地してから 0.25 秒は動かせる。</li>
+        <li>30 個消すごとにレベルが上がり、落ちる速さが 0.9 秒 → 0.22 秒まで縮む。</li>
+        <li>盤を空にすると<b>全消し +1000</b>。真ん中の列の一番上がふさがると終わり。</li>
+      </ol>
+      <div class="cues">
+        <span><b>盤は 2 次元の列</b>：grid[行][列]、行 0 が下、見えない行が 1 つ</span>
+        <span><b>つながりの探索</b>：同じ色を幅優先で集める（flood fill）</span>
+        <span><b>連鎖の状態機械</b>：FALL → SETTLE → POP → SETTLE → …</span>
+        <span><b>玉は id で追う</b>：落ちても Three.js の球は動かすだけ</span>
+      </div>
+    </div>
+
+    <p id="loading">Python を読み込んでいます… （初回は数秒かかります）</p>
+  </div>
+
+  <p class="note">
+    このページは <strong>Python のコードがブラウザの中でそのまま動いています</strong>（PyScript）。
+    盤・つながりの探索・落下・点・連鎖の状態機械・自動プレイは CLI 版と 1 文字も違いません。
+    端末は ▀ の並びに丸を描き、ここでは<strong>同じ盤の玉を Three.js の球に写して GPU に描かせています</strong>（つや・光・消える粒は Three.js）。
+  </p>
+
+  <footer>
+    ソース: <a href="https://github.com/hicocho/python-study">github.com/hicocho/python-study</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/docs/g69/game.py">このページの game.py</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/g69-chain-drop/main.py">CLI 版 main.py</a>
+  </footer>
+</main>
+
+<script type="py" src="./game.py?v=f556ee09"></script>
+</body>
+</html>
