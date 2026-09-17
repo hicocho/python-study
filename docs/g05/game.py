@@ -11,9 +11,11 @@ apply_move() / count_stones() / move_name() / result_text() は
 
 ブラウザ版だけの追加として、白をコンピュータに任せるモードがある（choose_move）。
 
-（2026-09-18）出口を 64 個の <div> から Three.js の立体の盤に差し替えた。
+（2026-09-18・1 回目）出口を 64 個の <div> から Three.js の立体の盤に差し替えた。
 入口も <div> のクリックから「画面の点 → 盤のマス」の変換（Raycaster）に変わった。
 ルールの 9 関数は変えていない。
+（2 回目）GSAP で動きを足した。置いた石は上から落ちて跳ね、挟んだ石は近い順に跳ねながら裏返る。
+play() が async になり、動きが終わるまで手番を渡さない。
 """
 
 import asyncio
@@ -42,6 +44,11 @@ DIRECTIONS = [
 
 CPU_WAIT = 0.55  # コンピュータが考えているように見せるための間
 PASS_WAIT = 0.9  # パスの表示を読む時間
+
+DROP_SECONDS = 0.45   # 置いた石が落ちて跳ねるまで
+FLIP_SECONDS = 0.35   # 石 1 枚が裏返るのにかかる時間
+FLIP_STEP = 0.07      # 置いた石から 1 マス離れるごとに、裏返り始めが遅れる時間（波のように広がる）
+FLIP_HOP = 0.6        # 裏返るとき、どれだけ跳ね上がるか
 
 
 # --- ここから 9 つは CLI 版からそのまま ---
@@ -163,6 +170,7 @@ cpu_button = document.querySelector("#mode-cpu")
 
 THREE = window.THREE
 ADDONS = window.ADDONS
+gsap = window.gsap                                    # 動きの補間。「y を 0.45 秒で 0.11 に、跳ねながら」を 1 行で
 VIEW = 480
 
 WOOD = 0x7A4E2A        # 盤の木枠
@@ -276,6 +284,12 @@ for row in range(SIZE):
         scene.add(ring)
         rings.append(ring)
 
+# 最後に置いた石の印。小さな赤い玉
+marker = THREE.Mesh.new(THREE.SphereGeometry.new(0.07, 16, 12),
+                        THREE.MeshStandardMaterial.new(js(color=0xE0483A, roughness=0.4, metalness=0.0)))
+marker.visible = False
+scene.add(marker)
+
 # ── 画面の点 → 盤のマス（Raycaster）───────────────────────────────────
 #   <div> のクリックが使えなくなった代わり。マウスの位置からカメラの向きに光線を飛ばし、
 #   フェルトに当たった点の x, z をマスの番号に直す。
@@ -311,6 +325,8 @@ state = {
     "playing": False,
     "vs_cpu": True,
     "hover": None,      # マウスが乗っているマス
+    "last": None,       # 最後に置いたマス
+    "busy": False,      # 石が動いているあいだ True。クリックを受けない
 }
 
 
@@ -324,10 +340,21 @@ def cpu_thinking():
     return state["vs_cpu"] and state["player"] == WHITE
 
 
+def draw_rings():
+    """置ける場所の輪だけを描き直す。石が動いている最中にマウスが動いても、石には触らない"""
+    show_hints = state["playing"] and not cpu_thinking() and not state["busy"]
+    for index, ring in enumerate(rings):
+        row, col = divmod(index, SIZE)
+        ring.visible = show_hints and (row, col) in state["moves"]
+        ring.material = ring_hover_mat if state["hover"] == (row, col) else ring_mat
+
+
 def draw():
-    """CLI 版の board_text() にあたる。64 個の石の「見せる／隠す」と向き、置ける場所の輪を盤面に合わせる。"""
+    """CLI 版の board_text() にあたる。64 個の石の「見せる／隠す」と向き、置ける場所の輪を盤面に合わせる。
+
+    動きが終わったあとに呼んで、石の位置と向きを盤面の真実に揃える役目もある。
+    """
     board = state["board"]
-    show_hints = state["playing"] and not cpu_thinking()
 
     for index, stone in enumerate(stones):
         row, col = divmod(index, SIZE)  # 1本のリストを2次元として使う
@@ -335,9 +362,14 @@ def draw():
         stone.visible = value != EMPTY
         if value != EMPTY:
             stone.rotation.x = FACE_UP[value]
-        ring = rings[index]
-        ring.visible = show_hints and (row, col) in state["moves"]
-        ring.material = ring_hover_mat if state["hover"] == (row, col) else ring_mat
+            stone.position.y = STONE_Y
+
+    draw_rings()
+
+    marker.visible = state["last"] is not None
+    if state["last"] is not None:
+        x, z = cell_pos(*state["last"])
+        marker.position.set(x, STONE_Y + 0.05 + 0.07, z)
 
     black, white = count_stones(board)
     black_label.textContent = str(black)
@@ -351,15 +383,46 @@ def draw():
         turn_label.textContent = f"{MARKS[state['player']]} の番"
 
 
-def play(pos):
-    """石を置いて手番を渡す。CLI 版の while ループの後半と同じ。"""
+def animate_move(row, col, flips, player):
+    """石を置く動きと、挟んだ石が裏返る動きを始める。終わるまでの秒数を返す。
+
+    盤面（真実）は apply_move() ですでに書き換わっている。ここは見た目を後から追いつかせる係。
+    """
+    stone = stones[row * SIZE + col]
+    stone.rotation.x = FACE_UP[player]
+    stone.position.y = STONE_Y + 2.5                  # 上から落とす
+    stone.visible = True
+    gsap.to(stone.position, js(y=STONE_Y, duration=DROP_SECONDS, ease="bounce.out"))
+
+    farthest = 0
+    for r, c in flips:
+        dist = max(abs(r - row), abs(c - col))        # 置いた石から何マス目か
+        farthest = max(farthest, dist)
+        delay = DROP_SECONDS * 0.6 + FLIP_STEP * dist  # 近い石から順に、波のように
+        target = stones[r * SIZE + c]
+        gsap.to(target.rotation, js(x=target.rotation.x + math.pi, duration=FLIP_SECONDS, delay=delay, ease="power2.inOut"))
+        gsap.to(target.position, js(y=STONE_Y + FLIP_HOP, duration=FLIP_SECONDS / 2, delay=delay,
+                                    yoyo=True, repeat=1, ease="power1.out"))
+
+    return DROP_SECONDS * 0.6 + FLIP_STEP * farthest + FLIP_SECONDS + 0.05
+
+
+async def play(pos):
+    """石を置いて手番を渡す。CLI 版の while ループの後半と同じ。動きが終わるまで待つ。"""
     row, col = pos
     flips = state["moves"][pos]
+    player = state["player"]
 
-    apply_move(state["board"], row, col, flips, state["player"])
-    set_message(f"{MARKS[state['player']]} {move_name(row, col)} → {len(flips)} 枚ひっくり返した")
+    apply_move(state["board"], row, col, flips, player)
+    set_message(f"{MARKS[player]} {move_name(row, col)} → {len(flips)} 枚ひっくり返した")
+    state["last"] = pos
+    state["player"] = opponent(player)
 
-    state["player"] = opponent(state["player"])
+    state["busy"] = True
+    draw_rings()                                      # 動いている最中は輪を消す
+    await asyncio.sleep(animate_move(row, col, flips, player))
+    state["busy"] = False
+    draw()                                            # 回転を 0 / π に揃え直す（π を足し続けない）
 
 
 def finish():
@@ -396,18 +459,26 @@ async def advance():
             return  # ここから先は人のクリック待ち
 
         await asyncio.sleep(CPU_WAIT)
-        play(choose_move(state["moves"]))
+        await play(choose_move(state["moves"]))
 
 
 def start():
+    gsap.globalTimeline.clear()                       # 動いている途中の石があれば止める
     state["board"] = make_board()
     state["player"] = BLACK
     state["moves"] = {}
     state["passes"] = 0
     state["playing"] = True
+    state["last"] = None
+    state["busy"] = False
 
     set_message("")
     asyncio.ensure_future(advance())
+
+
+async def human_turn(pos):
+    await play(pos)
+    await advance()
 
 
 def set_mode(vs_cpu):
@@ -420,15 +491,14 @@ def set_mode(vs_cpu):
 @when("click", "#screen")
 def on_board_click(event):
     """盤のクリックが CLI 版の input() にあたる。"""
-    if not state["playing"] or cpu_thinking():
+    if not state["playing"] or cpu_thinking() or state["busy"]:
         return
 
     pos = pick(event)
     if pos is None or pos not in state["moves"]:  # 置けないマスは黙って無視する
         return
 
-    play(pos)
-    asyncio.ensure_future(advance())
+    asyncio.ensure_future(human_turn(pos))
 
 
 @when("pointermove", "#screen")
@@ -437,7 +507,7 @@ def on_board_move(event):
     pos = pick(event)
     if pos != state["hover"]:
         state["hover"] = pos
-        draw()
+        draw_rings()
 
 
 @when("click", "#start-btn")

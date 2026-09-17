@@ -9,14 +9,17 @@
 <link rel="stylesheet" href="https://pyscript.net/releases/2025.8.1/core.css">
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-               "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }
+               "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+               "gsap": "https://cdn.jsdelivr.net/npm/gsap@3.15.0/+esm" } }
 </script>
 <script type="module">
   // Three.js を読み込んで window に置く。Python（PyScript）は window.THREE を通して舞台を作る
   import * as THREE from "three";
   import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+  import { gsap } from "gsap";                       // 動きの補間（落ちる・跳ねる・回る）
   window.THREE = THREE;
   window.ADDONS = { RoomEnvironment };
+  window.gsap = gsap;
 </script>
 <script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
 <style>
@@ -166,6 +169,6 @@
   </footer>
 </main>
 
-<script type="py" src="./game.py?v=65f7e439"></script>
+<script type="py" src="./game.py?v=3b689dd0"></script>
 </body>
 </html>
