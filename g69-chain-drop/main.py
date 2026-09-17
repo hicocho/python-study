@@ -54,6 +54,24 @@ GROUP_BONUS = {4: 0, 5: 2, 6: 3, 7: 4, 8: 5, 9: 6, 10: 7}
 ALL_CLEAR = 1000                                    # 盤が空になったら
 ROT = ((0, 1), (1, 0), (0, -1), (-1, 0))            # 回転 0〜3 のときの相方の位置（上・右・下・左）
 QUEUE = 2                                           # 次の玉を見せる数
+FEVER_CHAIN = 3                                     # この連鎖でフィーバーが始まる
+FEVER_TIME = 12.0                                   # フィーバーの秒数（連鎖でさらに延びる）
+FEVER_SCALE = 2                                     # フィーバー中の点の倍率
+MISSION_BONUS = 500                                 # お題を達成した点
+
+# お題。順にクリアすると星が付く。check は世界を受けて達成かどうかを返す
+MISSIONS = (
+    dict(text="2 連鎖を出す", check=lambda w: w.max_chain >= 2),
+    dict(text="30 個消す", check=lambda w: w.cleared >= 30),
+    dict(text="3 連鎖を出す", check=lambda w: w.max_chain >= 3),
+    dict(text="点を 3000 にする", check=lambda w: w.score >= 3000),
+    dict(text="フィーバーを起こす", check=lambda w: w.fevers >= 1),
+    dict(text="レベル 5 にする", check=lambda w: w.level >= 5),
+    dict(text="4 連鎖を出す", check=lambda w: w.max_chain >= 4),
+    dict(text="全消しする", check=lambda w: w.all_clears >= 1),
+    dict(text="点を 20000 にする", check=lambda w: w.score >= 20000),
+    dict(text="5 連鎖を出す", check=lambda w: w.max_chain >= 5),
+)
 
 # 玉の色。端末の色と、ブラウザの 16 進
 PALETTE = (
@@ -112,6 +130,10 @@ def sound_bytes(kind: str) -> bytes:
         samples = tone(base, 0.08) + tone(base * 1.5, 0.12) + noise(0.08, VOLUME * 0.6, 50.0, n)
     elif kind == "level":
         samples = tone(660, 0.08) + tone(880, 0.08) + tone(1320, 0.18)
+    elif kind == "fever":                           # フィーバー開始（駆け上がる）
+        samples = sum((tone(440 * (1.12 ** i), 0.05, VOLUME * 0.8) for i in range(10)), array("h")) + tone(1320, 0.3)
+    elif kind == "mission":                         # お題を達成（星）
+        samples = tone(1047, 0.08) + tone(1319, 0.08) + tone(1568, 0.08) + tone(2093, 0.25)
     elif kind == "allclear":
         samples = tone(784, 0.1) + tone(988, 0.1) + tone(1175, 0.1) + tone(1568, 0.3)
     elif kind == "best":
@@ -128,7 +150,7 @@ def sound_bytes(kind: str) -> bytes:
 
 
 POPS = tuple(f"pop{n}" for n in range(1, 6))
-EVENTS = ("end", "allclear", "level") + POPS[::-1] + ("land", "turn", "move")   # 目立つ順
+EVENTS = ("end", "mission", "fever", "allclear", "level") + POPS[::-1] + ("land", "turn", "move")   # 目立つ順
 SOUNDS = EVENTS + ("best",)
 
 # ── 色（端末） ──────────────────────────────────────────────────────────
@@ -332,15 +354,16 @@ class Phase(Enum):
 class Best:
     score: int = 0
     chain: int = 0
+    stars: int = 0                                  # 達成したお題の数（最大）
 
     def dump(self) -> str:
-        return json.dumps({"score": self.score, "chain": self.chain})
+        return json.dumps({"score": self.score, "chain": self.chain, "stars": self.stars})
 
     @classmethod
     def parse(cls, text: str) -> "Best":
         try:
             data = json.loads(text)
-            return cls(int(data.get("score", 0)), int(data.get("chain", 0)))
+            return cls(int(data.get("score", 0)), int(data.get("chain", 0)), int(data.get("stars", 0)))
         except (ValueError, TypeError, AttributeError):
             return cls()
 
@@ -348,6 +371,7 @@ class Best:
         improved = world.score > self.score
         self.score = max(self.score, world.score)
         self.chain = max(self.chain, world.max_chain)
+        self.stars = max(self.stars, world.stars)
         return improved
 
 
@@ -378,6 +402,11 @@ class World:
     shake_until: float = 0.0
     shake_size: float = 0.0
     counter: int = 0
+    fever_until: float = 0.0                        # フィーバーの終わり
+    fevers: int = 0                                 # フィーバーが起きた回数
+    all_clears: int = 0
+    mission: int = 0                                # いまのお題の番号
+    stars: int = 0                                  # 達成した数
 
     def __post_init__(self):
         self.luck = random.Random(self.seed)
@@ -388,6 +417,23 @@ class World:
     # ── 決まりごと ──
     def drop_time(self) -> float:
         return max(DROP_MIN, DROP_START - DROP_STEP * (self.level - 1))
+
+    @property
+    def fever(self) -> bool:
+        return self.time < self.fever_until
+
+    def mission_text(self) -> str:
+        return MISSIONS[self.mission]["text"] if self.mission < len(MISSIONS) else "全部達成！"
+
+    def check_mission(self) -> bool:
+        """いまのお題を達成していれば星を付けて次へ（1 回に 1 つ）。"""
+        if self.mission >= len(MISSIONS) or not MISSIONS[self.mission]["check"](self):
+            return False
+        self.stars += 1
+        self.mission += 1
+        self.score += MISSION_BONUS
+        self.tell(f"★ お題達成 +{MISSION_BONUS}：" + ("次は " + self.mission_text() if self.mission < len(MISSIONS) else "全部達成！"), 2.5)
+        return True
 
     def tell(self, text: str, seconds: float = 1.5) -> None:
         self.note, self.note_until = text, self.time + seconds
@@ -491,27 +537,39 @@ class World:
         """消える組があれば POP へ（連鎖 +1）。無ければ次の組。"""
         groups = find_groups(self.grid)
         if not groups:
+            happened = None
             if self.chain > 0 and all(cell is None for row in self.grid for cell in row):
                 self.score += ALL_CLEAR
+                self.all_clears += 1
                 self.tell(f"全消し！ +{ALL_CLEAR}", 2.0)
-                self.spawn()
-                return "allclear"
+                happened = "allclear"
+            if self.check_mission():
+                happened = "mission"
             self.spawn()
-            return None
+            return happened
         self.chain += 1
         self.max_chain = max(self.max_chain, self.chain)
-        gained = score_for(groups, self.grid, self.chain)
+        gained = score_for(groups, self.grid, self.chain) * (FEVER_SCALE if self.fever else 1)
         self.score += gained
+        started_fever = False
+        if self.chain >= FEVER_CHAIN:               # フィーバー：始まる、または延びる
+            if not self.fever:
+                self.fevers += 1
+                started_fever = True
+            self.fever_until = max(self.fever_until, self.time) + FEVER_TIME
         self.pops = [(self.grid[r][c], c, r) for g in groups for c, r in g]
         for blob, c, r in self.pops:
             self.grid[r][c] = None
         self.phase = Phase.POP
         self.phase_left = POP_TIME
         self.shake(0.5 + 0.5 * self.chain, 0.25)
+        if started_fever:
+            self.tell(f"{self.chain} 連鎖！ フィーバー！ 点 ×{FEVER_SCALE}", 2.0)
+            return "fever"
         if self.chain >= 2:
-            self.tell(f"{self.chain} 連鎖！ +{gained}", 1.2)
+            self.tell(f"{self.chain} 連鎖！ +{gained}" + ("（×2）" if self.fever else ""), 1.2)
         else:
-            self.tell(f"+{gained}", 0.8)
+            self.tell(f"+{gained}" + ("（×2）" if self.fever else ""), 0.8)
         return f"pop{min(self.chain, len(POPS))}"
 
     def update(self, dt: float) -> str | None:
@@ -547,6 +605,8 @@ class World:
                     self.tell(f"レベル {level}", 1.5)
                     happened = "level"
                 self.begin_settle()
+        if self.phase == Phase.FALL and self.time >= self.note_until and self.check_mission():   # レベルや点のお題は落ちている間にも
+            happened = "mission"
         if self.over:
             return "end"
         return happened
@@ -575,8 +635,11 @@ def draw(screen: Screen, world: World) -> None:
     if world.time < world.shake_until:
         k = world.shake_size * (world.shake_until - world.time) / 0.25
         ox, oy = math.sin(world.time * 90) * k, math.cos(world.time * 70) * k * 0.6
+    if world.fever:                                                 # フィーバー：背景が脈打つ
+        k = 0.5 + 0.5 * math.sin(world.time * 6)
+        screen.band(0, screen.height, (int(40 + 30 * k), int(20 + 10 * k), int(60 + 30 * k)))
     bx, by = (BOARD_X + ox) * scale, (BOARD_Y + oy) * scale
-    screen.box(int(bx - scale), int(by - scale), (COLS * CELL + 2) * scale, (ROWS * CELL + 2) * scale, FRAME)
+    screen.box(int(bx - scale), int(by - scale), (COLS * CELL + 2) * scale, (ROWS * CELL + 2) * scale, FRAME if not world.fever else (255, 200, 90))
     screen.box(int(bx), int(by), COLS * CELL * scale, ROWS * CELL * scale, BOARD)
     for c in range(1, COLS):
         screen.box(int(bx + c * CELL * scale), int(by), 1, ROWS * CELL * scale, BOARD_LINE)
@@ -746,7 +809,7 @@ def status(world: World, best: Best, improved: bool = False) -> str:
         note = "積み上がった" + (" ベスト更新！" if improved else "")
         tail = "スペースでもう一度"
     else:
-        tail = f"ベスト {best.score}（{best.chain} 連鎖）q でやめる"
+        tail = f"★{world.stars} お題: {world.mission_text()}" + ("  フィーバー！" if world.fever else "")
     head = f" レベル {world.level} 点 {world.score:6d} 消した {world.cleared:3d} 最大 {world.max_chain} 連鎖 組 {world.pieces:3d} "
     room = WIDTH - columns(head) - columns(tail) - 1
     while columns(note) > room:
@@ -983,9 +1046,46 @@ def check() -> None:
         if world.phase == Phase.FALL and world.piece is not None:
             break
     assert events[:2] == ["pop1", "pop2"] and world.max_chain == 2 and world.chain == 0, events
-    assert world.cleared == 8 and world.score == 40 + 40 * 8 + ALL_CLEAR, (world.cleared, world.score)
-    assert "allclear" in events
+    assert world.cleared == 8 and world.score == 40 + 40 * 8 + ALL_CLEAR + MISSION_BONUS, (world.cleared, world.score)   # お題「2 連鎖」も達成
+    assert "mission" in events and world.all_clears == 1, "全消しと同時にお題も達成（お題の音が勝つ）"
     print("  FALL → SETTLE → POP（連鎖 1）→ SETTLE → POP（連鎖 2）→ SETTLE → 全消し +1000 → 次の組")
+
+    print("● フィーバーとお題")
+    world = World(seed=1)
+    world.started = True
+    fill(world.grid, ["..0...",
+                      "..0...",
+                      "..3...",
+                      "..3...",
+                      "0011..",
+                      "3311.."])
+    world.piece = Piece(3, 6, 2, world.new_blob(1), world.new_blob(1))     # 1 が消え → 0 が落ちて消え → 3 が落ちて消える 3 連鎖
+    world.hard_drop()
+    events = []
+    for _ in range(200):
+        got = world.update(STEP)
+        if got:
+            events.append(got)
+        if world.phase == Phase.FALL and world.piece is not None:
+            break
+    assert events[:3] == ["pop1", "pop2", "fever"] and world.fever and world.fevers == 1, events
+    assert world.score == 60 * 3 + 40 * 8 + 40 * 16 + ALL_CLEAR + MISSION_BONUS, world.score   # 1 が 6 つ、3 が 4 つ、0 が 4 つ。×2 は次の消しから。全消し、お題「2 連鎖」
+    assert world.stars == 1 and world.mission == 1 and "mission" in events, (world.stars, events)
+    assert world.max_chain == 3 and events.count("mission") == 1, "お題は 1 回に 1 つ（3 連鎖はまだ）"
+    world.time = world.fever_until + 0.01
+    assert not world.fever
+    world.tell("", 0)
+    world.update(STEP)
+    assert world.stars == 1 and world.mission_text() == "30 個消す", "3 連鎖はもう出ているが、お題は順番どおり（まだ 14 個）"
+    world.cleared = 30
+    world.update(STEP)                              # 30 個 → ★2
+    world.tell("", 0)
+    world.update(STEP)                              # 3 連鎖はもう出ている → ★3
+    assert world.stars == 3 and world.mission_text() == "点を 3000 にする", (world.stars, world.mission_text())
+    assert all(m["check"](World(seed=9)) is False for m in MISSIONS), "始めは全部未達成"
+    best = Best.parse(Best(1, 2, 3).dump())
+    assert best.stars == 3
+    print(f"  {FEVER_CHAIN} 連鎖でフィーバー {FEVER_TIME:.0f} 秒（点 ×{FEVER_SCALE}、連鎖で延びる）。お題 {len(MISSIONS)} 個を順に、達成で ★ と +{MISSION_BONUS}")
 
     print("● レベルと終わり")
     world = World(seed=1)
@@ -1031,7 +1131,9 @@ def check() -> None:
     world = World(seed=1)
     for started, over in ((False, False), (True, False), (True, True)):
         world.started, world.over = started, over
-        world.tell("5 連鎖！ +12345", 9)
+        world.tell("5 連鎖！ +12345（×2）", 9)
+        world.fever_until = 99
+        world.mission = 8
         assert columns(status(world, best, True)) == WIDTH, columns(status(world, best, True))
     print(f"  ベストは点と最大連鎖。音は {len(SOUNDS)} つ全部別（連鎖ごとに高く）。状態行は {WIDTH} 桁ちょうど")
     print("\nぜんぶ通った。")

@@ -89,6 +89,32 @@ ROT = ((0, 1), (1, 0), (0, -1), (-1, 0))            # 回転 0〜3 のときの�
 QUEUE = 2                                           # 次の玉を見せる数
 
 
+FEVER_CHAIN = 3                                     # この連鎖でフィーバーが始まる
+
+
+FEVER_TIME = 12.0                                   # フィーバーの秒数（連鎖でさらに延びる）
+
+
+FEVER_SCALE = 2                                     # フィーバー中の点の倍率
+
+
+MISSION_BONUS = 500                                 # お題を達成した点
+
+
+MISSIONS = (
+    dict(text="2 連鎖を出す", check=lambda w: w.max_chain >= 2),
+    dict(text="30 個消す", check=lambda w: w.cleared >= 30),
+    dict(text="3 連鎖を出す", check=lambda w: w.max_chain >= 3),
+    dict(text="点を 3000 にする", check=lambda w: w.score >= 3000),
+    dict(text="フィーバーを起こす", check=lambda w: w.fevers >= 1),
+    dict(text="レベル 5 にする", check=lambda w: w.level >= 5),
+    dict(text="4 連鎖を出す", check=lambda w: w.max_chain >= 4),
+    dict(text="全消しする", check=lambda w: w.all_clears >= 1),
+    dict(text="点を 20000 にする", check=lambda w: w.score >= 20000),
+    dict(text="5 連鎖を出す", check=lambda w: w.max_chain >= 5),
+)
+
+
 PALETTE = (
     dict(name="赤", rgb=(230, 70, 80)),
     dict(name="緑", rgb=(70, 200, 110)),
@@ -138,6 +164,10 @@ def sound_bytes(kind: str) -> bytes:
         samples = tone(base, 0.08) + tone(base * 1.5, 0.12) + noise(0.08, VOLUME * 0.6, 50.0, n)
     elif kind == "level":
         samples = tone(660, 0.08) + tone(880, 0.08) + tone(1320, 0.18)
+    elif kind == "fever":                           # フィーバー開始（駆け上がる）
+        samples = sum((tone(440 * (1.12 ** i), 0.05, VOLUME * 0.8) for i in range(10)), array("h")) + tone(1320, 0.3)
+    elif kind == "mission":                         # お題を達成（星）
+        samples = tone(1047, 0.08) + tone(1319, 0.08) + tone(1568, 0.08) + tone(2093, 0.25)
     elif kind == "allclear":
         samples = tone(784, 0.1) + tone(988, 0.1) + tone(1175, 0.1) + tone(1568, 0.3)
     elif kind == "best":
@@ -156,7 +186,7 @@ def sound_bytes(kind: str) -> bytes:
 POPS = tuple(f"pop{n}" for n in range(1, 6))
 
 
-EVENTS = ("end", "allclear", "level") + POPS[::-1] + ("land", "turn", "move")   # 目立つ順
+EVENTS = ("end", "mission", "fever", "allclear", "level") + POPS[::-1] + ("land", "turn", "move")   # 目立つ順
 
 
 SOUNDS = EVENTS + ("best",)
@@ -306,15 +336,16 @@ class Phase(Enum):
 class Best:
     score: int = 0
     chain: int = 0
+    stars: int = 0                                  # 達成したお題の数（最大）
 
     def dump(self) -> str:
-        return json.dumps({"score": self.score, "chain": self.chain})
+        return json.dumps({"score": self.score, "chain": self.chain, "stars": self.stars})
 
     @classmethod
     def parse(cls, text: str) -> "Best":
         try:
             data = json.loads(text)
-            return cls(int(data.get("score", 0)), int(data.get("chain", 0)))
+            return cls(int(data.get("score", 0)), int(data.get("chain", 0)), int(data.get("stars", 0)))
         except (ValueError, TypeError, AttributeError):
             return cls()
 
@@ -322,6 +353,7 @@ class Best:
         improved = world.score > self.score
         self.score = max(self.score, world.score)
         self.chain = max(self.chain, world.max_chain)
+        self.stars = max(self.stars, world.stars)
         return improved
 
 
@@ -352,6 +384,11 @@ class World:
     shake_until: float = 0.0
     shake_size: float = 0.0
     counter: int = 0
+    fever_until: float = 0.0                        # フィーバーの終わり
+    fevers: int = 0                                 # フィーバーが起きた回数
+    all_clears: int = 0
+    mission: int = 0                                # いまのお題の番号
+    stars: int = 0                                  # 達成した数
 
     def __post_init__(self):
         self.luck = random.Random(self.seed)
@@ -362,6 +399,23 @@ class World:
     # ── 決まりごと ──
     def drop_time(self) -> float:
         return max(DROP_MIN, DROP_START - DROP_STEP * (self.level - 1))
+
+    @property
+    def fever(self) -> bool:
+        return self.time < self.fever_until
+
+    def mission_text(self) -> str:
+        return MISSIONS[self.mission]["text"] if self.mission < len(MISSIONS) else "全部達成！"
+
+    def check_mission(self) -> bool:
+        """いまのお題を達成していれば星を付けて次へ（1 回に 1 つ）。"""
+        if self.mission >= len(MISSIONS) or not MISSIONS[self.mission]["check"](self):
+            return False
+        self.stars += 1
+        self.mission += 1
+        self.score += MISSION_BONUS
+        self.tell(f"★ お題達成 +{MISSION_BONUS}：" + ("次は " + self.mission_text() if self.mission < len(MISSIONS) else "全部達成！"), 2.5)
+        return True
 
     def tell(self, text: str, seconds: float = 1.5) -> None:
         self.note, self.note_until = text, self.time + seconds
@@ -465,27 +519,39 @@ class World:
         """消える組があれば POP へ（連鎖 +1）。無ければ次の組。"""
         groups = find_groups(self.grid)
         if not groups:
+            happened = None
             if self.chain > 0 and all(cell is None for row in self.grid for cell in row):
                 self.score += ALL_CLEAR
+                self.all_clears += 1
                 self.tell(f"全消し！ +{ALL_CLEAR}", 2.0)
-                self.spawn()
-                return "allclear"
+                happened = "allclear"
+            if self.check_mission():
+                happened = "mission"
             self.spawn()
-            return None
+            return happened
         self.chain += 1
         self.max_chain = max(self.max_chain, self.chain)
-        gained = score_for(groups, self.grid, self.chain)
+        gained = score_for(groups, self.grid, self.chain) * (FEVER_SCALE if self.fever else 1)
         self.score += gained
+        started_fever = False
+        if self.chain >= FEVER_CHAIN:               # フィーバー：始まる、または延びる
+            if not self.fever:
+                self.fevers += 1
+                started_fever = True
+            self.fever_until = max(self.fever_until, self.time) + FEVER_TIME
         self.pops = [(self.grid[r][c], c, r) for g in groups for c, r in g]
         for blob, c, r in self.pops:
             self.grid[r][c] = None
         self.phase = Phase.POP
         self.phase_left = POP_TIME
         self.shake(0.5 + 0.5 * self.chain, 0.25)
+        if started_fever:
+            self.tell(f"{self.chain} 連鎖！ フィーバー！ 点 ×{FEVER_SCALE}", 2.0)
+            return "fever"
         if self.chain >= 2:
-            self.tell(f"{self.chain} 連鎖！ +{gained}", 1.2)
+            self.tell(f"{self.chain} 連鎖！ +{gained}" + ("（×2）" if self.fever else ""), 1.2)
         else:
-            self.tell(f"+{gained}", 0.8)
+            self.tell(f"+{gained}" + ("（×2）" if self.fever else ""), 0.8)
         return f"pop{min(self.chain, len(POPS))}"
 
     def update(self, dt: float) -> str | None:
@@ -521,6 +587,8 @@ class World:
                     self.tell(f"レベル {level}", 1.5)
                     happened = "level"
                 self.begin_settle()
+        if self.phase == Phase.FALL and self.time >= self.note_until and self.check_mission():   # レベルや点のお題は落ちている間にも
+            happened = "mission"
         if self.over:
             return "end"
         return happened
@@ -585,6 +653,7 @@ def autopilot(world: World) -> None:
 #   玉は消えるまで同じ uid なので、落ちても球は作り直さず動かすだけ。
 
 THREE = window.THREE
+ADDONS = window.ADDONS                              # 後処理（ブルーム）と部屋の環境（映り込み）。index.html で読み込む
 VIEW_W, VIEW_H = 420, 600
 
 
@@ -599,6 +668,8 @@ def rgb(color: tuple[int, int, int]) -> int:
 
 canvas = document.querySelector("#screen")
 level_label = document.querySelector("#level")
+mission_label = document.querySelector("#mission")
+stars_label = document.querySelector("#stars")
 score_label = document.querySelector("#score")
 chain_label = document.querySelector("#chain")
 cleared_label = document.querySelector("#cleared")
@@ -614,25 +685,82 @@ SAVED = "g69-best"
 # ── Three.js の舞台 ──────────────────────────────────────────────────────
 
 renderer = THREE.WebGLRenderer.new(js(canvas=canvas, antialias=True))
-renderer.setPixelRatio(min(2.0, window.devicePixelRatio))
+PIXEL_RATIO = min(2.0, window.devicePixelRatio)
+renderer.setPixelRatio(PIXEL_RATIO)
 renderer.setSize(VIEW_W, VIEW_H, False)
+renderer.toneMapping = THREE.ACESFilmicToneMapping   # 明るい所を白飛びさせず、フィルムのように丸める
+renderer.toneMappingExposure = 1.0
 scene = THREE.Scene.new()
 scene.background = THREE.Color.new(rgb(BACK))
+pmrem = THREE.PMREMGenerator.new(renderer)          # 「部屋」を映り込みの環境に。球のつやが本物のガラス玉になる
+scene.environment = pmrem.fromScene(ADDONS.RoomEnvironment.new(), 0.04).texture
 camera = THREE.PerspectiveCamera.new(40, VIEW_W / VIEW_H, 0.5, 100)
 CAM = (0.6, 0.6, 21.0)                              # 少し右上から盤を見る
 camera.position.set(*CAM)
 camera.lookAt(0.0, 0.0, 0.0)
 
-key_light = THREE.DirectionalLight.new(0xffffff, 2.2)
+key_light = THREE.DirectionalLight.new(0xffffff, 1.8)
 key_light.position.set(5, 10, 12)
 scene.add(key_light)
 fill_light = THREE.DirectionalLight.new(0x8fa8ff, 0.8)
 fill_light.position.set(-8, -4, 8)
 scene.add(fill_light)
-scene.add(THREE.AmbientLight.new(0x404060, 1.0))
-glint = THREE.PointLight.new(0xffffff, 40.0, 30.0)  # 玉のつやを作る近くの光
+scene.add(THREE.AmbientLight.new(0x404060, 0.5))
+glint = THREE.PointLight.new(0xffffff, 18.0, 30.0)  # 玉のつやを作る近くの光
 glint.position.set(-3, 6, 6)
 scene.add(glint)
+
+# 後処理：描いた絵の明るい所だけをにじませて重ねる（ブルーム）。連鎖とフィーバーで強くする
+composer = ADDONS.EffectComposer.new(renderer)
+composer.setPixelRatio(PIXEL_RATIO)
+composer.setSize(VIEW_W, VIEW_H)
+composer.addPass(ADDONS.RenderPass.new(scene, camera))
+bloom = ADDONS.UnrealBloomPass.new(THREE.Vector2.new(VIEW_W, VIEW_H), 0.35, 0.5, 0.85)   # 強さ・広がり・しきい値
+composer.addPass(bloom)
+composer.addPass(ADDONS.OutputPass.new())
+BLOOM_BASE = 0.35
+
+
+def linear(c: int) -> float:
+    """sRGB の 0〜255 → 頂点色に入れる線形の値。そのまま入れると明るく飛ぶ。"""
+    return (c / 255) ** 2.2
+
+
+def gradient_plane(w: float, h: float, top: tuple[int, int, int], bottom: tuple[int, int, int]) -> object:
+    """上下で色が変わる板（頂点の色）。背景に使う。"""
+    geo = THREE.PlaneGeometry.new(w, h)
+    colors = []
+    for color in (top, top, bottom, bottom):        # PlaneGeometry の頂点は 左上・右上・左下・右下
+        colors += [linear(c) for c in color]
+    geo.setAttribute("color", THREE.Float32BufferAttribute.new(to_js(colors), 3))
+    return THREE.Mesh.new(geo, THREE.MeshBasicMaterial.new(js(vertexColors=True)))
+
+
+backdrop = gradient_plane(60, 80, (34, 30, 70), (10, 10, 24))
+backdrop.position.set(0, 0, -8)
+scene.add(backdrop)
+
+
+def paint_backdrop(top: tuple[int, int, int], bottom: tuple[int, int, int]) -> None:
+    colors = []
+    for color in (top, top, bottom, bottom):
+        colors += [linear(c) for c in color]
+    backdrop.geometry.attributes.color.array.set(to_js(colors))
+    backdrop.geometry.attributes.color.needsUpdate = True
+
+
+def make_stars(count: int) -> object:
+    luck = random.Random(11)
+    flat = []
+    for _ in range(count):
+        flat += [luck.uniform(-30, 30), luck.uniform(-40, 40), luck.uniform(-7, -3)]
+    geo = THREE.BufferGeometry.new()
+    geo.setAttribute("position", THREE.Float32BufferAttribute.new(to_js(flat), 3))
+    return THREE.Points.new(geo, THREE.PointsMaterial.new(js(color=0x6070c0, size=0.09, transparent=True, opacity=0.6)))
+
+
+stars = make_stars(500)                             # 奥でゆっくり回る光の粒（ブルームで少し光る）
+scene.add(stars)
 
 
 def cell_pos(col: float, row: float) -> tuple[float, float]:
@@ -640,11 +768,11 @@ def cell_pos(col: float, row: float) -> tuple[float, float]:
     return col - (COLS - 1) / 2, row - (ROWS - 1) / 2
 
 
-board_mat = THREE.MeshStandardMaterial.new(js(color=rgb(BOARD), roughness=0.8, metalness=0.1))
+board_mat = THREE.MeshStandardMaterial.new(js(color=rgb(BOARD), roughness=0.9, metalness=0.0, envMapIntensity=0.15))
 board = THREE.Mesh.new(THREE.BoxGeometry.new(COLS + 0.3, ROWS + 0.3, 0.4), board_mat)
 board.position.set(0, 0, -0.55)
 scene.add(board)
-frame_mat = THREE.MeshStandardMaterial.new(js(color=rgb(FRAME), roughness=0.4, metalness=0.6))
+frame_mat = THREE.MeshStandardMaterial.new(js(color=rgb(FRAME), roughness=0.4, metalness=0.6, envMapIntensity=0.4))
 for x, y, w, h in ((-(COLS + 0.5) / 2, 0, 0.2, ROWS + 0.5), ((COLS + 0.5) / 2, 0, 0.2, ROWS + 0.5), (0, -(ROWS + 0.5) / 2, COLS + 0.7, 0.2)):
     rail = THREE.Mesh.new(THREE.BoxGeometry.new(w, h, 0.9), frame_mat)
     rail.position.set(x, y, -0.1)
@@ -660,9 +788,9 @@ for r in range(1, ROWS):
     scene.add(line)
 
 BALL_GEO = THREE.SphereGeometry.new(0.44, 28, 18)
-BALL_MATS = [THREE.MeshPhysicalMaterial.new(js(color=rgb(p["rgb"]), roughness=0.22, metalness=0.05, clearcoat=1.0, clearcoatRoughness=0.12,
-                                               emissive=rgb(p["rgb"]), emissiveIntensity=0.0)) for p in PALETTE]
-POP_MATS = [THREE.MeshPhysicalMaterial.new(js(color=rgb(shade(p["rgb"], 1.3)), roughness=0.2, emissive=rgb(p["rgb"]), emissiveIntensity=0.9)) for p in PALETTE]
+BALL_MATS = [THREE.MeshPhysicalMaterial.new(js(color=rgb(p["rgb"]), roughness=0.3, metalness=0.0, clearcoat=1.0, clearcoatRoughness=0.1,
+                                               envMapIntensity=0.3, emissive=rgb(p["rgb"]), emissiveIntensity=0.0)) for p in PALETTE]
+POP_MATS = [THREE.MeshPhysicalMaterial.new(js(color=rgb(shade(p["rgb"], 1.3)), roughness=0.2, emissive=rgb(p["rgb"]), emissiveIntensity=2.2)) for p in PALETTE]
 LINK_GEO = THREE.BoxGeometry.new(0.5, 0.34, 0.5)
 LINK_GEO_V = THREE.BoxGeometry.new(0.34, 0.5, 0.5)
 GHOST_MATS = [THREE.MeshBasicMaterial.new(js(color=rgb(p["rgb"]), transparent=True, opacity=0.22)) for p in PALETTE]
@@ -683,6 +811,18 @@ scene.add(sparks_points)
 sparks: list[list[float]] = []                      # [x, y, z, vx, vy, vz, life, r, g, b]
 popped_seen: set[int] = set()
 luck = random.Random(3)
+landed: dict[int, float] = {}                       # uid → 着地した時刻（ぷるんと潰れる）
+was_falling: set[int] = set()                       # 前のコマに落ちていた（組か SETTLE の）玉
+SQUASH_TIME = 0.28
+
+
+def squash(uid: int, now: float) -> tuple[float, float]:
+    """着地直後の潰れ：横に広がり縦に縮んで戻る。(横, 縦) の倍率。"""
+    t = now - landed.get(uid, -9.0)
+    if t < 0 or t > SQUASH_TIME:
+        return 1.0, 1.0
+    k = math.sin(math.pi * t / SQUASH_TIME) * (1 - t / SQUASH_TIME)
+    return 1.0 + 0.28 * k, 1.0 - 0.32 * k
 
 
 def ball_for(blob: Blob) -> object:
@@ -707,7 +847,9 @@ def link_at(index: int, x: float, y: float, vertical: bool, color: int) -> None:
 
 
 def sync(world: World, dt: float) -> None:
+    global was_falling
     alive = set()
+    falling_now: set[int] = set()
     moving = {uid: (col, a, b) for uid, col, a, b in world.moves}
     total = max(SETTLE_MIN, SETTLE_PER_ROW * max([a - b for _, _, a, b in world.moves] or [1]))
     t = 1.0 - world.phase_left / total
@@ -725,8 +867,13 @@ def sync(world: World, dt: float) -> None:
                 _, a, b = moving[blob.uid]
                 show_row = a + (b - a) * ease
             x, y = cell_pos(col, show_row)
-            mesh.position.set(x, y, 0)
-            mesh.scale.set(1, 1, 1)
+            if blob.uid in moving:
+                falling_now.add(blob.uid)
+            elif blob.uid in was_falling:            # いま着地した
+                landed[blob.uid] = world.time
+            sx, sy = squash(blob.uid, world.time)
+            mesh.position.set(x, y - (1 - sy) * 0.44, 0)
+            mesh.scale.set(sx, sy, sx)
             mesh.material = BALL_MATS[blob.color]
             mesh.visible = row < ROWS
             if blob.uid in moving:
@@ -767,6 +914,7 @@ def sync(world: World, dt: float) -> None:
             ghost.visible = r < ROWS
         for (c, r), blob in zip(p.cells(), (p.axis, p.mate)):
             alive.add(blob.uid)
+            falling_now.add(blob.uid)
             mesh = ball_for(blob)
             x, y = cell_pos(c, r)
             mesh.position.set(x, y, 0)
@@ -775,9 +923,11 @@ def sync(world: World, dt: float) -> None:
     else:
         for ghost in ghosts:
             ghost.visible = False
+    was_falling = falling_now
     for uid in list(balls):
         if uid not in alive:
             scene.remove(balls.pop(uid))
+            landed.pop(uid, None)
     global next_shown
     shown = tuple(world.queue[:QUEUE])
     if shown != next_shown:
@@ -815,6 +965,19 @@ def sync(world: World, dt: float) -> None:
         ox, oy = math.sin(world.time * 90) * k, math.cos(world.time * 70) * k
     camera.position.set(CAM[0] + ox, CAM[1] + oy, CAM[2])
     camera.lookAt(ox, oy, 0.0)
+    stars.rotation.z = world.time * 0.02
+    chain = world.chain if world.phase == Phase.POP else 0            # 連鎖が深いほど光が強く、フィーバーは脈打つ
+    glow = BLOOM_BASE + 0.18 * chain
+    if world.fever:
+        pulse = 0.5 + 0.5 * math.sin(world.time * 6)
+        glow += 0.15 + 0.15 * pulse
+        paint_backdrop((70 + int(30 * pulse), 28, 100), (22, 8, 38))
+        frame_mat.emissive.setHex(0xffb040)
+        frame_mat.emissiveIntensity = 0.4 + 0.5 * pulse
+    else:
+        paint_backdrop((34, 30, 70), (10, 10, 24))
+        frame_mat.emissiveIntensity = 0.0
+    bloom.strength = min(1.6, glow)
 
 
 class Speaker:
@@ -841,16 +1004,18 @@ frames = []
 
 def refresh(dt: float = STEP) -> None:
     sync(world, dt)
-    renderer.render(scene, camera)
+    composer.render()
     level_label.textContent = str(world.level)
+    mission_label.textContent = world.mission_text() + ("（フィーバー中 ×2）" if world.fever else "")
+    stars_label.textContent = "★" * world.stars + "☆" * (len(MISSIONS) - world.stars)
     score_label.textContent = str(world.score)
     chain_label.textContent = str(world.max_chain)
     cleared_label.textContent = str(world.cleared)
     pieces_label.textContent = str(world.pieces)
-    best_label.textContent = f"{best.score}（{best.chain} 連鎖）"
+    best_label.textContent = f"{best.score}（{best.chain} 連鎖・★{best.stars}）"
     note_label.textContent = (world.note if world.time < world.note_until else "") or " "
     if world.over:
-        message.textContent = (f"積み上がった。点 {world.score}、消した {world.cleared} 個、最大 {world.max_chain} 連鎖、レベル {world.level}"
+        message.textContent = (f"積み上がった。点 {world.score}、消した {world.cleared} 個、最大 {world.max_chain} 連鎖、レベル {world.level}、お題 {world.stars}/{len(MISSIONS)}"
                                + ("  ベスト更新！" if improved else ""))
     elif not world.started:
         message.textContent = "「スタート」で始める。左右スワイプで移動、タップで回転、下スワイプで一気に落とす（パソコンは ← → ↑ ↓ とスペース）"
@@ -991,6 +1156,7 @@ def again(event):
     for uid in list(balls):
         scene.remove(balls.pop(uid))
     popped_seen.clear()
+    landed.clear()
     world.started = True
     improved = False
     refresh()

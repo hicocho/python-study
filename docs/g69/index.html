@@ -14,7 +14,13 @@
 <script type="module">
   // Three.js を読み込んで window に置く。Python（PyScript）は window.THREE を通して舞台を作る
   import * as THREE from "three";
+  import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+  import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+  import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+  import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+  import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
   window.THREE = THREE;
+  window.ADDONS = { EffectComposer, RenderPass, UnrealBloomPass, OutputPass, RoomEnvironment };
 </script>
 <script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
 <style>
@@ -107,12 +113,13 @@
 <main>
   <p class="back"><a href="../">← 課題一覧</a></p>
   <h1>ぶよぶよ</h1>
-  <p class="sub">2 個組の玉が落ちてきます。同じ色が 4 つ以上つながると消え、上の玉が落ちてまたつながれば連鎖。積み上がったら終わり。消した数でレベルが上がり、落ちるのが速くなります。5 色。<strong>ゲームの中身は Python、絵は Three.js</strong>（つやのある球・光・消える粒は GPU）。<strong>音を出してお使いください。</strong></p>
+  <p class="sub">2 個組の玉が落ちてきます。同じ色が 4 つ以上つながると消え、上の玉が落ちてまたつながれば連鎖。積み上がったら終わり。消した数でレベルが上がり、落ちるのが速くなります。5 色。<strong>ゲームの中身は Python、絵は Three.js</strong>（つやのある球・映り込み・光のにじみ（ブルーム）・消える粒は GPU）。<strong>音を出してお使いください。</strong></p>
 
   <div class="card">
     <div class="status">
       <span>レベル <b id="level">1</b> ・ 点 <b id="score">0</b> ・ 最大 <b id="chain">0</b> 連鎖</span>
       <span>消した <b id="cleared">0</b> ・ 組 <b id="pieces">0</b> ・ ベスト <b id="best">0</b> ・ <b id="fps">–</b> コマ/秒</span>
+      <span>お題 <b id="mission">2 連鎖を出す</b> ・ <b id="stars">☆☆☆☆☆☆☆☆☆☆</b></span>
     </div>
 
     <div class="stage"><canvas id="screen" width="420" height="600"></canvas></div>
@@ -131,6 +138,8 @@
         <li>薄い玉は落ちる先（影）。着地してから 0.25 秒は動かせる。</li>
         <li>30 個消すごとにレベルが上がり、落ちる速さが 0.9 秒 → 0.22 秒まで縮む。</li>
         <li>盤を空にすると<b>全消し +1000</b>。真ん中の列の一番上がふさがると終わり。</li>
+        <li><b>フィーバー</b>：3 連鎖以上で 12 秒、点が 2 倍。その間に連鎖するとさらに延びる。</li>
+        <li><b>お題</b>：「2 連鎖を出す」から順に 10 個。達成すると ★ と +500。</li>
       </ol>
       <div class="cues">
         <span><b>盤は 2 次元の列</b>：grid[行][列]、行 0 が下、見えない行が 1 つ</span>
@@ -156,6 +165,6 @@
   </footer>
 </main>
 
-<script type="py" src="./game.py?v=ade03033"></script>
+<script type="py" src="./game.py?v=01fcd533"></script>
 </body>
 </html>
