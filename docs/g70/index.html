@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>アイランド・ダイス — python-study</title>
+<meta name="description" content="サイコロを本当に転がして島を進むボードゲーム。自分 ＋ CPU 3 人。中身は Python、物理は Cannon-es、絵は Three.js。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#127922;</text></svg>">
+<link rel="stylesheet" href="https://pyscript.net/releases/2025.8.1/core.css">
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+               "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+               "cannon-es": "https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js" } }
+</script>
+<script type="module">
+  // Three.js を読み込んで window に置く。Python（PyScript）は window.THREE を通して舞台を作る
+  // Three.js（絵）と Cannon-es（物理）を読み込んで window に置く。Python は window.THREE / window.CANNON を通して使う
+  import * as THREE from "three";
+  import * as CANNON from "cannon-es";
+  import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+  window.THREE = THREE;
+  window.CANNON = CANNON;
+  window.ADDONS = { RoomEnvironment };
+</script>
+<script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #656d76;
+    --line: #d8dbe0;
+    --accent: #3b6f9c;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181c;
+      --panel: #1f2229;
+      --ink: #e6e6e3;
+      --muted: #9aa2ad;
+      --line: #333842;
+      --accent: #8fc3ee;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 1.25rem 1rem 3rem;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif;
+    line-height: 1.7;
+  }
+  main { max-width: 34rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; letter-spacing: .02em; }
+  .sub { color: var(--muted); font-size: .875rem; margin: 0 0 1rem; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: .75rem;
+    padding: 1rem;
+  }
+  .status { display: flex; flex-wrap: wrap; gap: .15rem 1.2rem; justify-content: space-between; align-items: baseline;
+    margin-bottom: .6rem; color: var(--muted); font-size: .875rem;
+    font-variant-numeric: tabular-nums; }
+  .status b { color: var(--ink); font-weight: 700; }
+  .status span { white-space: nowrap; }
+
+  /* Three.js の画面。640×480 の canvas */
+  .stage { display: flex; justify-content: center; }
+  #screen {
+    width: min(100%, 640px);
+    aspect-ratio: 4 / 3;
+    background: #96c8f0;
+    border: 2px solid var(--line);
+    border-radius: .35rem;
+    touch-action: none;
+    cursor: pointer;
+    user-select: none; -webkit-user-select: none;
+  }
+  .note-line { margin: .3rem 0 0; min-height: 1.4em; text-align: center; font-weight: 700; color: #b8860b; font-size: .95rem; }
+  .who { display: inline-block; width: .7em; height: .7em; border-radius: 50%; background: var(--c); margin-right: .2em; vertical-align: middle; }
+  #log { font-family: inherit; font-size: .78rem; color: var(--muted); margin: .5rem 0 0; white-space: pre-wrap; min-height: 4.5em; }
+  #message { min-height: 1.6em; margin: .4rem 0 0; font-size: .8125rem; color: var(--ink); text-align: center; }
+  .pad { display: grid; gap: .4rem; margin-top: .6rem; grid-template-columns: 1fr; }
+  .pad button.go { grid-column: 1; }
+  .pad button { padding: .8rem 0; font-size: 1.05rem; font-family: inherit; font-weight: 600;
+    color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+    border-radius: .5rem; cursor: pointer; user-select: none; -webkit-user-select: none; }
+  .pad button:active { background: var(--accent); color: var(--panel); }
+  .pad button.go { background: #2f7d52; border-color: #2f7d52; color: #fff; }
+  @media (prefers-color-scheme: dark) {
+    .pad button.go { background: #3f8f62; border-color: #3f8f62; color: #0f1512; }
+  }
+  .howto { margin: .75rem 0 0; padding: .7rem .8rem; background: var(--bg);
+    border: 1px solid var(--line); border-radius: .5rem; font-size: .8125rem; }
+  .howto b { color: var(--ink); }
+  .howto ol { margin: .4rem 0 0; padding-left: 1.2rem; }
+  .howto li { margin: .15rem 0; }
+  .howto code { background: transparent; }
+  .cues { display: grid; grid-template-columns: 1fr 1fr; gap: .3rem .9rem; margin: .6rem 0 0; font-size: .8125rem;
+    color: var(--muted); }
+  .cues b { color: var(--ink); }
+  #loading { color: var(--muted); font-size: .875rem; text-align: center; padding: .5rem 0; margin: .5rem 0 0; }
+  .note { font-size: .875rem; color: var(--muted); margin-top: 1.5rem; }
+  .note a { color: inherit; }
+  .back { font-size: .875rem; margin: 0 0 1rem; }
+  .back a { color: var(--muted); text-decoration: none; }
+  .back a:hover { text-decoration: underline; }
+  footer { margin-top: 2rem; font-size: .8125rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <p class="back"><a href="../">← 課題一覧</a></p>
+  <h1>アイランド・ダイス</h1>
+  <p class="sub">島をうねうね進むボードゲーム。<strong>サイコロを指ではらって本当に転がし</strong>、止まった目の数だけコマが進みます。止まったマスでお金が増えたり減ったり、カードを引いたり。分かれ道では山を越える近道も。自分 ＋ CPU 3 人（性格が違う）。全員がゴールしたら所持金で順位。<strong>中身は Python、サイコロの物理は Cannon-es、絵は Three.js</strong>。<strong>音を出してお使いください。</strong></p>
+
+  <div class="card">
+    <div class="status">
+      <span id="board"></span>
+      <span>出目 <b id="dice">–</b> ・ <b id="best">0 勝 / 0 回</b> ・ <b id="fps">–</b> コマ/秒</span>
+    </div>
+
+    <div class="stage"><canvas id="screen" width="640" height="480"></canvas></div>
+    <p id="note" class="note-line">&nbsp;</p>
+    <p id="message"></p>
+
+    <div class="pad">
+      <button type="button" id="go" class="go">▶ スタート</button>
+      <button type="button" id="fork-a" hidden>本道を行く</button>
+      <button type="button" id="fork-b" hidden>近道（山越え）を行く</button>
+      <button type="button" id="again" hidden>もう一度</button>
+    </div>
+    <pre id="log"></pre>
+
+    <div class="howto">
+      <b>やること</b>：あなたの番になったら、画面の上で<b>指をはらう</b>とサイコロが飛ぶ（強さと向きが反映。パソコンはスペースでも）。止まった目の数だけ進む。分かれ道では<b>ボタン</b>で道を選ぶ（キーは 1 と 2）。
+      <ol>
+        <li>マス：<b>緑</b> お金が増える（300〜800）、<b>赤</b> 減る（200〜500）、<b>青</b> カード（給料日・宝くじ・税金・追い風・迷子・昼寝…9 種）、<b>灰</b> 1 回休み、<b>橙</b> 宝（最初に着いた 1 人だけ +1500）。</li>
+        <li>分かれ道：本道か、山を越える<b>近道</b>（6 マス短いが減るマスが多い。宝あり）。CPU は性格で選ぶ：タケシは堅実、ミカは賭け、ゴロウはいじわる（負けていると近道）。</li>
+        <li>ゴールは超えても止まる。着いた順に +3000 / +2000 / +1000 / +500。全員がゴールしたら所持金で順位。</li>
+        <li>サイコロは <b>Cannon-es</b> という物理エンジンが本当に転がし、止まったときに上を向いた面を読んでゲームに渡している。CPU の番も同じサイコロが転がる。</li>
+      </ol>
+      <div class="cues">
+        <span><b>マスは表と道の網</b>：1 マス 1 行、next で次を指す。分かれ道は next が 2 つ</span>
+        <span><b>手番の状態機械</b>：ROLL → MOVING → FORK → EVENT → 次の人</span>
+        <span><b>出目は外から渡す</b>：端末は乱数、ブラウザは物理</span>
+        <span><b>地形は式</b>：height(x, z) から地図も 3D の島も</span>
+      </div>
+    </div>
+
+    <p id="loading">Python を読み込んでいます… （初回は数秒かかります）</p>
+  </div>
+
+  <p class="note">
+    このページは <strong>Python のコードがブラウザの中でそのまま動いています</strong>（PyScript）。
+    島の高さ・マスの表・手番の状態機械・出来事・CPU の性格は CLI 版と 1 文字も違いません。
+    端末は上から見た地図を ▀ で描き、出目は乱数。ここでは<strong>同じ height() から 3D の島を作って Three.js で描き、サイコロは Cannon-es で転がして上の面を読んでいます</strong>。
+  </p>
+
+  <footer>
+    ソース: <a href="https://github.com/hicocho/python-study">github.com/hicocho/python-study</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/docs/g70/game.py">このページの game.py</a> ·
+    <a href="https://github.com/hicocho/python-study/blob/main/g70-island-dice/main.py">CLI 版 main.py</a>
+  </footer>
+</main>
+
+<script type="py" src="./game.py?v=382636aa"></script>
+</body>
+</html>
