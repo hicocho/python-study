@@ -207,8 +207,8 @@ scene.background = THREE.Color.new(BACK)
 pmrem = THREE.PMREMGenerator.new(renderer)            # 「部屋」を映り込みの環境に。ブロックのつやが本物のガラスになる
 scene.environment = pmrem.fromScene(ADDONS.RoomEnvironment.new(), 0.04).texture
 
-camera = THREE.PerspectiveCamera.new(42, VIEW_W / VIEW_H, 0.5, 100)
-camera.position.set(1.2, 2.0, 28.0)                   # 少し右上から盤を見下ろす。ブロックの側面がのぞく
+camera = THREE.PerspectiveCamera.new(44, VIEW_W / VIEW_H, 0.5, 100)
+camera.position.set(0.8, 2.0, 29.0)                   # 少し右上から盤を見下ろす。ブロックの側面がのぞく
 camera.lookAt(0.0, 0.0, 0.0)
 
 key_light = THREE.DirectionalLight.new(0xFFFFFF, 1.3)   # 主光。右上から
@@ -272,10 +272,9 @@ for y in range(HEIGHT):
 
 # 盤の外の小さなミノ。左にホールド 1 つ、右に「つぎ」3 つ。どのミノも 4 マスなので 4 個ずつ持てば足りる
 MINI = 0.5                                             # 盤のブロックの半分の大きさ
-SLOT_X = WIDTH / 2 + 2.9                               # 盤のふちから外へどれだけ離すか
-SLOTS = {"hold": (-SLOT_X, 7.6)}                       # 名前 → 舞台の (x, y)。ミノの中心をここに置く
-for i in range(NEXT_COUNT):
-    SLOTS[f"next{i}"] = (SLOT_X, 7.6 - i * 2.6)
+SLOTS = {"hold": (-(WIDTH / 2 + 2.1), 7.6)}            # 名前 → 舞台の (x, y)。ミノの中心をここに置く
+for i in range(NEXT_COUNT):                            # 右はカメラが少し右にいるぶん、左より外に置ける
+    SLOTS[f"next{i}"] = (WIDTH / 2 + 2.4, 7.6 - i * 2.6)
 
 minis = {}
 for slot in SLOTS:
