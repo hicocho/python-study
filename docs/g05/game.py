@@ -16,6 +16,8 @@ apply_move() / count_stones() / move_name() / result_text() は
 ルールの 9 関数は変えていない。
 （2 回目）GSAP で動きを足した。置いた石は上から落ちて跳ね、挟んだ石は近い順に跳ねながら裏返る。
 play() が async になり、動きが終わるまで手番を渡さない。
+（3 回目）Tone.js で音を足した。置く「カッ」、裏返る「パタ」（枚数ぶん音程が上がる）、パス、終局の和音。
+鳴る時刻は動きと同じ計算から出している。
 """
 
 import asyncio
@@ -171,7 +173,9 @@ cpu_button = document.querySelector("#mode-cpu")
 THREE = window.THREE
 ADDONS = window.ADDONS
 gsap = window.gsap                                    # 動きの補間。「y を 0.45 秒で 0.11 に、跳ねながら」を 1 行で
+Tone = window.Tone                                    # 音。楽器（Synth）を作って triggerAttackRelease(音名, 長さ, 時刻)
 VIEW = 480
+SOUND_KEY = "g05-sound"                               # 音のオン／オフを覚えておく localStorage のキー
 
 WOOD = 0x7A4E2A        # 盤の木枠
 FELT = 0x2A6B4C        # 盤の緑のフェルト
@@ -284,6 +288,76 @@ for row in range(SIZE):
         scene.add(ring)
         rings.append(ring)
 
+# ── 音 ────────────────────────────────────────────────────────────────
+#   ブラウザは「利用者が触るまで音を出せない」。Tone.start() をクリックの中で呼んで許可をもらう。
+
+FLIP_NOTES = ["C5", "D5", "E5", "G5", "A5", "C6", "D6", "E6", "G6", "A6", "C7"]   # 裏返る順に上がる（ペンタトニック）
+
+
+class Speaker:
+    """出来事 → 音。楽器は 4 つ。start() までは鳴らない"""
+
+    def __init__(self):
+        self.on = (window.localStorage.getItem(SOUND_KEY) or "on") == "on"
+        self.ready = False
+        self.clack = Tone.MembraneSynth.new(js(pitchDecay=0.02, octaves=3,
+                                               envelope=js(attack=0.001, decay=0.12, sustain=0.0, release=0.05))).toDestination()
+        self.clack.volume.value = -6
+        self.pata = Tone.Synth.new(js(oscillator=js(type="triangle"),
+                                      envelope=js(attack=0.005, decay=0.12, sustain=0.0, release=0.08))).toDestination()
+        self.pata.volume.value = -10
+        self.soft = Tone.Synth.new(js(oscillator=js(type="sine"),
+                                      envelope=js(attack=0.02, decay=0.3, sustain=0.0, release=0.2))).toDestination()
+        self.soft.volume.value = -12
+        self.chord = Tone.PolySynth.new(Tone.Synth, js(oscillator=js(type="triangle"),
+                                                       envelope=js(attack=0.02, decay=0.6, sustain=0.2, release=1.2))).toDestination()
+        self.chord.volume.value = -14
+
+    def start(self):
+        """利用者が触った瞬間に呼ぶ。2 回目からは何もしない"""
+        if not self.ready:
+            Tone.start()
+            self.ready = True
+
+    def can(self):
+        return self.on and self.ready
+
+    def place(self, delay):
+        if self.can():
+            t = Tone.now() + delay
+            self.clack.triggerAttackRelease("C2", "16n", t)             # 盤に当たる
+            self.clack.triggerAttackRelease("C2", "32n", t + 0.17, 0.4)  # 小さく跳ね返る
+
+    def flip(self, order, delay):
+        if self.can():
+            note = FLIP_NOTES[min(order, len(FLIP_NOTES) - 1)]
+            self.pata.triggerAttackRelease(note, "16n", Tone.now() + delay)
+
+    def pass_turn(self):
+        if self.can():
+            t = Tone.now()
+            self.soft.triggerAttackRelease("G4", "8n", t)
+            self.soft.triggerAttackRelease("E4", "8n", t + 0.18)
+
+    def finish(self, winner):
+        if self.can():
+            t = Tone.now()
+            notes = ["C4", "E4", "G4", "C5"] if winner != EMPTY else ["C4", "Eb4", "G4", "Bb4"]  # 勝ちは明るく、引き分けは少し曇る
+            for i, n in enumerate(notes):
+                self.chord.triggerAttackRelease(n, "2n", t + i * 0.08)
+
+    def toggle(self):
+        self.on = not self.on
+        window.localStorage.setItem(SOUND_KEY, "on" if self.on else "off")
+        sound_button.textContent = "🔊 音" if self.on else "🔇 音"
+        sound_button.className = "mode is-on" if self.on else "mode"
+
+
+sound_button = document.querySelector("#sound-btn")
+speaker = Speaker()
+sound_button.textContent = "🔊 音" if speaker.on else "🔇 音"
+sound_button.className = "mode is-on" if speaker.on else "mode"
+
 # 最後に置いた石の印。小さな赤い玉
 marker = THREE.Mesh.new(THREE.SphereGeometry.new(0.07, 16, 12),
                         THREE.MeshStandardMaterial.new(js(color=0xE0483A, roughness=0.4, metalness=0.0)))
@@ -393,9 +467,11 @@ def animate_move(row, col, flips, player):
     stone.position.y = STONE_Y + 2.5                  # 上から落とす
     stone.visible = True
     gsap.to(stone.position, js(y=STONE_Y, duration=DROP_SECONDS, ease="bounce.out"))
+    speaker.place(DROP_SECONDS * 0.36)                # bounce.out が最初に底に着く時刻
 
     farthest = 0
-    for r, c in flips:
+    ordered = sorted(flips, key=lambda rc: max(abs(rc[0] - row), abs(rc[1] - col)))  # 近い順
+    for order, (r, c) in enumerate(ordered):
         dist = max(abs(r - row), abs(c - col))        # 置いた石から何マス目か
         farthest = max(farthest, dist)
         delay = DROP_SECONDS * 0.6 + FLIP_STEP * dist  # 近い石から順に、波のように
@@ -403,6 +479,7 @@ def animate_move(row, col, flips, player):
         gsap.to(target.rotation, js(x=target.rotation.x + math.pi, duration=FLIP_SECONDS, delay=delay, ease="power2.inOut"))
         gsap.to(target.position, js(y=STONE_Y + FLIP_HOP, duration=FLIP_SECONDS / 2, delay=delay,
                                     yoyo=True, repeat=1, ease="power1.out"))
+        speaker.flip(order, delay + FLIP_SECONDS / 2)  # 跳ねの頂点で鳴る。近い石ほど低く、遠くへ行くほど高く
 
     return DROP_SECONDS * 0.6 + FLIP_STEP * farthest + FLIP_SECONDS + 0.05
 
@@ -430,6 +507,8 @@ def finish():
     state["playing"] = False
     state["moves"] = {}
     set_message(result_text(state["board"]))
+    black, white = count_stones(state["board"])
+    speaker.finish(BLACK if black > white else WHITE if white > black else EMPTY)
     draw()
 
 
@@ -449,6 +528,7 @@ async def advance():
                 return
 
             set_message(f"{MARKS[state['player']]} は置ける場所がないのでパス")
+            speaker.pass_turn()
             state["player"] = opponent(state["player"])
             await asyncio.sleep(PASS_WAIT)
             continue
@@ -491,6 +571,7 @@ def set_mode(vs_cpu):
 @when("click", "#screen")
 def on_board_click(event):
     """盤のクリックが CLI 版の input() にあたる。"""
+    speaker.start()                                   # 音の許可は「触った中」でしか取れない
     if not state["playing"] or cpu_thinking() or state["busy"]:
         return
 
@@ -512,7 +593,14 @@ def on_board_move(event):
 
 @when("click", "#start-btn")
 def on_start(event):
+    speaker.start()
     start()
+
+
+@when("click", "#sound-btn")
+def on_sound(event):
+    speaker.start()
+    speaker.toggle()
 
 
 @when("click", "#mode-two")

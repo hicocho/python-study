@@ -10,16 +10,19 @@
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
-               "gsap": "https://cdn.jsdelivr.net/npm/gsap@3.15.0/+esm" } }
+               "gsap": "https://cdn.jsdelivr.net/npm/gsap@3.15.0/+esm",
+               "tone": "https://cdn.jsdelivr.net/npm/tone@15.5.42/+esm" } }
 </script>
 <script type="module">
   // Three.js を読み込んで window に置く。Python（PyScript）は window.THREE を通して舞台を作る
   import * as THREE from "three";
   import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
   import { gsap } from "gsap";                       // 動きの補間（落ちる・跳ねる・回る）
+  import * as Tone from "tone";                      // 音。楽器を定義して、出来事ごとに鳴らす
   window.THREE = THREE;
   window.ADDONS = { RoomEnvironment };
   window.gsap = gsap;
+  window.Tone = Tone;
 </script>
 <script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
 <style>
@@ -92,6 +95,7 @@
     min-height: 1.7em;
   }
   .modes { display: flex; gap: .4rem; margin-top: .75rem; }
+  #sound-btn { flex: 0 0 auto; padding-left: .8rem; padding-right: .8rem; }
   button {
     font-family: inherit;
     font-weight: 600;
@@ -101,6 +105,7 @@
   }
   .mode {
     flex: 1;
+    white-space: nowrap;
     padding: .55rem 0;
     font-size: .875rem;
     color: var(--muted);
@@ -148,6 +153,7 @@
     <div class="modes">
       <button id="mode-two" class="mode" type="button">2人で交互</button>
       <button id="mode-cpu" class="mode is-on" type="button">白は CPU</button>
+      <button id="sound-btn" class="mode is-on" type="button" aria-label="音の切り替え">🔊 音</button>
     </div>
 
     <p class="keys">薄い丸が置ける場所です。クリックで着手。</p>
@@ -169,6 +175,6 @@
   </footer>
 </main>
 
-<script type="py" src="./game.py?v=3b689dd0"></script>
+<script type="py" src="./game.py?v=2158ad8d"></script>
 </body>
 </html>
