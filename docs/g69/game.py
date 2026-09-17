@@ -1,4 +1,4 @@
-"""チェイン・ドロップ ブラウザ版
+"""ぶよぶよ ブラウザ版
 
 CLI 版（g69-chain-drop/main.py）と中身はまったく同じ。盤（grid）、つながりの探索（find_groups）、落下（apply_gravity）、
 点（score_for）、連鎖の状態機械（World.update）、自動プレイ（choose）は 1 文字も変えていない。
