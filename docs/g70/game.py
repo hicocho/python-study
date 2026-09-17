@@ -775,7 +775,7 @@ scene.add(halo)
 # ── サイコロの台と物理（Cannon-es） ─────────────────────────────────────
 
 TRAY = (0.0, 1.2, ISLAND_R + 5.5)                   # 海に浮かぶ石の台（島の手前）
-TRAY_HALF = 3.2
+TRAY_HALF = 3.6
 tray = THREE.Mesh.new(THREE.CylinderGeometry.new(TRAY_HALF + 0.6, TRAY_HALF + 1.0, 1.2, 40),
                       THREE.MeshStandardMaterial.new(js(color=0x5c6068, roughness=0.85)))
 tray.position.set(TRAY[0], TRAY[1] - 0.6, TRAY[2])
@@ -797,8 +797,8 @@ floor.quaternion.setFromEuler(-math.pi / 2, 0, 0)
 floor.position.set(0, TRAY[1], 0)
 phys.addBody(floor)
 for rx, rz, w, d in ((0, -TRAY_HALF, TRAY_HALF + 0.3, 0.15), (0, TRAY_HALF, TRAY_HALF + 0.3, 0.15), (-TRAY_HALF, 0, 0.15, TRAY_HALF), (TRAY_HALF, 0, 0.15, TRAY_HALF)):
-    wall = CANNON.Body.new(js(mass=0, shape=CANNON.Box.new(CANNON.Vec3.new(w, 1.5, d))))
-    wall.position.set(TRAY[0] + rx, TRAY[1] + 1.5, TRAY[2] + rz)
+    wall = CANNON.Body.new(js(mass=0, shape=CANNON.Box.new(CANNON.Vec3.new(w, 6.0, d))))   # 見えない高い壁（飛び出さない）
+    wall.position.set(TRAY[0] + rx, TRAY[1] + 6.0, TRAY[2] + rz)
     phys.addBody(wall)
 
 
@@ -824,7 +824,7 @@ def pip_texture(value: int) -> object:
 PIP_MATS = [THREE.MeshStandardMaterial.new(js(map=pip_texture(v), roughness=0.4)) for v in range(1, 7)]
 FACE_VALUES = [1, 6, 2, 5, 3, 4]                    # BoxGeometry の面の順（+x −x +y −y +z −z）に貼る目。向かい合う面の和は 7
 FACE_NORMALS = [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]
-DICE_SIZE = 0.9
+DICE_SIZE = 1.6                                     # 大きめ（0.9 では台の上で見えないほど小さかった）
 dice_mesh = THREE.Mesh.new(THREE.BoxGeometry.new(DICE_SIZE, DICE_SIZE, DICE_SIZE), to_js([PIP_MATS[v - 1] for v in FACE_VALUES]))
 dice_mesh.castShadow = True
 scene.add(dice_mesh)
@@ -841,10 +841,10 @@ DICE_STILL = 0.35
 def throw_dice(vx: float, vz: float, power: float) -> None:
     """サイコロを投げる。台の中の、投げる向きの手前から。回転はでたらめ。"""
     luck = random.Random(int(window.performance.now()))
-    start_x = max(-TRAY_HALF + 1, min(TRAY_HALF - 1, TRAY[0] - vx * 0.25))
-    start_z = max(-TRAY_HALF + 1, min(TRAY_HALF - 1, TRAY[2] - vz * 0.25))
-    dice_body.position.set(start_x, TRAY[1] + 2.5, start_z)
-    dice_body.velocity.set(vx, 4.0 + power * 2.0, vz)
+    start_x = TRAY[0] + max(-TRAY_HALF + 1, min(TRAY_HALF - 1, -vx * 0.25))     # 台の中に収める（台の中心からのずれで）
+    start_z = TRAY[2] + max(-TRAY_HALF + 1, min(TRAY_HALF - 1, -vz * 0.25))
+    dice_body.position.set(start_x, TRAY[1] + 2.0, start_z)
+    dice_body.velocity.set(vx, 2.5 + power * 1.5, vz)
     dice_body.angularVelocity.set(luck.uniform(-18, 18), luck.uniform(-18, 18), luck.uniform(-18, 18))
     dice_body.quaternion.setFromEuler(luck.uniform(0, math.tau), luck.uniform(0, math.tau), luck.uniform(0, math.tau))
     dice_body.wakeUp()
@@ -949,7 +949,7 @@ def sync(dt: float) -> None:
     if not world.started or world.over:
         want, look = OVERVIEW
     elif world.phase == Phase.ROLL or dice["flying"]:
-        want, look = (TRAY[0], TRAY[1] + 10.0, TRAY[2] + 10.5), (TRAY[0], TRAY[1], TRAY[2] - 1.0)
+        want, look = (TRAY[0], TRAY[1] + 8.0, TRAY[2] + 8.5), (TRAY[0], TRAY[1] + 0.5, TRAY[2] - 0.5)
     else:
         x, y, z = piece_pos(world.player)
         want, look = (x + 6.0, y + 9.0, z + 9.0), (x, y, z)
@@ -1075,7 +1075,7 @@ def release(event):
     power = min(2.0, math.hypot(dx, dy) / rect.width / held * 0.5)
     if math.hypot(vx, vz) < 1.0:                    # ほとんど動かしていなければ軽く放る
         vx, vz = random.uniform(-1.5, 1.5), -2.0
-    throw_dice(max(-9, min(9, vx)), max(-9, min(9, vz)), power)
+    throw_dice(max(-8, min(8, vx)), max(-8, min(8, vz)), power)
     refresh()
 
 
