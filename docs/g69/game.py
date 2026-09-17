@@ -89,6 +89,23 @@ ROT = ((0, 1), (1, 0), (0, -1), (-1, 0))            # 回転 0〜3 のときの�
 QUEUE = 2                                           # 次の玉を見せる数
 
 
+THEMES = (
+    dict(name="夜", until=3, top=(34, 30, 70), bottom=(10, 10, 24), glow=(90, 110, 220), back=(18, 18, 34)),
+    dict(name="夕焼け", until=6, top=(120, 50, 70), bottom=(30, 12, 40), glow=(255, 150, 80), back=(40, 20, 34)),
+    dict(name="深海", until=9, top=(10, 50, 80), bottom=(4, 12, 30), glow=(60, 200, 220), back=(8, 24, 40)),
+    dict(name="星雲", until=12, top=(70, 30, 110), bottom=(16, 8, 40), glow=(200, 120, 255), back=(28, 14, 44)),
+    dict(name="黎明", until=999, top=(200, 150, 110), bottom=(60, 40, 70), glow=(255, 220, 160), back=(50, 36, 44)),
+)
+
+
+def theme_for(level: int) -> dict:
+    """レベル → 場所。until 以下のレベルはその場所。"""
+    for theme in THEMES:
+        if level <= theme["until"]:
+            return theme
+    return THEMES[-1]
+
+
 FEVER_CHAIN = 3                                     # この連鎖でフィーバーが始まる
 
 
@@ -690,8 +707,11 @@ renderer.setPixelRatio(PIXEL_RATIO)
 renderer.setSize(VIEW_W, VIEW_H, False)
 renderer.toneMapping = THREE.ACESFilmicToneMapping   # 明るい所を白飛びさせず、フィルムのように丸める
 renderer.toneMappingExposure = 1.0
+renderer.shadowMap.enabled = True                   # 影（3 回目の直し）
+renderer.shadowMap.type = THREE.PCFSoftShadowMap
 scene = THREE.Scene.new()
 scene.background = THREE.Color.new(rgb(BACK))
+scene.fog = THREE.FogExp2.new(rgb(BACK), 0.012)     # 奥ほど霞む（背景の板と光の柱が奥に感じられる）
 pmrem = THREE.PMREMGenerator.new(renderer)          # 「部屋」を映り込みの環境に。球のつやが本物のガラス玉になる
 scene.environment = pmrem.fromScene(ADDONS.RoomEnvironment.new(), 0.04).texture
 camera = THREE.PerspectiveCamera.new(40, VIEW_W / VIEW_H, 0.5, 100)
@@ -699,16 +719,26 @@ CAM = (0.6, 0.6, 21.0)                              # 少し右上から盤を�
 camera.position.set(*CAM)
 camera.lookAt(0.0, 0.0, 0.0)
 
-key_light = THREE.DirectionalLight.new(0xffffff, 1.8)
+key_light = THREE.DirectionalLight.new(0xffffff, 1.8)   # 主光：ゆっくり動いて影が流れる
 key_light.position.set(5, 10, 12)
+key_light.castShadow = True
+key_light.shadow.mapSize.set(1024, 1024)
+for name, value in (("left", -9), ("right", 9), ("top", 10), ("bottom", -10), ("near", 1), ("far", 40)):
+    setattr(key_light.shadow.camera, name, value)
+key_light.shadow.bias = -0.0005
 scene.add(key_light)
 fill_light = THREE.DirectionalLight.new(0x8fa8ff, 0.8)
 fill_light.position.set(-8, -4, 8)
 scene.add(fill_light)
-scene.add(THREE.AmbientLight.new(0x404060, 0.5))
+ambient = THREE.AmbientLight.new(0x404060, 0.5)
+scene.add(ambient)
 glint = THREE.PointLight.new(0xffffff, 18.0, 30.0)  # 玉のつやを作る近くの光
 glint.position.set(-3, 6, 6)
 scene.add(glint)
+spot = THREE.SpotLight.new(0xffd080, 0.0, 40.0, 0.5, 0.6)   # フィーバー中に盤を舐めるスポットライト
+spot.position.set(0, 12, 10)
+scene.add(spot)
+scene.add(spot.target)
 
 # 後処理：描いた絵の明るい所だけをにじませて重ねる（ブルーム）。連鎖とフィーバーで強くする
 composer = ADDONS.EffectComposer.new(renderer)
@@ -719,6 +749,11 @@ bloom = ADDONS.UnrealBloomPass.new(THREE.Vector2.new(VIEW_W, VIEW_H), 0.35, 0.5,
 composer.addPass(bloom)
 composer.addPass(ADDONS.OutputPass.new())
 BLOOM_BASE = 0.35
+
+
+def cell_pos(col: float, row: float) -> tuple[float, float]:
+    """列と行 → 舞台の x, y。盤の中央が (0, 0)。"""
+    return col - (COLS - 1) / 2, row - (ROWS - 1) / 2
 
 
 def linear(c: int) -> float:
@@ -736,7 +771,7 @@ def gradient_plane(w: float, h: float, top: tuple[int, int, int], bottom: tuple[
     return THREE.Mesh.new(geo, THREE.MeshBasicMaterial.new(js(vertexColors=True)))
 
 
-backdrop = gradient_plane(60, 80, (34, 30, 70), (10, 10, 24))
+backdrop = gradient_plane(60, 80, THEMES[0]["top"], THEMES[0]["bottom"])
 backdrop.position.set(0, 0, -8)
 scene.add(backdrop)
 
@@ -761,21 +796,47 @@ def make_stars(count: int) -> object:
 
 stars = make_stars(500)                             # 奥でゆっくり回る光の粒（ブルームで少し光る）
 scene.add(stars)
+def soft_texture() -> object:
+    """真ん中が明るく端が透ける帯の絵（canvas）。光の柱の形。"""
+    cv = document.createElement("canvas")
+    cv.width, cv.height = 64, 256
+    ctx = cv.getContext("2d")
+    grad = ctx.createLinearGradient(0, 0, 64, 0)
+    grad.addColorStop(0.0, "rgba(255,255,255,0)")
+    grad.addColorStop(0.5, "rgba(255,255,255,1)")
+    grad.addColorStop(1.0, "rgba(255,255,255,0)")
+    ctx.fillStyle = grad
+    ctx.fillRect(0, 0, 64, 256)
+    vert = ctx.createLinearGradient(0, 0, 0, 256)
+    vert.addColorStop(0.0, "rgba(0,0,0,1)")
+    vert.addColorStop(0.3, "rgba(0,0,0,0)")
+    vert.addColorStop(0.8, "rgba(0,0,0,0)")
+    vert.addColorStop(1.0, "rgba(0,0,0,1)")
+    ctx.globalCompositeOperation = "destination-out"
+    ctx.fillStyle = vert
+    ctx.fillRect(0, 0, 64, 256)
+    return THREE.CanvasTexture.new(cv)
 
 
-def cell_pos(col: float, row: float) -> tuple[float, float]:
-    """列と行 → 舞台の x, y。盤の中央が (0, 0)。"""
-    return col - (COLS - 1) / 2, row - (ROWS - 1) / 2
-
-
+PILLAR_TEX = soft_texture()
+pillars = []                                        # 盤の後ろの柔らかい光の柱（足し算で重ねる半透明の板）
+for i, (x, w) in enumerate(((-4.5, 2.2), (0.8, 3.0), (5.2, 1.8))):
+    mat = THREE.MeshBasicMaterial.new(js(color=0x6070ff, transparent=True, opacity=0.35, blending=THREE.AdditiveBlending, depthWrite=False, map=PILLAR_TEX))
+    m = THREE.Mesh.new(THREE.PlaneGeometry.new(w, 30), mat)
+    m.position.set(x, 2, -4.5)
+    scene.add(m)
+    pillars.append(m)
+theme_shown = None
 board_mat = THREE.MeshStandardMaterial.new(js(color=rgb(BOARD), roughness=0.9, metalness=0.0, envMapIntensity=0.15))
 board = THREE.Mesh.new(THREE.BoxGeometry.new(COLS + 0.3, ROWS + 0.3, 0.4), board_mat)
 board.position.set(0, 0, -0.55)
+board.receiveShadow = True
 scene.add(board)
 frame_mat = THREE.MeshStandardMaterial.new(js(color=rgb(FRAME), roughness=0.4, metalness=0.6, envMapIntensity=0.4))
 for x, y, w, h in ((-(COLS + 0.5) / 2, 0, 0.2, ROWS + 0.5), ((COLS + 0.5) / 2, 0, 0.2, ROWS + 0.5), (0, -(ROWS + 0.5) / 2, COLS + 0.7, 0.2)):
     rail = THREE.Mesh.new(THREE.BoxGeometry.new(w, h, 0.9), frame_mat)
     rail.position.set(x, y, -0.1)
+    rail.castShadow = True
     scene.add(rail)
 line_mat = THREE.MeshBasicMaterial.new(js(color=rgb(BOARD_LINE)))
 for c in range(1, COLS):                            # 薄い格子
@@ -788,13 +849,17 @@ for r in range(1, ROWS):
     scene.add(line)
 
 BALL_GEO = THREE.SphereGeometry.new(0.44, 28, 18)
+EYE_GEO = THREE.SphereGeometry.new(0.09, 10, 8)
+PUPIL_GEO = THREE.SphereGeometry.new(0.045, 8, 6)
+EYE_MAT = THREE.MeshStandardMaterial.new(js(color=0xffffff, roughness=0.3))
+PUPIL_MAT = THREE.MeshStandardMaterial.new(js(color=0x202030, roughness=0.5))
 BALL_MATS = [THREE.MeshPhysicalMaterial.new(js(color=rgb(p["rgb"]), roughness=0.3, metalness=0.0, clearcoat=1.0, clearcoatRoughness=0.1,
                                                envMapIntensity=0.3, emissive=rgb(p["rgb"]), emissiveIntensity=0.0)) for p in PALETTE]
 POP_MATS = [THREE.MeshPhysicalMaterial.new(js(color=rgb(shade(p["rgb"], 1.3)), roughness=0.2, emissive=rgb(p["rgb"]), emissiveIntensity=2.2)) for p in PALETTE]
-LINK_GEO = THREE.BoxGeometry.new(0.5, 0.34, 0.5)
-LINK_GEO_V = THREE.BoxGeometry.new(0.34, 0.5, 0.5)
+LINK_GEO = THREE.BoxGeometry.new(0.55, 0.42, 0.55)
+LINK_GEO_V = THREE.BoxGeometry.new(0.42, 0.55, 0.55)
 GHOST_MATS = [THREE.MeshBasicMaterial.new(js(color=rgb(p["rgb"]), transparent=True, opacity=0.22)) for p in PALETTE]
-balls: dict[int, object] = {}                       # uid → 球
+balls: dict[int, object] = {}                       # uid → 玉（体と目の Group）
 links: list[object] = []                            # 同じ色をつなぐ橋（使い回し）
 ghosts = [THREE.Mesh.new(BALL_GEO, GHOST_MATS[0]) for _ in range(2)]
 for g in ghosts:
@@ -803,17 +868,62 @@ for g in ghosts:
 next_balls: list[object] = []
 next_shown: tuple = ()
 SPARKS = 300
-spark_geo = THREE.BufferGeometry.new()
-spark_geo.setAttribute("position", THREE.Float32BufferAttribute.new(to_js([0.0, -999.0, 0.0] * SPARKS), 3))
-spark_geo.setAttribute("color", THREE.Float32BufferAttribute.new(to_js([1.0, 1.0, 1.0] * SPARKS), 3))
-sparks_points = THREE.Points.new(spark_geo, THREE.PointsMaterial.new(js(size=0.16, vertexColors=True, transparent=True, opacity=0.95)))
-scene.add(sparks_points)
+spark_geo = THREE.BufferGeometry.new()              # 粒は短い線（尾を引く）：1 粒 = 2 頂点
+spark_geo.setAttribute("position", THREE.Float32BufferAttribute.new(to_js([0.0, -999.0, 0.0] * (SPARKS * 2)), 3))
+spark_geo.setAttribute("color", THREE.Float32BufferAttribute.new(to_js([1.0, 1.0, 1.0] * (SPARKS * 2)), 3))
+sparks_lines = THREE.LineSegments.new(spark_geo, THREE.LineBasicMaterial.new(js(vertexColors=True, transparent=True, opacity=0.95)))
+scene.add(sparks_lines)
 sparks: list[list[float]] = []                      # [x, y, z, vx, vy, vz, life, r, g, b]
 popped_seen: set[int] = set()
 luck = random.Random(3)
 landed: dict[int, float] = {}                       # uid → 着地した時刻（ぷるんと潰れる）
 was_falling: set[int] = set()                       # 前のコマに落ちていた（組か SETTLE の）玉
 SQUASH_TIME = 0.28
+RINGS = 24                                          # 消えた所に広がる輪（使い回し）
+ring_mat = THREE.MeshBasicMaterial.new(js(color=0xffffff, transparent=True, opacity=0.6, side=THREE.DoubleSide, depthWrite=False))
+rings = []
+for _ in range(RINGS):
+    m = THREE.Mesh.new(THREE.RingGeometry.new(0.36, 0.5, 32), ring_mat.clone())
+    m.visible = False
+    scene.add(m)
+    rings.append(m)
+ring_live: list[list] = []                          # [mesh, 始まった時刻, 色]
+RING_TIME = 0.4
+labels: dict[str, object] = {}                      # 文字 → 板（CanvasTexture）。連鎖の数を浮かべる
+label_live: list = []                               # [sprite, 始まった時刻]
+LABEL_TIME = 1.1
+
+
+def make_label(text: str, color: str) -> object:
+    """文字を canvas に描いて板に貼る（TextGeometry より軽い）。"""
+    cv = document.createElement("canvas")
+    cv.width, cv.height = 512, 160
+    ctx = cv.getContext("2d")
+    ctx.font = "bold 96px sans-serif"
+    ctx.textAlign = "center"
+    ctx.textBaseline = "middle"
+    ctx.lineWidth = 14
+    ctx.strokeStyle = "rgba(20,10,40,0.9)"
+    ctx.strokeText(text, 256, 80)
+    ctx.fillStyle = color
+    ctx.fillText(text, 256, 80)
+    tex = THREE.CanvasTexture.new(cv)
+    mat = THREE.SpriteMaterial.new(js(map=tex, transparent=True, depthTest=False))
+    sprite = THREE.Sprite.new(mat)
+    sprite.scale.set(6.4, 2.0, 1)
+    sprite.visible = False
+    scene.add(sprite)
+    return sprite
+
+
+def show_label(text: str, color: str, x: float, y: float, now: float) -> None:
+    sprite = labels.get(text)
+    if sprite is None:
+        sprite = make_label(text, color)
+        labels[text] = sprite
+    sprite.position.set(x, y, 2.5)
+    sprite.visible = True
+    label_live.append([sprite, now])
 
 
 def squash(uid: int, now: float) -> tuple[float, float]:
@@ -826,17 +936,40 @@ def squash(uid: int, now: float) -> tuple[float, float]:
 
 
 def ball_for(blob: Blob) -> object:
-    mesh = balls.get(blob.uid)
-    if mesh is None:
-        mesh = THREE.Mesh.new(BALL_GEO, BALL_MATS[blob.color])
-        scene.add(mesh)
-        balls[blob.uid] = mesh
-    return mesh
+    """玉 1 つ = 体（球）＋ 目 2 つ＋ 黒目 2 つの Group。作るのは最初の 1 回だけ。"""
+    group = balls.get(blob.uid)
+    if group is None:
+        group = THREE.Group.new()
+        body = THREE.Mesh.new(BALL_GEO, BALL_MATS[blob.color])
+        body.castShadow = True
+        group.add(body)
+        for side in (-1, 1):
+            eye = THREE.Mesh.new(EYE_GEO, EYE_MAT)
+            eye.position.set(side * 0.15, 0.1, 0.38)
+            group.add(eye)
+            pupil = THREE.Mesh.new(PUPIL_GEO, PUPIL_MAT)
+            pupil.position.set(side * 0.15, 0.1, 0.45)
+            group.add(pupil)
+        scene.add(group)
+        balls[blob.uid] = group
+    return group
+
+
+def set_face(group: object, blob: Blob, now: float, pupil_dx: float = 0.0) -> None:
+    """目の瞬きと黒目の向き。瞬きは玉ごとにずれた周期で。"""
+    blink = (now + blob.uid * 1.7) % 3.8 < 0.13
+    for i in (1, 3):
+        group.children[i].scale.set(1, 0.12 if blink else 1, 1)
+    for i in (2, 4):
+        pupil = group.children[i]
+        pupil.position.x = (-0.15 if i == 2 else 0.15) + pupil_dx
+        pupil.visible = not blink
 
 
 def link_at(index: int, x: float, y: float, vertical: bool, color: int) -> None:
     while len(links) <= index:
         m = THREE.Mesh.new(LINK_GEO, BALL_MATS[0])
+        m.castShadow = True
         scene.add(m)
         links.append(m)
     m = links[index]
@@ -846,8 +979,24 @@ def link_at(index: int, x: float, y: float, vertical: bool, color: int) -> None:
     m.visible = True
 
 
+def apply_theme(theme: dict, fever_pulse: float | None) -> None:
+    """場所の色を背景・霧・柱・粒に。フィーバー中は脈打つ紫。"""
+    top, bottom, glow = theme["top"], theme["bottom"], theme["glow"]
+    if fever_pulse is not None:
+        top = (70 + int(30 * fever_pulse), 28, 100)
+        bottom = (22, 8, 38)
+        glow = (255, 190, 90)
+    paint_backdrop(top, bottom)
+    scene.fog.color.setHex(rgb(bottom))
+    scene.background = scene.fog.color
+    for m in pillars:
+        m.material.color.setHex(rgb(glow))
+    stars.material.color.setHex(rgb(tuple(int(c * 0.6) for c in glow)))
+
+
 def sync(world: World, dt: float) -> None:
-    global was_falling
+    global was_falling, theme_shown
+    now = world.time
     alive = set()
     falling_now: set[int] = set()
     moving = {uid: (col, a, b) for uid, col, a, b in world.moves}
@@ -855,27 +1004,34 @@ def sync(world: World, dt: float) -> None:
     t = 1.0 - world.phase_left / total
     ease = 1 - (1 - min(1.0, max(0.0, t))) ** 2
     n_links = 0
+    p = world.piece
+    piece_x = cell_pos(p.col, 0)[0] if p is not None else 0.0
     for row in range(ROWS + 1):
         for col in range(COLS):
             blob = world.grid[row][col]
             if blob is None:
                 continue
             alive.add(blob.uid)
-            mesh = ball_for(blob)
+            group = ball_for(blob)
             show_row = row
             if blob.uid in moving:
                 _, a, b = moving[blob.uid]
                 show_row = a + (b - a) * ease
-            x, y = cell_pos(col, show_row)
-            if blob.uid in moving:
                 falling_now.add(blob.uid)
             elif blob.uid in was_falling:            # いま着地した
-                landed[blob.uid] = world.time
-            sx, sy = squash(blob.uid, world.time)
-            mesh.position.set(x, y - (1 - sy) * 0.44, 0)
-            mesh.scale.set(sx, sy, sx)
-            mesh.material = BALL_MATS[blob.color]
-            mesh.visible = row < ROWS
+                landed[blob.uid] = now
+            x, y = cell_pos(col, show_row)
+            if blob.uid in moving:
+                sx, sy = 0.92, 1.12                 # 落ちている間は縦に伸びる
+            else:
+                sx, sy = squash(blob.uid, now)
+                breath = 1.0 + 0.025 * math.sin(now * 2.0 + blob.uid * 0.7)   # 待っている間は呼吸
+                sx, sy = sx * breath, sy / breath
+            group.position.set(x, y - (1 - sy) * 0.44, 0)
+            group.scale.set(sx, sy, sx)
+            group.children[0].material = BALL_MATS[blob.color]
+            group.visible = row < ROWS
+            set_face(group, blob, now, max(-0.05, min(0.05, (piece_x - x) * 0.02)))   # 黒目は落ちてくる組の方を見る
             if blob.uid in moving:
                 continue
             right = world.grid[row][col + 1] if col + 1 < COLS else None
@@ -889,22 +1045,53 @@ def sync(world: World, dt: float) -> None:
     for m in links[n_links:]:
         m.visible = False
     k = max(0.0, world.phase_left / POP_TIME) if world.pops else 0.0
-    for blob, col, row in world.pops:               # 消えている玉：光って縮む。最初の瞬間に粒を出す
+    for blob, col, row in world.pops:               # 消えている玉：光って縮む。最初の瞬間に粒と輪
         alive.add(blob.uid)
-        mesh = ball_for(blob)
+        group = ball_for(blob)
         x, y = cell_pos(col, row)
-        mesh.position.set(x, y, 0.2)
-        mesh.scale.set(k * 1.3, k * 1.3, k * 1.3)
-        mesh.material = POP_MATS[blob.color]
-        mesh.visible = True
+        group.position.set(x, y, 0.2)
+        group.scale.set(k * 1.3, k * 1.3, k * 1.3)
+        group.children[0].material = POP_MATS[blob.color]
+        group.visible = True
         if blob.uid not in popped_seen:
             popped_seen.add(blob.uid)
             r, g, b = [c / 255 for c in PALETTE[blob.color]["rgb"]]
             for _ in range(10 + 4 * world.chain):
                 a = luck.uniform(0, math.tau)
-                s = luck.uniform(1.5, 5.0)
+                s = luck.uniform(1.5, 5.0 + world.chain)
                 sparks.append([x, y, 0.3, math.cos(a) * s, math.sin(a) * s + 2.0, luck.uniform(0.5, 2.5), luck.uniform(0.35, 0.7), r, g, b])
-    p = world.piece
+            free = [m for m in rings if not m.visible]
+            if free:
+                ring = free[0]
+                ring.position.set(x, y, 0.6)
+                ring.material.color.setHex(rgb(PALETTE[blob.color]["rgb"]))
+                ring.visible = True
+                ring_live.append([ring, now])
+    if world.pops and world.phase_left > POP_TIME - 0.05 and not any(l[1] == now for l in label_live):   # 連鎖の数を浮かべる
+        if world.chain >= 2:
+            cx = sum(cell_pos(c, r)[0] for _, c, r in world.pops) / len(world.pops)
+            cy = sum(cell_pos(c, r)[1] for _, c, r in world.pops) / len(world.pops)
+            show_label(f"{world.chain} 連鎖!", "#ffd75e" if world.chain < 4 else "#ff8fe0", cx, cy + 0.6, now)
+    for item in ring_live:                          # 輪：広がって薄くなる
+        ring, born = item
+        t = (now - born) / RING_TIME
+        if t >= 1:
+            ring.visible = False
+        else:
+            ring.scale.set(1 + 4 * t, 1 + 4 * t, 1)
+            ring.material.opacity = 0.7 * (1 - t)
+    ring_live[:] = [it for it in ring_live if it[0].visible]
+    for item in label_live:                         # 文字：ぽんと出て、上がりながら消える
+        sprite, born = item
+        t = (now - born) / LABEL_TIME
+        if t >= 1:
+            sprite.visible = False
+        else:
+            pop = 1.0 + 0.6 * math.exp(-8 * t) * math.sin(12 * t) if t < 0.5 else 1.0
+            sprite.scale.set(6.4 * pop, 2.0 * pop, 1)
+            sprite.position.y += 1.2 * dt
+            sprite.material.opacity = 1.0 if t < 0.6 else 1 - (t - 0.6) / 0.4
+    label_live[:] = [it for it in label_live if it[0].visible]
     if p is not None and world.phase == Phase.FALL:
         land = world.landing_row()
         for ghost, (c, r), blob in zip(ghosts, p.cells(p.col, land), (p.axis, p.mate)):
@@ -915,11 +1102,12 @@ def sync(world: World, dt: float) -> None:
         for (c, r), blob in zip(p.cells(), (p.axis, p.mate)):
             alive.add(blob.uid)
             falling_now.add(blob.uid)
-            mesh = ball_for(blob)
+            group = ball_for(blob)
             x, y = cell_pos(c, r)
-            mesh.position.set(x, y, 0)
-            mesh.scale.set(1, 1, 1)
-            mesh.visible = r < ROWS
+            group.position.set(x, y, 0)
+            group.scale.set(0.94, 1.08, 0.94)
+            group.visible = r < ROWS
+            set_face(group, blob, now)
     else:
         for ghost in ghosts:
             ghost.visible = False
@@ -951,32 +1139,46 @@ def sync(world: World, dt: float) -> None:
         s[6] -= dt
     sparks[:] = [s for s in sparks if s[6] > 0][-SPARKS:]
     for s in sparks:
-        flat += [s[0], s[1], s[2]]
-        colors += [s[7], s[8], s[9]]
-    flat += [0.0, -999.0, 0.0] * (SPARKS - len(sparks))
-    colors += [1.0, 1.0, 1.0] * (SPARKS - len(sparks))
+        flat += [s[0], s[1], s[2], s[0] - s[3] * 0.05, s[1] - s[4] * 0.05, s[2] - s[5] * 0.05]   # 頭と尾
+        colors += [s[7], s[8], s[9], s[7] * 0.3, s[8] * 0.3, s[9] * 0.3]
+    flat += [0.0, -999.0, 0.0] * (2 * (SPARKS - len(sparks)))
+    colors += [1.0, 1.0, 1.0] * (2 * (SPARKS - len(sparks)))
     spark_geo.attributes.position.array.set(to_js(flat))
     spark_geo.attributes.position.needsUpdate = True
     spark_geo.attributes.color.array.set(to_js(colors))
     spark_geo.attributes.color.needsUpdate = True
     ox = oy = 0.0
-    if world.time < world.shake_until:
-        k = world.shake_size * (world.shake_until - world.time) / 0.25 * 0.08
-        ox, oy = math.sin(world.time * 90) * k, math.cos(world.time * 70) * k
+    if now < world.shake_until:
+        k = world.shake_size * (world.shake_until - now) / 0.25 * 0.08
+        ox, oy = math.sin(now * 90) * k, math.cos(now * 70) * k
     camera.position.set(CAM[0] + ox, CAM[1] + oy, CAM[2])
     camera.lookAt(ox, oy, 0.0)
-    stars.rotation.z = world.time * 0.02
+    stars.rotation.z = now * 0.02
+    key_light.position.set(5 + 4 * math.sin(now * 0.25), 10, 12 + 2 * math.cos(now * 0.25))   # 主光がゆっくり動く
+    for i, m in enumerate(pillars):                                    # 光の柱はゆっくり揺れる
+        m.position.x = (-4.5, 0.8, 5.2)[i] + 0.6 * math.sin(now * 0.3 + i * 2.1)
+        m.material.opacity = 0.22 + 0.1 * math.sin(now * 0.7 + i)
     chain = world.chain if world.phase == Phase.POP else 0            # 連鎖が深いほど光が強く、フィーバーは脈打つ
     glow = BLOOM_BASE + 0.18 * chain
+    flash = world.phase == Phase.POP and world.phase_left > POP_TIME - 0.07   # 消えた瞬間、全体が一瞬明るく
+    ambient.intensity = 0.5 + (0.8 + 0.3 * chain if flash else 0.0)
+    theme = theme_for(world.level)
     if world.fever:
-        pulse = 0.5 + 0.5 * math.sin(world.time * 6)
-        glow += 0.15 + 0.15 * pulse
-        paint_backdrop((70 + int(30 * pulse), 28, 100), (22, 8, 38))
+        pulse = 0.5 + 0.5 * math.sin(now * 6)
+        glow += 0.08 + 0.1 * pulse
+        apply_theme(theme, pulse)
+        theme_shown = None
         frame_mat.emissive.setHex(0xffb040)
         frame_mat.emissiveIntensity = 0.4 + 0.5 * pulse
+        spot.intensity = 9.0
+        spot.position.x = 6 * math.sin(now * 1.3)
+        spot.target.position.set(4 * math.sin(now * 1.3), -2, 0)
     else:
-        paint_backdrop((34, 30, 70), (10, 10, 24))
+        if theme_shown is not theme:
+            apply_theme(theme, None)
+            theme_shown = theme
         frame_mat.emissiveIntensity = 0.0
+        spot.intensity = 0.0
     bloom.strength = min(1.6, glow)
 
 
@@ -1157,6 +1359,7 @@ def again(event):
         scene.remove(balls.pop(uid))
     popped_seen.clear()
     landed.clear()
+    sparks.clear()
     world.started = True
     improved = False
     refresh()

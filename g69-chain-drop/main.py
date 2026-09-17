@@ -73,6 +73,24 @@ MISSIONS = (
     dict(text="5 連鎖を出す", check=lambda w: w.max_chain >= 5),
 )
 
+# 場所（背景）。レベルで変わる。端末は背景の色、ブラウザは背景の板・霧・光の柱・粒の色
+THEMES = (
+    dict(name="夜", until=3, top=(34, 30, 70), bottom=(10, 10, 24), glow=(90, 110, 220), back=(18, 18, 34)),
+    dict(name="夕焼け", until=6, top=(120, 50, 70), bottom=(30, 12, 40), glow=(255, 150, 80), back=(40, 20, 34)),
+    dict(name="深海", until=9, top=(10, 50, 80), bottom=(4, 12, 30), glow=(60, 200, 220), back=(8, 24, 40)),
+    dict(name="星雲", until=12, top=(70, 30, 110), bottom=(16, 8, 40), glow=(200, 120, 255), back=(28, 14, 44)),
+    dict(name="黎明", until=999, top=(200, 150, 110), bottom=(60, 40, 70), glow=(255, 220, 160), back=(50, 36, 44)),
+)
+
+
+def theme_for(level: int) -> dict:
+    """レベル → 場所。until 以下のレベルはその場所。"""
+    for theme in THEMES:
+        if level <= theme["until"]:
+            return theme
+    return THEMES[-1]
+
+
 # 玉の色。端末の色と、ブラウザの 16 進
 PALETTE = (
     dict(name="赤", rgb=(230, 70, 80)),
@@ -630,7 +648,10 @@ def draw_blob(screen: Screen, x: float, y: float, color: int, scale: int, size: 
 
 def draw(screen: Screen, world: World) -> None:
     scale = screen.width // WIDTH
-    screen.band(0, screen.height, BACK)
+    theme = theme_for(world.level)
+    for y in range(screen.height):                  # 場所の色：上から下へ
+        t = y / screen.height
+        screen.band(y, y + 1, tuple(int(a * 0.5 + (b * 0.5 - a * 0.5) * t) for a, b in zip(theme["top"], theme["bottom"])))
     ox = oy = 0.0
     if world.time < world.shake_until:
         k = world.shake_size * (world.shake_until - world.time) / 0.25
@@ -1088,6 +1109,8 @@ def check() -> None:
     print(f"  {FEVER_CHAIN} 連鎖でフィーバー {FEVER_TIME:.0f} 秒（点 ×{FEVER_SCALE}、連鎖で延びる）。お題 {len(MISSIONS)} 個を順に、達成で ★ と +{MISSION_BONUS}")
 
     print("● レベルと終わり")
+    assert theme_for(1)["name"] == "夜" and theme_for(3)["name"] == "夜" and theme_for(4)["name"] == "夕焼け" and theme_for(50)["name"] == "黎明"
+    assert all(len(t[k]) == 3 for t in THEMES for k in ("top", "bottom", "glow", "back")) and [t["until"] for t in THEMES] == sorted(t["until"] for t in THEMES)
     world = World(seed=1)
     assert abs(world.drop_time() - DROP_START) < 1e-9
     world.level = 20
@@ -1098,7 +1121,7 @@ def check() -> None:
     world.spawn()
     assert world.over and world.piece is None, "出る場所がふさがると終わり"
     fill(world.grid, [])
-    print(f"  {LEVEL_EVERY} 個消すごとにレベル +1、1 段 {DROP_START} → {DROP_MIN} 秒。列 {SPAWN_COL} の一番上がふさがると終わり")
+    print(f"  {LEVEL_EVERY} 個消すごとにレベル +1、1 段 {DROP_START} → {DROP_MIN} 秒。場所は " + " → ".join(t["name"] for t in THEMES) + f"。列 {SPAWN_COL} の一番上がふさがると終わり")
 
     print("● 自動で遊ぶ")
     stats = []

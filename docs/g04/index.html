@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>テトリス — python-study</title>
-<meta name="description" content="矢印キーで遊ぶテトリス。落下・回転・ライン消去のロジックは CLI 版と同じ Python がブラウザでそのまま動き、絵は Three.js の立体ブロック。">
+<meta name="description" content="矢印キーで遊ぶテトリス。ゴースト・ホールド・レベル加速つき。落下・回転・ライン消去のロジックは CLI 版と同じ Python がブラウザでそのまま動き、絵は Three.js の立体ブロック。">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#129513;</text></svg>">
 <link rel="stylesheet" href="https://pyscript.net/releases/2025.8.1/core.css">
 <script type="importmap">
@@ -66,11 +66,19 @@
   .status strong { font-size: .875rem; font-weight: 600; }
   .status span { color: var(--muted); font-size: .875rem; font-variant-numeric: tabular-nums; }
   .status b { color: var(--ink); font-weight: 700; }
-  /* Three.js の画面。360×640（縦長）の canvas。盤面 10×20 マスを立体で描く */
-  .stage { display: flex; justify-content: center; }
+  /* Three.js の画面。480×640 の canvas。中央に盤面 10×20、左にホールド、右に「つぎ」 */
+  .stage { position: relative; width: min(100%, 480px); margin: 0 auto; }
+  .stage .cap {
+    position: absolute; top: 2.5%;
+    font-size: .7rem; letter-spacing: .08em; color: #8f95b8;
+    pointer-events: none;
+  }
+  .stage .cap.hold { left: 3.5%; }
+  .stage .cap.next { right: 5%; }
   #screen {
-    width: min(100%, 360px);
-    aspect-ratio: 9 / 16;
+    display: block;
+    width: 100%;
+    aspect-ratio: 3 / 4;
     background: #121222;
     border: 1px solid var(--line);
     border-radius: .5rem;
@@ -85,7 +93,7 @@
   }
   .pad {
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(6, 1fr);
     gap: .4rem;
     margin-top: .75rem;
   }
@@ -127,15 +135,20 @@
 <main>
   <p class="back"><a href="../">← 課題一覧</a></p>
   <h1>テトリス</h1>
-  <p class="sub">矢印キーで操作します。0.8 秒ごとに 1 マス落ちて、横 1 列そろうと消えます。</p>
+  <p class="sub">矢印キーで操作します。横 1 列（10 マス）そろうと消え、10 列消すごとに速くなります。</p>
 
   <div class="card">
     <div class="status">
       <strong>スコア <b id="score">0</b></strong>
+      <span>レベル <b id="level">1</b></span>
       <span>消した列 <b id="lines">0</b></span>
     </div>
 
-    <div class="stage"><canvas id="screen" width="360" height="640"></canvas></div>
+    <div class="stage">
+      <canvas id="screen" width="480" height="640"></canvas>
+      <span class="cap hold">ホールド</span>
+      <span class="cap next">つぎ</span>
+    </div>
 
     <p id="message" hidden></p>
 
@@ -145,9 +158,10 @@
       <button id="right-btn" type="button" tabindex="-1" aria-label="右へ">→</button>
       <button id="down-btn" type="button" tabindex="-1" aria-label="1つ落とす">↓</button>
       <button id="drop-btn" type="button" tabindex="-1" aria-label="一気に落とす">⤓</button>
+      <button id="hold-btn" type="button" tabindex="-1" aria-label="ホールド">⇄</button>
     </div>
 
-    <p class="keys">← → 移動 / ↑ 回転 / ↓ 落下 / スペース 一気に</p>
+    <p class="keys">← → 移動 / ↑ 回転 / ↓ 落下 / スペース 一気に / Shift ホールド</p>
     <p id="loading">Python を読み込んでいます… （初回は数秒かかります）</p>
 
     <button id="start-btn" disabled>スタート</button>
@@ -166,6 +180,6 @@
   </footer>
 </main>
 
-<script type="py" src="./game.py?v=31a539f6"></script>
+<script type="py" src="./game.py?v=9f46d52d"></script>
 </body>
 </html>

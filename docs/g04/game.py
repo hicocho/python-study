@@ -8,8 +8,10 @@ can_place() / place() / rotate() / clear_lines() / spawn() は
 入口は os.read() の代わりにキーイベント、出口は文字の盤面の代わりに Three.js の立体ブロック 200 個。
 時間を進めるのも select の時間切れではなく、asyncio の待ち合わせになっている。
 
-（2026-09-18）出口を 200 個の <div> から Three.js に差し替えた。
+（2026-09-18・1 回目）出口を 200 個の <div> から Three.js に差し替えた。
 盤面まわりの 5 関数は変えていない。変わったのは draw() と、その前の「舞台づくり」だけ。
+（2026-09-18・2 回目）ゲーム性を足した。ゴースト・ホールド・7-bag・壁蹴り・レベル加速。
+ライブラリは使わず Python だけ。spawn() は 7-bag の take() に置き換えた（残り 4 関数はそのまま）。
 """
 
 import asyncio
@@ -47,6 +49,9 @@ KEYS = {  # ブラウザが送ってくる名前 → CLI 版と同じ呼び名
     "ArrowUp": "up",
     "ArrowDown": "down",
     " ": "drop",
+    "Shift": "hold",   # ここから 2 回目で足したホールド。Shift でも c でも
+    "c": "hold",
+    "C": "hold",
 }
 
 
@@ -118,7 +123,46 @@ def spawn():
 
 # --- ここから下がブラウザ版だけの部分 ---
 
+# ── 2 回目（2026-09-18）で足したゲーム性 ────────────────────────────────
+#   ゴースト（落下位置の影）／ホールド／7 種を袋から引く（7-bag）／壁蹴り／レベルで加速。
+#   どれもライブラリは使わず Python だけ。上の 5 関数のうち spawn() だけは
+#   「袋から引く」方式に置き換えたので使わなくなった（残り 4 つはそのまま）。
+
+NEXT_COUNT = 3                       # 先に見せる「つぎ」の数
+KICKS = [(0, 0), (-1, 0), (1, 0), (-2, 0), (2, 0), (0, -1)]   # 壁蹴り：回して置けないとき、この順にずらして試す
+LINES_PER_LEVEL = 10                 # この列数を消すごとにレベルが 1 上がる
+
+
+def fall_seconds(level):
+    """レベルごとの落下間隔。1 レベルごとに 15% 速く、最短 0.1 秒"""
+    return max(0.1, FALL_SECONDS * (0.85 ** (level - 1)))
+
+
+def refill(bag):
+    """袋が空なら 7 種を 1 つずつ入れてかき混ぜる。同じミノが 3 回続く、I が 20 回来ない、が起きなくなる"""
+    if not bag:
+        bag.extend(SHAPES)
+        random.shuffle(bag)
+
+
+def take(name):
+    """名前 → 形と出てくる位置（横）。spawn() の後半と同じ計算"""
+    shape = SHAPES[name]
+    x = WIDTH // 2 - len(shape[0]) // 2
+    return shape, x
+
+
+def ghost_y(board, shape, x, y):
+    """いま手を離したらどこまで落ちるか。hard_drop() と同じ計算で、盤面は変えない"""
+    while can_place(board, shape, x, y + 1):
+        y += 1
+    return y
+
+
+# ── 画面の部品 ──────────────────────────────────────────────────────────
+
 score_label = document.querySelector("#score")
+level_label = document.querySelector("#level")
 lines_label = document.querySelector("#lines")
 message = document.querySelector("#message")
 start_button = document.querySelector("#start-btn")
@@ -130,7 +174,7 @@ canvas = document.querySelector("#screen")
 
 THREE = window.THREE
 ADDONS = window.ADDONS
-VIEW_W, VIEW_H = 360, 640
+VIEW_W, VIEW_H = 480, 640            # 2 回目で横に広げた。左にホールド、右に「つぎ」を置くため
 
 COLORS = {  # <div> 時代の CSS（.c-I など）と同じ 7 色
     "I": 0x4AA3C7,
@@ -212,6 +256,10 @@ BLOCK_MATS = {
                                             clearcoat=1.0, clearcoatRoughness=0.1, envMapIntensity=0.45))  # 映り込みは控えめ。強いと色が白っぽく飛ぶ
     for name, color in COLORS.items()
 }
+GHOST_MATS = {  # ゴースト用。同じ色を薄く透かす
+    name: THREE.MeshBasicMaterial.new(js(color=color, transparent=True, opacity=0.22))
+    for name, color in COLORS.items()
+}
 
 cells = []  # 200 個のブロック。作るのは一度だけで、あとは「見せる／隠す」と色を切り替える
 for y in range(HEIGHT):
@@ -221,6 +269,47 @@ for y in range(HEIGHT):
         block.visible = False
         scene.add(block)
         cells.append(block)
+
+# 盤の外の小さなミノ。左にホールド 1 つ、右に「つぎ」3 つ。どのミノも 4 マスなので 4 個ずつ持てば足りる
+MINI = 0.5                                             # 盤のブロックの半分の大きさ
+SLOT_X = WIDTH / 2 + 2.9                               # 盤のふちから外へどれだけ離すか
+SLOTS = {"hold": (-SLOT_X, 7.6)}                       # 名前 → 舞台の (x, y)。ミノの中心をここに置く
+for i in range(NEXT_COUNT):
+    SLOTS[f"next{i}"] = (SLOT_X, 7.6 - i * 2.6)
+
+minis = {}
+for slot in SLOTS:
+    group = []
+    for _ in range(4):
+        block = THREE.Mesh.new(BLOCK_GEO, BLOCK_MATS["T"])
+        block.scale.set(MINI, MINI, MINI)
+        block.visible = False
+        scene.add(block)
+        group.append(block)
+    minis[slot] = group
+
+
+def show_mini(slot, name):
+    """盤の外の枠に、名前のミノを小さく置く。None なら隠す"""
+    sx, sy = SLOTS[slot]
+    blocks = minis[slot]
+    for b in blocks:
+        b.visible = False
+    if name is None:
+        return
+    shape = SHAPES[name]
+    w, h = len(shape[0]), len(shape)
+    i = 0
+    for dy in range(h):
+        for dx in range(w):
+            if shape[dy][dx] == 0:
+                continue
+            b = blocks[i]
+            b.material = BLOCK_MATS[name]
+            b.position.set(sx + (dx - w / 2 + 0.5) * MINI, sy - (dy - h / 2 + 0.5) * MINI, 0.0)
+            b.visible = True
+            i += 1
+
 
 # CLI 版では素の変数だった board / x / y / score を、辞書にまとめて持つ。
 # キーイベントから呼ばれるたびに中断・再開するので、ループの中には置けない。
@@ -232,30 +321,65 @@ state = {
     "y": 0,
     "score": 0,
     "lines": 0,
+    "level": 1,
     "playing": False,
     "next_fall": 0.0,
+    "bag": [],          # 7-bag。空になったら refill() で 7 種を補充
+    "queue": [],        # これから出るミノの名前。先頭が次
+    "hold": None,       # ホールド中のミノの名前
+    "can_hold": True,   # このミノでまだホールドしていないか（1 ミノにつき 1 回）
 }
 
 
 def draw():
-    """CLI 版の render() にあたる。文字列ではなく、200 個のブロックの「見せる／隠す」と色を切り替えて描き直す。"""
+    """CLI 版の render() にあたる。200 個のブロックの「見せる／隠す」と色を切り替えて描き直す。
+
+    盤面の上に、いまのミノ（濃い）とゴースト（薄い）を重ねる。両方あるマスは濃いほうが勝つ。
+    """
     if state["playing"]:
         view = place(state["board"], state["shape"], state["x"], state["y"], state["name"])
+        gy = ghost_y(state["board"], state["shape"], state["x"], state["y"])
+        ghost = place(state["board"], state["shape"], state["x"], gy, state["name"])
     else:
         view = state["board"]
+        ghost = view
 
     for y in range(HEIGHT):
-        row = view[y]
         for x in range(WIDTH):
-            value = row[x]
+            value = view[y][x]
             block = cells[y * WIDTH + x]  # 1 本のリストを 2 次元として使う
-            block.visible = value != 0
             if value != 0:
+                block.visible = True
                 block.material = BLOCK_MATS[value]
+            elif ghost[y][x] != 0:
+                block.visible = True
+                block.material = GHOST_MATS[ghost[y][x]]
+            else:
+                block.visible = False
+
+    show_mini("hold", state["hold"])
+    for i in range(NEXT_COUNT):
+        show_mini(f"next{i}", state["queue"][i] if i < len(state["queue"]) else None)
 
     renderer.render(scene, camera)  # 盤面が変わったときだけ描く。動きの補間は次の回で
     score_label.textContent = str(state["score"])
+    level_label.textContent = str(state["level"])
     lines_label.textContent = str(state["lines"])
+
+
+def next_piece():
+    """袋 → 待ち行列 → いまのミノ、と 1 つずつ送る。待ち行列は常に NEXT_COUNT 個見えている"""
+    while len(state["queue"]) <= NEXT_COUNT:
+        refill(state["bag"])
+        state["queue"].append(state["bag"].pop())
+
+    name = state["queue"].pop(0)
+    shape, x = take(name)
+    state["name"] = name
+    state["shape"] = shape
+    state["x"] = x
+    state["y"] = 0
+    state["can_hold"] = True
 
 
 def move(dx):
@@ -266,11 +390,36 @@ def move(dx):
 
 
 def turn():
-    """回して、置けると分かってから採用する。"""
+    """回して、置ける位置を KICKS の順に探す。どこにも置けなければ回さない（壁蹴り）。"""
     turned = rotate(state["shape"])
-    if can_place(state["board"], turned, state["x"], state["y"]):
-        state["shape"] = turned
-        draw()
+    for kx, ky in KICKS:
+        if can_place(state["board"], turned, state["x"] + kx, state["y"] + ky):
+            state["shape"] = turned
+            state["x"] += kx
+            state["y"] += ky
+            draw()
+            return
+
+
+def hold():
+    """いまのミノを脇に置き、代わりにホールドしていたミノ（なければ次のミノ）を出す。1 ミノにつき 1 回だけ。"""
+    if not state["can_hold"]:
+        return
+
+    kept = state["hold"]
+    state["hold"] = state["name"]
+
+    if kept is None:
+        next_piece()
+    else:
+        shape, x = take(kept)
+        state["name"] = kept
+        state["shape"] = shape
+        state["x"] = x
+        state["y"] = 0
+
+    state["can_hold"] = False   # 出したミノはホールドし直せない（無限に入れ替えられてしまう）
+    draw()
 
 
 def lock():
@@ -280,21 +429,18 @@ def lock():
 
     state["board"] = board
     state["lines"] += cleared
-    state["score"] += SCORES[cleared]
+    state["score"] += SCORES[cleared] * state["level"]              # レベルが上がるほど 1 列の値打ちが上がる
+    state["level"] = state["lines"] // LINES_PER_LEVEL + 1
 
-    name, shape, x = spawn()
-    state["name"] = name
-    state["shape"] = shape
-    state["x"] = x
-    state["y"] = 0
+    next_piece()
 
-    if not can_place(board, shape, x, 0):  # 出す場所がもう無い
+    if not can_place(board, state["shape"], state["x"], 0):  # 出す場所がもう無い
         finish()
 
 
 def fall():
     """1 マス落とす。落ちられなければ固定。CLI 版の "down" の枝と同じ。"""
-    state["next_fall"] = time.time() + FALL_SECONDS
+    state["next_fall"] = time.time() + fall_seconds(state["level"])
 
     if can_place(state["board"], state["shape"], state["x"], state["y"] + 1):
         state["y"] += 1
@@ -306,9 +452,7 @@ def fall():
 
 def hard_drop():
     """一番下まで一気に落とす。次の tick でそのまま固定される。"""
-    while can_place(state["board"], state["shape"], state["x"], state["y"] + 1):
-        state["y"] += 1
-
+    state["y"] = ghost_y(state["board"], state["shape"], state["x"], state["y"])
     state["next_fall"] = time.time()
     draw()
 
@@ -316,7 +460,7 @@ def hard_drop():
 def finish():
     """ゲームオーバー。"""
     state["playing"] = False
-    message.textContent = f"ゲームオーバー — スコア {state['score']}"
+    message.textContent = f"ゲームオーバー — スコア {state['score']}（レベル {state['level']}）"
     message.hidden = False
     start_button.textContent = "もう一度"
     start_button.disabled = False
@@ -332,15 +476,15 @@ async def tick():
 
 def start():
     state["board"] = make_board()
-    name, shape, x = spawn()
-    state["name"] = name
-    state["shape"] = shape
-    state["x"] = x
-    state["y"] = 0
     state["score"] = 0
     state["lines"] = 0
+    state["level"] = 1
+    state["bag"] = []
+    state["queue"] = []
+    state["hold"] = None
+    next_piece()
     state["playing"] = True
-    state["next_fall"] = time.time() + FALL_SECONDS
+    state["next_fall"] = time.time() + fall_seconds(1)
 
     message.hidden = True
     start_button.disabled = True
@@ -364,6 +508,8 @@ def act(key):
         fall()
     elif key == "drop":
         hard_drop()
+    elif key == "hold":
+        hold()
 
 
 @when("keydown", "body")
@@ -404,6 +550,11 @@ def on_down(event):
 @when("click", "#drop-btn")
 def on_drop(event):
     act("drop")
+
+
+@when("click", "#hold-btn")
+def on_hold(event):
+    act("hold")
 
 
 # Pyodide の読み込みが終わってから実行される＝ここが準備完了の合図
