@@ -9,7 +9,8 @@
 <link rel="stylesheet" href="https://pyscript.net/releases/2025.8.1/core.css">
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-               "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }
+               "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
+               "tone": "https://cdn.jsdelivr.net/npm/tone@15.5.42/+esm" } }
 </script>
 <script type="module">
   // Three.js（絵）と後処理（ブルーム）を読み込んで window に置く。Python は window.THREE を通して舞台を作る
@@ -18,8 +19,13 @@
   import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
   import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
   import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+  import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
+  import { RGBShiftShader } from "three/addons/shaders/RGBShiftShader.js";
+  import { VignetteShader } from "three/addons/shaders/VignetteShader.js";
+  import * as Tone from "tone";
   window.THREE = THREE;
-  window.ADDONS = { EffectComposer, RenderPass, UnrealBloomPass, OutputPass };
+  window.ADDONS = { EffectComposer, RenderPass, UnrealBloomPass, OutputPass, ShaderPass, RGBShiftShader, VignetteShader };
+  window.Tone = Tone;      // 音（エンジンの持続音・風切り・和音・衝突）
 </script>
 <script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
 <style>
@@ -204,6 +210,7 @@
         <li>終わると<b>ベスト</b>（点・最高コンボ・よけた数）がこのブラウザに残ります。</li>
         <li><b>ギリギリで通ると点が高い</b>：スレスレ +3、近い +2、それ以外 +1。スレスレ・近いが<b>続くとコンボ</b>で ×2 ×3 …（×5 まで）。遠くをよけるか、ぶつかるとコンボは 0。ぶつかると画面が揺れます。</li>
       </ol>
+      <p style="margin:.6rem 0 0">ブラウザ版の表現（2026-09-18）：速いほど色がずれて端が暗くなり、噴射が青白く伸びる。輪を抜けると一瞬光り、ゲートで後ろに引かれる。岩は砕け、すれると光る。ステージごとに星雲の色と惑星が変わる。ぶつかった瞬間はスローでカメラが寄り、終わると自機の周りを回る。音は Tone.js（エンジンは速さで音程が上がり、スレスレは通った側から風切り）。</p>
       <div class="cues">
         <span><b>遠近</b>：近いものは大きい（x' = x / z）</span>
         <span><b>視差</b>：近い星ほど速く流れる</span>
@@ -228,6 +235,6 @@
   </footer>
 </main>
 
-<script type="py" src="./game.py?v=05639767"></script>
+<script type="py" src="./game.py?v=dcd7bf7e"></script>
 </body>
 </html>

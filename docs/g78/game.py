@@ -754,6 +754,7 @@ def obey(world: World, key: str, down: bool = True) -> None:
 
 THREE = window.THREE
 ADDONS = window.ADDONS
+TONE = getattr(window, "Tone", None)                # 音（エンジンの持続音・スレスレ・ゲート・衝突）。無ければ wav だけ
 VIEW_W, VIEW_H = 640, 400
 
 
@@ -803,6 +804,13 @@ composer.setSize(VIEW_W, VIEW_H)
 composer.addPass(ADDONS.RenderPass.new(scene, camera))
 bloom = ADDONS.UnrealBloomPass.new(THREE.Vector2.new(VIEW_W, VIEW_H), 0.55, 0.6, 0.7)   # 光る物（輪・ゲート・噴射）がにじむ
 composer.addPass(bloom)
+shift = ADDONS.ShaderPass.new(ADDONS.RGBShiftShader)   # 色収差：速いほど画面の端で色がずれる（レンズの歪みの感じ）
+shift.uniforms.amount.value = 0.0
+composer.addPass(shift)
+vignette_pass = ADDONS.ShaderPass.new(ADDONS.VignetteShader)   # 周辺減光：速いほど端が暗く、視野が狭まる
+vignette_pass.uniforms.offset.value = 0.9
+vignette_pass.uniforms.darkness.value = 0.4
+composer.addPass(vignette_pass)
 composer.addPass(ADDONS.OutputPass.new())
 
 sun = THREE.DirectionalLight.new(0xfff4e6, 2.4)     # CLI 版の LIGHT_DIR（左上・手前から）と同じ向き
@@ -838,6 +846,38 @@ for i, (x, y, z, size, color) in enumerate(((-30, 20, 120, 90, 0x5a2a9a), (40, -
     s.scale.set(size, size, 1)
     scene.add(s)
     nebulae.append(s)
+
+
+# 空間の色はステージで変わる（表 1 行）。星雲 4 つの色・背景と霧・遠い星・惑星
+THEMES = (
+    dict(name="青い星雲", nebula=(0x5a2a9a, 0x1e3c8a, 0x8a2a5a, 0x1a6a7a), space=(6, 8, 14), stars=0xdde4ff, planet=(0x3a6fc0, 0x8fc0ff, -38, 14)),
+    dict(name="赤い星雲", nebula=(0x9a2a2a, 0x8a3c1e, 0x5a1a4a, 0x7a3a1a), space=(14, 6, 8), stars=0xffe0d0, planet=(0xc05a3a, 0xffb080, 40, 10)),
+    dict(name="緑のガス", nebula=(0x1a7a3a, 0x2a6a5a, 0x4a7a1a, 0x1a5a4a), space=(5, 12, 9), stars=0xd0ffe0, planet=(0x4aa070, 0xa0ffc0, -30, -8)),
+    dict(name="暗黒帯", nebula=(0x2a2a3a, 0x1a1a2a, 0x3a2a3a, 0x202030), space=(3, 3, 6), stars=0xb0b0c0, planet=(0x303040, 0x5060a0, 34, -12)),
+    dict(name="金の星雲", nebula=(0x9a7a1a, 0x8a5a1e, 0x7a4a2a, 0x6a6a1a), space=(12, 10, 4), stars=0xfff0c0, planet=(0xd0a040, 0xfff0b0, -42, 6)),
+)
+theme_shown = {"stage": 0}
+planet = THREE.Mesh.new(THREE.SphereGeometry.new(14, 32, 24), THREE.MeshStandardMaterial.new(js(color=0x3a6fc0, roughness=0.9, fog=False)))
+planet.position.set(-38, 14, 110)
+scene.add(planet)
+planet_glow = THREE.Sprite.new(THREE.SpriteMaterial.new(js(map=NEBULA_TEX, color=0x8fc0ff, transparent=True, opacity=0.7, blending=THREE.AdditiveBlending, depthWrite=False, fog=False)))
+planet_glow.scale.set(40, 40, 1)
+planet_glow.position.copy(planet.position)
+scene.add(planet_glow)
+
+
+def apply_theme(stage: int) -> None:
+    theme = THEMES[(stage - 1) % len(THEMES)]
+    for s, color in zip(nebulae, theme["nebula"]):
+        s.material.color.setHex(color)
+    scene.background.setHex(rgb(theme["space"]))
+    scene.fog.color.setHex(rgb(theme["space"]))
+    far_stars.material.color.setHex(theme["stars"])
+    body, glow, px, py = theme["planet"]
+    planet.material.color.setHex(body)
+    planet_glow.material.color.setHex(glow)
+    planet.position.set(px, py, 110)
+    planet_glow.position.set(px, py, 108)
 
 
 def make_points(count: int, spread: tuple[float, float, float], size: float, color: int, opacity: float = 0.9) -> object:
@@ -879,28 +919,74 @@ gate_core.visible = False
 scene.add(gate_core)
 
 
-def rock_geometry(seed: int) -> object:
-    """でこぼこの岩。正二十面体の頂点を種で決めた量だけずらす（CLI 版の rock_shape と同じ考え）。"""
-    geo = THREE.IcosahedronGeometry.new(1.0, 1)
+def rock_geometry(seed: int, detail: int = 2) -> object:
+    """でこぼこの岩。正二十面体の頂点を種で決めた量だけずらし（CLI 版の rock_shape と同じ考え）、
+    クレーターは 3 か所を内側へ凹ませる。色は頂点ごとにまだら（暗い斑）。"""
+    geo = THREE.IcosahedronGeometry.new(1.0, detail)
     attr = geo.attributes.position
     arr = attr.array
-    flat = []
+    luck = random.Random(seed)
+    craters = [(luck.uniform(-1, 1), luck.uniform(-1, 1), luck.uniform(-1, 1)) for _ in range(3)]
+    flat, colors = [], []
     for i in range(0, attr.count * 3, 3):
         x, y, z = arr[i], arr[i + 1], arr[i + 2]
         key = (round(x, 3), round(y, 3), round(z, 3))
-        k = 0.72 + 0.5 * random.Random(hash(key) ^ seed).random()
+        k = 0.78 + 0.4 * random.Random(hash(key) ^ seed).random()
+        for cx, cy, cz in craters:                  # クレーターの近くは凹む
+            d = math.sqrt((x - cx) ** 2 + (y - cy) ** 2 + (z - cz) ** 2)
+            if d < 0.9:
+                k -= 0.18 * (1 - d / 0.9)
         flat += [x * k, y * k, z * k]
+        tone_ = 0.75 + 0.25 * random.Random(hash(key) ^ (seed * 7 + 3)).random()
+        colors += [tone_, tone_ * (0.96 if k < 0.85 else 1.0), tone_ * 0.92]
     arr.set(to_js(flat))
     attr.needsUpdate = True
+    geo.setAttribute("color", THREE.Float32BufferAttribute.new(to_js(colors), 3))
     geo.computeVertexNormals()
     return geo
 
 
 ROCK_GEOS = [rock_geometry(n) for n in range(6)]
-ROCK_MAT = THREE.MeshStandardMaterial.new(js(color=rgb(ROCK), roughness=0.95, metalness=0.05, flatShading=True, emissive=0x000000))
-DANGER_MAT = THREE.MeshStandardMaterial.new(js(color=rgb(ROCK_DANGER), roughness=0.9, metalness=0.05, flatShading=True,
+ROCK_MAT = THREE.MeshStandardMaterial.new(js(color=rgb(ROCK), roughness=0.95, metalness=0.05, flatShading=True, vertexColors=True, emissive=0x000000))
+DANGER_MAT = THREE.MeshStandardMaterial.new(js(color=rgb(ROCK_DANGER), roughness=0.9, metalness=0.05, flatShading=True, vertexColors=True,
                                               emissive=rgb(ROCK_DANGER), emissiveIntensity=0.5))
+GLINT_MAT = THREE.MeshStandardMaterial.new(js(color=rgb(ROCK), roughness=0.5, metalness=0.2, flatShading=True, vertexColors=True,
+                                             emissive=rgb(GLOW), emissiveIntensity=1.2))
 rock_meshes: dict[int, object] = {}                 # id(rock) → Mesh
+glint_until: dict[int, float] = {}                  # スレスレで表面が光る岩 → 消える時刻
+back_rocks = []                                     # 奥の層：大きな岩がゆっくり流れる
+back_luck = random.Random(31)
+for i in range(12):
+    m = THREE.Mesh.new(ROCK_GEOS[i % 6], ROCK_MAT)
+    r = back_luck.uniform(3, 7)
+    m.scale.set(r, r, r)
+    m.position.set(back_luck.uniform(-45, 45), back_luck.uniform(-20, 25), back_luck.uniform(40, 95))
+    scene.add(m)
+    back_rocks.append(m)
+DEBRIS_GEO = THREE.IcosahedronGeometry.new(0.18, 0)
+debris = []                                         # ぶつかって砕けた破片 [mesh, vx, vy, vz, life, spin]
+debris_pool = []
+for _ in range(16):
+    m = THREE.Mesh.new(DEBRIS_GEO, ROCK_MAT)
+    m.visible = False
+    scene.add(m)
+    debris_pool.append(m)
+
+
+def shatter(x: float, y: float, z: float, radius: float) -> None:
+    """岩が砕ける：破片 8 個が回転しながら散る。"""
+    for m in debris_pool:
+        if m.visible:
+            continue
+        if len([d for d in debris]) >= 8:
+            break
+        a = fx_luck.uniform(0, math.tau)
+        s = fx_luck.uniform(2, 6)
+        m.visible = True
+        k = radius * fx_luck.uniform(0.5, 1.2)
+        m.scale.set(k, k, k)
+        m.position.set(x + fx_luck.uniform(-0.3, 0.3), y + fx_luck.uniform(-0.3, 0.3), z)
+        debris.append([m, math.cos(a) * s, math.sin(a) * s, fx_luck.uniform(2, 5), 1.3, fx_luck.uniform(4, 12)])
 
 
 def make_ship() -> object:
@@ -940,6 +1026,10 @@ camera.add(vignette)
 scene.add(camera)
 
 
+cam_fx = {"x": 0.0, "pull": 0.0, "ring": 0.0, "min_ring": 99.0, "orbit": 0.0, "stage": 1}
+seen_gate = {"passed": None}
+
+
 def burst(x: float, y: float, z: float, count: int, color: tuple[int, int, int], speed: float = 3.0) -> None:
     r, g, b = [c / 255 for c in color]
     for _ in range(count):
@@ -977,12 +1067,51 @@ def sync(world: World, dt: float) -> None:
     """世界を Three.js の物に写す。カメラは cam_now（揺れ込み）と focus（速いほど広角）から。"""
     cam = world.cam_now
     focus = world.focus
-    camera.fov = 2 * math.degrees(math.atan(CY / focus))
+    frac = (world.speed - SPEED0) / (SPEED_MAX - SPEED0)
+    slow = world.started and not world.paused and world.hurt > 0.75   # ぶつかった直後のスロー
+    if world.stage != cam_fx["stage"]:              # ステージが変わると空間の色が変わる
+        cam_fx["stage"] = world.stage
+        apply_theme(world.stage)
+    cam_fx["x"] += (cam.x - cam_fx["x"]) * 0.22    # カメラは少し遅れて追う（曲がりに演技が付く）
+    cam_fx["pull"] = max(0.0, cam_fx["pull"] - dt * 1.6)
+    cam_fx["ring"] = max(0.0, cam_fx["ring"] - dt * 7.0)
+    ring_now = min(world.rings) if world.rings else 99.0
+    if ring_now < SHIP_Z <= cam_fx["min_ring"] or (cam_fx["min_ring"] < SHIP_Z and ring_now > cam_fx["min_ring"] + 3):
+        if world.started and not world.paused and cam_fx["min_ring"] < 99:
+            cam_fx["ring"] = 1.0                    # 輪を抜けた：一瞬白く光る
+    cam_fx["min_ring"] = ring_now
+    fov = 2 * math.degrees(math.atan(CY / focus))
+    if slow:
+        fov *= 0.82                                 # スロー中は自機に寄る
+    camera.fov = fov
     camera.updateProjectionMatrix()
-    camera.up.set(M * -math.sin(cam.roll), math.cos(cam.roll), 0)   # 曲がると傾く（view() の -roll と同じ向き）
-    camera.position.set(M * (cam.x + cam.jolt_x), EYE + cam.jolt_y, 0.0)
-    camera.lookAt(M * (cam.x + cam.jolt_x), EYE + cam.jolt_y, 100.0)
+    cx = M * (cam_fx["x"] + cam.jolt_x)
+    cy = EYE + cam.jolt_y
+    cz = -2.5 * cam_fx["pull"]                      # ゲート通過：一瞬後ろへ引かれて戻る
+    gate = world.gate
+    if gate is not None and not gate.passed and SHIP_Z < gate.pos.z < SHIP_Z + 12:   # ゲートの手前は少し下から見上げる
+        cy -= 0.6 * (1 - (gate.pos.z - SHIP_Z) / 12)
+    if world.over:                                  # 終わり：自機の周りを回る
+        cam_fx["orbit"] += dt * 0.8
+        a = cam_fx["orbit"]
+        s = world.ship
+        camera.up.set(0, 1, 0)
+        camera.position.set(M * s.x + 3.2 * math.sin(a), s.y + 1.4, s.z - 3.2 * math.cos(a))
+        camera.lookAt(M * s.x, s.y, s.z)
+    else:
+        camera.up.set(M * -math.sin(cam.roll), math.cos(cam.roll), 0)   # 曲がると傾く（view() の -roll と同じ向き）
+        camera.position.set(cx, cy, cz)
+        camera.lookAt(cx, EYE + cam.jolt_y, 100.0)
     far_stars.position.set(M * cam.x, EYE, 0)
+    shift.uniforms.amount.value = 0.0004 + 0.0028 * frac + (0.004 if slow else 0.0)
+    vignette_pass.uniforms.darkness.value = 0.35 + 0.6 * frac
+    vignette_pass.uniforms.offset.value = 1.0 - 0.25 * frac
+    for m in back_rocks:                            # 奥の層はゆっくり流れ、手前に来たら奥へ戻す
+        m.position.z -= world.speed * 0.12 * dt if world.started and not world.paused else 0.0
+        m.rotation.y += 0.05 * dt
+        if m.position.z < 30:
+            m.position.z = 95
+            m.position.x = back_luck.uniform(-45, 45)
     flat, colors = [], []
     for star in world.stars:                        # 流線：CLI 版と同じ「前のコマの位置から線」
         back = star.z + world.speed * STEP * STREAK
@@ -1012,12 +1141,28 @@ def sync(world: World, dt: float) -> None:
             scene.add(mesh)
             rock_meshes[key] = mesh
         mesh.position.set(M * rock.pos.x, rock.pos.y, rock.pos.z)
-        mesh.rotation.set(rock.angle.x, M * rock.angle.y, M * rock.angle.z)
-        danger = world.dangerous(rock)
-        mesh.material = DANGER_MAT if danger else ROCK_MAT
+        near = max(0.0, 1 - rock.pos.z / FAR)
+        spin = 1.0 + 1.2 * near * near              # 近いほど速く回って見える
+        mesh.rotation.set(rock.angle.x * spin, M * rock.angle.y * spin, M * rock.angle.z * spin)
+        if glint_until.get(key, -1.0) > world.time:
+            mesh.material = GLINT_MAT
+        else:
+            mesh.material = DANGER_MAT if world.dangerous(rock) else ROCK_MAT
     for key in list(rock_meshes):
         if key not in alive:
             scene.remove(rock_meshes.pop(key))
+            glint_until.pop(key, None)
+    for d in debris:                                # 破片：飛んで回って、世界と一緒に流れ、消える
+        m = d[0]
+        m.position.x += d[1] * dt
+        m.position.y += d[2] * dt
+        m.position.z += (d[3] - world.speed) * dt
+        m.rotation.x += d[5] * dt
+        m.rotation.y += d[5] * 0.7 * dt
+        d[4] -= dt
+        if d[4] <= 0:
+            m.visible = False
+    debris[:] = [d for d in debris if d[4] > 0]
     DANGER_MAT.emissiveIntensity = 0.5 + 0.4 * math.sin(world.time * 9)
     gate = world.gate
     if gate is not None and not gate.passed:
@@ -1036,17 +1181,89 @@ def sync(world: World, dt: float) -> None:
     ship_mesh.rotation.set(0.1 - world.aim.y * 0.25, 0, M * tilt)
     ship_mesh.visible = world.over or int(world.hurt * 12) % 2 == 0
     flame = ship_mesh.children[3]
-    k = 0.6 + 0.3 * (world.speed - SPEED0) / (SPEED_MAX - SPEED0) + 0.15 * math.sin(world.time * 40)
-    flame.scale.set(k, k * 1.4, 1)
+    k = 0.6 + 0.3 * frac + 0.15 * math.sin(world.time * 40)
+    flame.scale.set(k, k * (1.4 + 2.2 * frac), 1)   # 速いほど噴射が長く伸び、青白くなる
+    flame.material.color.setRGB(1.0, 0.63 + 0.3 * frac, 0.24 + 0.7 * frac)
     if world.started and not world.paused and fx_luck.random() < 0.6:   # 噴射の粒
         burst(M * ship.x - 0.15 * math.sin(M * tilt), ship.y - 0.05, ship.z - 1.0, 1, FLAME, 0.6)
     age_sparks(dt, world.speed if world.started and not world.paused else 0.0)
     if world.flash > 0:
         vignette.material.color.setHex(rgb(world.flash_color))
         vignette.material.opacity = min(0.85, world.flash * 3.0)
+    elif cam_fx["ring"] > 0:
+        vignette.material.color.setHex(0xbfd8ff)
+        vignette.material.opacity = 0.12 * cam_fx["ring"]      # 輪を抜けた瞬間だけ薄く（0.35 では速いとき画面が白く濁った）
     else:
         vignette.material.opacity = 0.0
-    bloom.strength = 0.55 + 0.35 * (world.speed - SPEED0) / (SPEED_MAX - SPEED0) + (0.4 if world.flash > 0 else 0.0)
+    bloom.strength = 0.55 + 0.35 * frac + (0.4 if world.flash > 0 else 0.0) + 0.25 * cam_fx["ring"]
+    engine_tone(frac if world.started and not world.paused and not world.over else -1.0)
+
+
+# ── 音（Tone.js）：エンジンの持続音・スレスレの風切り（左右）・ゲートの和音・衝突 ─────────────
+music = {"on": False, "engine": None, "filter": None, "synth": None, "drum": None, "whoosh": None, "pan": None}
+
+
+def music_start() -> None:
+    """人が触った処理の中で呼ぶ（Safari の決まり）。"""
+    if TONE is None or music["on"]:
+        return
+    try:
+        TONE.start()
+        filt = TONE.Filter.new(400, "lowpass").toDestination()
+        engine = TONE.Oscillator.new(55, "sawtooth").connect(filt)
+        engine.volume.value = -26
+        engine.start()
+        synth = TONE.PolySynth.new(TONE.Synth).toDestination()
+        synth.volume.value = -12
+        drum = TONE.MembraneSynth.new().toDestination()
+        drum.volume.value = -6
+        pan = TONE.Panner.new(0).toDestination()
+        whoosh = TONE.NoiseSynth.new(js(noise=js(type="pink"), envelope=js(attack=0.02, decay=0.18, sustain=0.0, release=0.1))).connect(pan)
+        whoosh.volume.value = -10
+        music.update(on=True, engine=engine, filter=filt, synth=synth, drum=drum, whoosh=whoosh, pan=pan)
+    except Exception:
+        music["on"] = False
+
+
+def engine_tone(frac: float) -> None:
+    """エンジンの持続音：速いほど高く、大きく。frac < 0 なら止まっている（小さく）。"""
+    if not music["on"]:
+        return
+    try:
+        if frac < 0:
+            music["engine"].volume.rampTo(-40, 0.3)
+            return
+        music["engine"].frequency.rampTo(55 + 90 * frac, 0.15)
+        music["filter"].frequency.rampTo(300 + 1400 * frac, 0.15)
+        music["engine"].volume.rampTo(-26 + 8 * frac, 0.2)
+    except Exception:
+        pass
+
+
+def sound_event(event: str, side: float = 0.0) -> bool:
+    """出来事の音（Tone.js）。鳴らせたら True（wav は鳴らさない）。"""
+    if not music["on"]:
+        return False
+    try:
+        now = TONE.now()
+        if event == "graze":
+            music["pan"].pan.value = max(-1.0, min(1.0, side))
+            music["whoosh"].triggerAttackRelease("16n", now)
+            return True
+        if event == "gate":
+            music["synth"].triggerAttackRelease(to_js(["C4", "E4", "G4", "C5"]), "4n", now)
+            return True
+        if event == "hit":
+            music["drum"].triggerAttackRelease("C1", "8n", now)
+            return True
+        if event in ("over", "best"):
+            music["drum"].triggerAttackRelease("A0", "2n", now)
+            for i, n in enumerate(("E4", "C4", "A3", "F3")):
+                music["synth"].triggerAttackRelease(n, "8n", now + 0.18 * i)
+            return True
+    except Exception:
+        pass
+    return False
 
 
 class Speaker:
@@ -1107,12 +1324,19 @@ def effect(event: str | None) -> None:
         return
     s = world.ship
     sx = M * s.x
+    nearest = min(world.rocks, key=lambda r: abs(r.pos.z - s.z) + 0.3 * abs(r.pos.x - s.x), default=None)
+    side = M * (nearest.pos.x - s.x) if nearest is not None else 0.0
     if event in ("graze", "near"):
         burst(sx, s.y, s.z + 0.5, 14 if event == "graze" else 6, GLOW, 2.5)
+        if event == "graze" and nearest is not None:
+            glint_until[id(nearest)] = world.time + 0.3   # すれた岩の表面が一瞬光る
     elif event == "hit":
         burst(sx, s.y, s.z + 0.3, 40, BLOOD, 4.0)
         burst(sx, s.y, s.z + 0.3, 20, ROCK, 3.0)
+        if nearest is not None:
+            shatter(M * nearest.pos.x, nearest.pos.y, nearest.pos.z, nearest.radius)   # 岩が砕けて破片が散る
     elif event == "gate":
+        cam_fx["pull"] = 1.0
         g = world.gate
         if g is not None:
             for _ in range(48):
@@ -1134,13 +1358,14 @@ async def loop():
         lag = min(lag + now - last, 0.25)           # ためすぎない（重い端末で追いつけなくなる）
         last = now
         while lag >= STEP:
-            event = world.update(STEP)
+            event = world.update(STEP * (0.25 if world.hurt > 0.75 else 1.0))   # ぶつかった直後はスロー
             if event == "over":                     # 終わった瞬間にベストへ取り込んで保存（CLI 版の run と同じ）
                 improved = best.take(world)
                 window.localStorage.setItem(SAVED, best.dump())
                 event = "best" if improved else event
             effect(event)
-            speaker.say(event)
+            if not sound_event(event, side=(M * (min(world.rocks, key=lambda r: abs(r.pos.z - world.ship.z), default=world.ship).pos.x - world.ship.x)) if event == "graze" else 0.0):
+                speaker.say(event)
             lag -= STEP
         refresh(frame_dt)
         frames.append(window.performance.now() / 1000)
@@ -1160,6 +1385,8 @@ def on_down(event):
     key = KEYS.get(event.key)
     if key is not None:
         event.preventDefault()
+        if key == "go":
+            music_start()
         obey(world, key, True)
 
 
@@ -1173,6 +1400,7 @@ def on_up(event):
 
 @when("click", "#go")
 def go(event):
+    music_start()
     obey(world, "go")
     go_button.blur()                                # ボタンに焦点が残ると、スペースが 2 回（ボタンとキー）効いてしまう
     refresh()
@@ -1195,6 +1423,7 @@ def steer(event) -> None:
 @when("pointerdown", "#screen")
 def press(event):
     event.preventDefault()
+    music_start()
     touch.update(down=True, x=event.clientX, y=event.clientY, moved=False, t=window.performance.now())
 
 
@@ -1249,10 +1478,16 @@ def again(event):
     for key in list(rock_meshes):
         scene.remove(rock_meshes.pop(key))
     sparks.clear()
+    for d in debris:
+        d[0].visible = False
+    debris.clear()
+    cam_fx.update(pull=0.0, ring=0.0, orbit=0.0, stage=1)
+    apply_theme(1)
     improved = False
     refresh()
 
 
+apply_theme(1)
 document.querySelector("#loading").hidden = True
 refresh()
 asyncio.ensure_future(loop())
