@@ -1412,14 +1412,15 @@ def sync(world: World, dt: float) -> None:
     ship_mesh.rotation.set(0.1 - world.aim.y * 0.25, 0, M * tilt)
     ship_mesh.visible = world.over or int(world.hurt * 12) % 2 == 0
     flame = ship_mesh.children[3]
-    k = 0.6 + 0.3 * frac + 0.15 * math.sin(world.time * 40)
-    flame.scale.set(k, k * (1.4 + 2.2 * frac), 1)   # 速いほど噴射が長く伸び、青白くなる
+    k = 0.35 + 0.15 * frac + 0.06 * math.sin(world.time * 40)
+    flame.scale.set(k, k * (1.3 + 1.2 * frac), 1)   # 速いほど噴射が少し長く、青白くなる（大きいと画面が見えない）
     flame.material.color.setRGB(1.0, 0.63 + 0.3 * frac, 0.24 + 0.7 * frac)
     if world.started and not world.paused and not world.over:   # 噴射：炎と火花と煙（GPU の粒）
-        emit(M * ship.x - 0.15 * math.sin(M * tilt), ship.y - 0.05, ship.z - 1.0, 5, (255, 170 + int(60 * frac), 60 + int(150 * frac)), 0.5, 0.35, 0.9, world.time)
-        if fx_luck.random() < 0.5:
-            emit(M * ship.x, ship.y - 0.1, ship.z - 1.2, 2, (255, 240, 200), 1.5, 0.5, 0.4, world.time)
-        emit(M * ship.x, ship.y, ship.z - 1.3, 1, (90, 90, 110), 0.3, 1.4, 1.6, world.time)
+        emit(M * ship.x - 0.15 * math.sin(M * tilt), ship.y - 0.05, ship.z - 1.0, 2, (255, 170 + int(60 * frac), 60 + int(150 * frac)), 0.3, 0.25, 0.4, world.time)
+        if fx_luck.random() < 0.3:
+            emit(M * ship.x, ship.y - 0.1, ship.z - 1.2, 1, (255, 240, 200), 1.2, 0.4, 0.25, world.time)
+        if fx_luck.random() < 0.25:                 # 煙は少なく・小さく・短く（多いと画面が見えない）
+            emit(M * ship.x, ship.y, ship.z - 1.3, 1, (90, 90, 110), 0.2, 0.7, 0.6, world.time)
     part_mat.uniforms.uTime.value = world.time
     part_mat.uniforms.uDrift.value = world.speed if world.started and not world.paused and not world.over else 0.0
     if world.flash > 0:
