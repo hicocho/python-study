@@ -968,23 +968,26 @@ def age_sparks(dt: float, speed: float) -> None:
     spark_geo.attributes.color.needsUpdate = True
 
 
+# CLI 版の透視投影は「x が大きいほど画面の右」。Three.js のカメラは +z を向くと +x が左に映るので、
+# 写すときに x の符号を反転する（M）。回転の y・z 軸と傾きも一緒に反転する
+M = -1.0
+
+
 def sync(world: World, dt: float) -> None:
     """世界を Three.js の物に写す。カメラは cam_now（揺れ込み）と focus（速いほど広角）から。"""
     cam = world.cam_now
     focus = world.focus
     camera.fov = 2 * math.degrees(math.atan(CY / focus))
     camera.updateProjectionMatrix()
-    camera.up.set(-math.sin(cam.roll), math.cos(cam.roll), 0)   # 曲がると傾く（view() の -roll と同じ向き）
-    camera.position.set(cam.x + cam.jolt_x, EYE + cam.jolt_y, 0.0)
-    camera.lookAt(cam.x + cam.jolt_x, EYE + cam.jolt_y, 100.0)
-    for s in nebulae:                               # 星雲と遠い星はカメラに付いてくる（回転だけ効く）
-        pass
-    far_stars.position.set(cam.x, EYE, 0)
+    camera.up.set(M * -math.sin(cam.roll), math.cos(cam.roll), 0)   # 曲がると傾く（view() の -roll と同じ向き）
+    camera.position.set(M * (cam.x + cam.jolt_x), EYE + cam.jolt_y, 0.0)
+    camera.lookAt(M * (cam.x + cam.jolt_x), EYE + cam.jolt_y, 100.0)
+    far_stars.position.set(M * cam.x, EYE, 0)
     flat, colors = [], []
     for star in world.stars:                        # 流線：CLI 版と同じ「前のコマの位置から線」
         back = star.z + world.speed * STEP * STREAK
         near = 1 - star.z / FAR
-        flat += [star.x, star.y, star.z, star.x, star.y, back]
+        flat += [M * star.x, star.y, star.z, M * star.x, star.y, back]
         c = [linear(int(f + (n - f) * near)) for f, n in zip(STAR_FAR, STAR_NEAR)]
         colors += c + [v * 0.25 for v in c]
     streak_geo.attributes.position.array.set(to_js(flat))
@@ -1008,8 +1011,8 @@ def sync(world: World, dt: float) -> None:
             mesh.scale.set(rock.radius, rock.radius, rock.radius)
             scene.add(mesh)
             rock_meshes[key] = mesh
-        mesh.position.set(rock.pos.x, rock.pos.y, rock.pos.z)
-        mesh.rotation.set(rock.angle.x, rock.angle.y, rock.angle.z)
+        mesh.position.set(M * rock.pos.x, rock.pos.y, rock.pos.z)
+        mesh.rotation.set(rock.angle.x, M * rock.angle.y, M * rock.angle.z)
         danger = world.dangerous(rock)
         mesh.material = DANGER_MAT if danger else ROCK_MAT
     for key in list(rock_meshes):
@@ -1019,24 +1022,24 @@ def sync(world: World, dt: float) -> None:
     gate = world.gate
     if gate is not None and not gate.passed:
         gate_mesh.visible = gate_core.visible = True
-        gate_mesh.position.set(gate.pos.x, gate.pos.y, gate.pos.z)
-        gate_core.position.set(gate.pos.x, gate.pos.y, gate.pos.z)
+        gate_mesh.position.set(M * gate.pos.x, gate.pos.y, gate.pos.z)
+        gate_core.position.set(M * gate.pos.x, gate.pos.y, gate.pos.z)
         gate_mesh.rotation.z = world.time * 0.8
         if fx_luck.random() < 0.5:                  # ゲートの縁からきらめき
             a = fx_luck.uniform(0, math.tau)
-            burst(gate.pos.x + GATE_R * math.cos(a), gate.pos.y + GATE_R * math.sin(a), gate.pos.z, 1, GATE, 0.4)
+            burst(M * gate.pos.x + GATE_R * math.cos(a), gate.pos.y + GATE_R * math.sin(a), gate.pos.z, 1, GATE, 0.4)
     else:
         gate_mesh.visible = gate_core.visible = False
     ship = world.ship
     tilt = -world.aim.x * 0.5
-    ship_mesh.position.set(ship.x, ship.y, ship.z)
-    ship_mesh.rotation.set(0.1 - world.aim.y * 0.25, 0, tilt)
+    ship_mesh.position.set(M * ship.x, ship.y, ship.z)
+    ship_mesh.rotation.set(0.1 - world.aim.y * 0.25, 0, M * tilt)
     ship_mesh.visible = world.over or int(world.hurt * 12) % 2 == 0
     flame = ship_mesh.children[3]
     k = 0.6 + 0.3 * (world.speed - SPEED0) / (SPEED_MAX - SPEED0) + 0.15 * math.sin(world.time * 40)
     flame.scale.set(k, k * 1.4, 1)
     if world.started and not world.paused and fx_luck.random() < 0.6:   # 噴射の粒
-        burst(ship.x - 0.15 * math.sin(tilt), ship.y - 0.05, ship.z - 1.0, 1, FLAME, 0.6)
+        burst(M * ship.x - 0.15 * math.sin(M * tilt), ship.y - 0.05, ship.z - 1.0, 1, FLAME, 0.6)
     age_sparks(dt, world.speed if world.started and not world.paused else 0.0)
     if world.flash > 0:
         vignette.material.color.setHex(rgb(world.flash_color))
@@ -1103,20 +1106,21 @@ def effect(event: str | None) -> None:
     if event is None:
         return
     s = world.ship
+    sx = M * s.x
     if event in ("graze", "near"):
-        burst(s.x, s.y, s.z + 0.5, 14 if event == "graze" else 6, GLOW, 2.5)
+        burst(sx, s.y, s.z + 0.5, 14 if event == "graze" else 6, GLOW, 2.5)
     elif event == "hit":
-        burst(s.x, s.y, s.z + 0.3, 40, BLOOD, 4.0)
-        burst(s.x, s.y, s.z + 0.3, 20, ROCK, 3.0)
+        burst(sx, s.y, s.z + 0.3, 40, BLOOD, 4.0)
+        burst(sx, s.y, s.z + 0.3, 20, ROCK, 3.0)
     elif event == "gate":
         g = world.gate
         if g is not None:
             for _ in range(48):
                 a = fx_luck.uniform(0, math.tau)
-                burst(g.pos.x + GATE_R * math.cos(a), g.pos.y + GATE_R * math.sin(a), g.pos.z, 1, GATE, 1.5)
+                burst(M * g.pos.x + GATE_R * math.cos(a), g.pos.y + GATE_R * math.sin(a), g.pos.z, 1, GATE, 1.5)
     elif event in ("over", "best"):
-        burst(s.x, s.y, s.z, 120, FLAME, 6.0)
-        burst(s.x, s.y, s.z, 60, SHIP, 5.0)
+        burst(sx, s.y, s.z, 120, FLAME, 6.0)
+        burst(sx, s.y, s.z, 60, SHIP, 5.0)
 
 
 async def loop():
