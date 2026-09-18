@@ -751,6 +751,8 @@ def obey(world: World, key: str, down: bool = True) -> None:
 #   2026-09-18 に Three.js 化。世界（World）・回転・透視投影・当たり判定は 1 文字も変えず、
 #   端末が ▀ に描くところを、ここでは同じ世界の物を Three.js の Mesh に写して GPU に描かせる。
 #   カメラの位置・傾き・揺れ・画角（speed で広角になる）も CLI 版の cam_now / focus から。
+#   同日の 3 回目：宇宙のキューブマップ（環境と背景）、岩と自機のテクスチャと法線マップ、ステージで変わる光、
+#   ワープのトンネル（自分で書いたシェーダ）、GPU で動く粒（頂点シェーダが位置を計算）、被写界深度・残像・フィルムの粒子
 
 THREE = window.THREE
 ADDONS = window.ADDONS
@@ -794,36 +796,199 @@ PIXEL_RATIO = min(2.0, window.devicePixelRatio)
 renderer.setPixelRatio(PIXEL_RATIO)
 renderer.setSize(VIEW_W, VIEW_H, False)
 renderer.toneMapping = THREE.ACESFilmicToneMapping
+renderer.shadowMap.enabled = True                   # 岩どうし・自機の影
+renderer.shadowMap.type = THREE.PCFSoftShadowMap
 scene = THREE.Scene.new()
 scene.background = THREE.Color.new(rgb(SPACE))
 scene.fog = THREE.FogExp2.new(rgb(SPACE), 0.028)   # CLI 版の fog（FOG_FROM より奥は背景に溶ける）にあたる
 camera = THREE.PerspectiveCamera.new(2 * math.degrees(math.atan(CY / FOCUS)), VIEW_W / VIEW_H, 0.3, 300)
+pmrem = THREE.PMREMGenerator.new(renderer)
+
+# 後処理の並び：描く → 被写界深度（遠くがぼける）→ 残像（速さの尾）→ ブルーム → 色収差 → 周辺減光 → フィルムの粒子 → 出力
 composer = ADDONS.EffectComposer.new(renderer)
 composer.setPixelRatio(PIXEL_RATIO)
 composer.setSize(VIEW_W, VIEW_H)
 composer.addPass(ADDONS.RenderPass.new(scene, camera))
-bloom = ADDONS.UnrealBloomPass.new(THREE.Vector2.new(VIEW_W, VIEW_H), 0.55, 0.6, 0.7)   # 光る物（輪・ゲート・噴射）がにじむ
+bokeh = ADDONS.BokehPass.new(scene, camera, js(focus=SHIP_Z + 1.0, aperture=0.00012, maxblur=0.006))
+composer.addPass(bokeh)
+afterimage = ADDONS.AfterimagePass.new(0.55)        # 残像：速いほど強く（モーションブラー風）
+composer.addPass(afterimage)
+bloom = ADDONS.UnrealBloomPass.new(THREE.Vector2.new(VIEW_W, VIEW_H), 0.45, 0.6, 0.85)   # 光る物（輪・ゲート・噴射）がにじむ
 composer.addPass(bloom)
 shift = ADDONS.ShaderPass.new(ADDONS.RGBShiftShader)   # 色収差：速いほど画面の端で色がずれる（レンズの歪みの感じ）
 shift.uniforms.amount.value = 0.0
 composer.addPass(shift)
 vignette_pass = ADDONS.ShaderPass.new(ADDONS.VignetteShader)   # 周辺減光：速いほど端が暗く、視野が狭まる
-vignette_pass.uniforms.offset.value = 0.9
-vignette_pass.uniforms.darkness.value = 0.4
+vignette_pass.uniforms.offset.value = 1.1
+vignette_pass.uniforms.darkness.value = 1.0      # darkness は 1 以上（1 未満だと端が「灰色」に向かって画面全体が白く濁る）
 composer.addPass(vignette_pass)
+film = ADDONS.FilmPass.new(0.12, False)             # フィルムの粒子（映画っぽさ）
+composer.addPass(film)
 composer.addPass(ADDONS.OutputPass.new())
 
-sun = THREE.DirectionalLight.new(0xfff4e6, 2.4)     # CLI 版の LIGHT_DIR（左上・手前から）と同じ向き
+sun = THREE.DirectionalLight.new(0xfff4e6, 2.4)     # 主光：ステージで向きが変わる（惑星の側から）
 sun.position.set(LIGHT_DIR[0] * 30, LIGHT_DIR[1] * 30, LIGHT_DIR[2] * 30)
+sun.castShadow = True
+sun.shadow.mapSize.set(1024, 1024)
+for name, value in (("left", -14), ("right", 14), ("top", 10), ("bottom", -8), ("near", 1), ("far", 120)):
+    setattr(sun.shadow.camera, name, value)
+sun.shadow.bias = -0.0006
 scene.add(sun)
-scene.add(THREE.AmbientLight.new(0x30365a, 0.9))
-rim = THREE.DirectionalLight.new(0x5a78ff, 0.9)     # 星雲の照り返し（奥から）
+scene.add(sun.target)
+ambient = THREE.AmbientLight.new(0x30365a, 0.6)
+scene.add(ambient)
+rim = THREE.DirectionalLight.new(0x5a78ff, 0.9)     # 星雲の照り返し（奥から）。逆光でシルエットが出る
 rim.position.set(10, -5, 80)
 scene.add(rim)
+gate_light = THREE.PointLight.new(rgb(GATE), 0.0, 18.0, 1.5)   # ゲートが周りの岩を緑に照らす
+scene.add(gate_light)
+
+
+# ── 絵を canvas で作る（テクスチャ・法線マップ・キューブマップ） ─────────────────
+
+def noise_canvas(size: int, seed: int, base: int = 128, spread: int = 60, blobs: int = 260) -> object:
+    """ざらざらの絵：大小の丸をたくさん重ねた明るさのむら。岩の色と凹凸に使う。"""
+    luck = random.Random(seed)
+    cv = document.createElement("canvas")
+    cv.width = cv.height = size
+    ctx = cv.getContext("2d")
+    ctx.fillStyle = f"rgb({base},{base},{base})"
+    ctx.fillRect(0, 0, size, size)
+    for _ in range(blobs):
+        v = base + int(luck.uniform(-spread, spread))
+        r = luck.uniform(2, size / 6)
+        ctx.fillStyle = f"rgba({v},{v},{v},{luck.uniform(0.25, 0.6):.2f})"
+        ctx.beginPath()
+        ctx.arc(luck.uniform(0, size), luck.uniform(0, size), r, 0, math.tau)
+        ctx.fill()
+    return cv
+
+
+def normal_from(cv: object, strength: float = 2.5) -> object:
+    """明るさの絵 → 法線マップ。隣との明るさの差（傾き）を色に（x → 赤、y → 緑、青は上向き）。"""
+    size = cv.width
+    src = cv.getContext("2d").getImageData(0, 0, size, size).data
+    out = document.createElement("canvas")
+    out.width = out.height = size
+    ctx = out.getContext("2d")
+    img = ctx.createImageData(size, size)
+    data = img.data
+    h = [src[i * 4] / 255 for i in range(size * size)]
+    pixels = []
+    for y in range(size):
+        for x in range(size):
+            l = h[y * size + (x - 1) % size]
+            r = h[y * size + (x + 1) % size]
+            u = h[((y - 1) % size) * size + x]
+            d = h[((y + 1) % size) * size + x]
+            nx, ny, nz = (l - r) * strength, (u - d) * strength, 1.0
+            k = 1 / math.sqrt(nx * nx + ny * ny + nz * nz)
+            pixels += [int((nx * k * 0.5 + 0.5) * 255), int((ny * k * 0.5 + 0.5) * 255), int((nz * k * 0.5 + 0.5) * 255), 255]
+    data.set(to_js(pixels))
+    ctx.putImageData(img, 0, 0)
+    return out
+
+
+def texture_of(cv: object, srgb: bool = True, repeat: float = 1.0) -> object:
+    tex = THREE.CanvasTexture.new(cv)
+    if srgb:
+        tex.colorSpace = THREE.SRGBColorSpace
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+    tex.repeat.set(repeat, repeat)
+    return tex
+
+
+ROCK_NOISE = noise_canvas(128, 3, 118, 70)
+ROCK_MAP = texture_of(ROCK_NOISE, True, 2.0)
+ROCK_NORMAL = texture_of(normal_from(ROCK_NOISE, 3.0), False, 2.0)
+
+
+def ship_canvas() -> object:
+    """自機の外板：パネルの線と擦り傷。"""
+    cv = document.createElement("canvas")
+    cv.width = cv.height = 128
+    ctx = cv.getContext("2d")
+    ctx.fillStyle = "#8fbfe0"
+    ctx.fillRect(0, 0, 128, 128)
+    luck = random.Random(8)
+    ctx.strokeStyle = "rgba(40,60,90,0.6)"
+    ctx.lineWidth = 2
+    for i in range(6):
+        y = 10 + i * 20
+        ctx.beginPath()
+        ctx.moveTo(0, y)
+        ctx.lineTo(128, y)
+        ctx.stroke()
+    for _ in range(40):
+        ctx.strokeStyle = f"rgba(255,255,255,{luck.uniform(0.1, 0.4):.2f})"
+        ctx.lineWidth = 1
+        x, y = luck.uniform(0, 128), luck.uniform(0, 128)
+        ctx.beginPath()
+        ctx.moveTo(x, y)
+        ctx.lineTo(x + luck.uniform(-14, 14), y + luck.uniform(-3, 3))
+        ctx.stroke()
+    return cv
+
+
+SHIP_MAP = texture_of(ship_canvas(), True, 1.0)
+
+
+def sky_face(seed: int, colors: tuple[int, ...], space: tuple[int, int, int], size: int = 256) -> object:
+    """キューブマップの 1 面：暗い宇宙に星雲の光と星。"""
+    luck = random.Random(seed)
+    cv = document.createElement("canvas")
+    cv.width = cv.height = size
+    ctx = cv.getContext("2d")
+    ctx.fillStyle = f"rgb({space[0]},{space[1]},{space[2]})"
+    ctx.fillRect(0, 0, size, size)
+    for color in colors:
+        for _ in range(3):
+            x, y, r = luck.uniform(0, size), luck.uniform(0, size), luck.uniform(size * 0.25, size * 0.7)
+            grad = ctx.createRadialGradient(x, y, 0, x, y, r)
+            grad.addColorStop(0, f"rgba({(color >> 16) & 255},{(color >> 8) & 255},{color & 255},0.22)")
+            grad.addColorStop(1, "rgba(0,0,0,0)")
+            ctx.fillStyle = grad
+            ctx.fillRect(0, 0, size, size)
+    for _ in range(260):
+        b = luck.randrange(120, 255)
+        ctx.fillStyle = f"rgba({b},{b},{min(255, b + 30)},{luck.uniform(0.5, 1.0):.2f})"
+        s = luck.uniform(0.6, 1.8)
+        ctx.fillRect(luck.uniform(0, size), luck.uniform(0, size), s, s)
+    return cv
+
+
+# 空間の色はステージで変わる（表 1 行）。星雲の色・背景と霧・惑星・光の向き
+THEMES = (
+    dict(name="青い星雲", nebula=(0x5a2a9a, 0x1e3c8a, 0x8a2a5a, 0x1a6a7a), space=(6, 8, 14), planet=(0x3a6fc0, 0x8fc0ff, -38, 14), sun=(-0.5, 0.8, -0.6), sun_color=0xfff4e6),
+    dict(name="赤い星雲", nebula=(0x9a2a2a, 0x8a3c1e, 0x5a1a4a, 0x7a3a1a), space=(14, 6, 8), planet=(0xc05a3a, 0xffb080, 40, 10), sun=(0.7, 0.4, 0.5), sun_color=0xffc090),
+    dict(name="緑のガス", nebula=(0x1a7a3a, 0x2a6a5a, 0x4a7a1a, 0x1a5a4a), space=(5, 12, 9), planet=(0x4aa070, 0xa0ffc0, -30, -8), sun=(-0.6, -0.2, 0.7), sun_color=0xc0ffd0),
+    dict(name="暗黒帯", nebula=(0x2a2a3a, 0x1a1a2a, 0x3a2a3a, 0x202030), space=(3, 3, 6), planet=(0x303040, 0x5060a0, 34, -12), sun=(0.6, -0.5, 0.6), sun_color=0x8090ff),
+    dict(name="金の星雲", nebula=(0x9a7a1a, 0x8a5a1e, 0x7a4a2a, 0x6a6a1a), space=(12, 10, 4), planet=(0xd0a040, 0xfff0b0, -42, 6), sun=(-0.7, 0.6, 0.3), sun_color=0xffe8b0),
+)
+SKIES: dict[int, object] = {}                       # ステージの番号 → キューブマップ（作るのは最初の 1 回）
+ENVS: dict[int, object] = {}
+
+
+def sky_for(index: int) -> tuple[object, object]:
+    if index not in SKIES:
+        theme = THEMES[index]
+        faces = [sky_face(index * 10 + k, theme["nebula"], theme["space"]) for k in range(6)]
+        cube = THREE.CubeTexture.new(to_js(faces))
+        cube.colorSpace = THREE.SRGBColorSpace
+        cube.needsUpdate = True
+        SKIES[index] = cube
+        ENVS[index] = pmrem.fromCubemap(cube).texture
+    return SKIES[index], ENVS[index]
+
+
+planet = THREE.Mesh.new(THREE.SphereGeometry.new(14, 32, 24), THREE.MeshStandardMaterial.new(js(color=0x3a6fc0, roughness=0.9, fog=False)))
+planet.position.set(-38, 14, 110)
+scene.add(planet)
+GLOW_TEX = None
 
 
 def glow_texture(inner: str, outer: str = "rgba(0,0,0,0)") -> object:
-    """真ん中が明るく縁が透ける丸（canvas）。星雲・噴射・粒に使う。"""
+    """真ん中が明るく縁が透ける丸（canvas）。噴射・粒に使う。"""
     cv = document.createElement("canvas")
     cv.width = cv.height = 128
     ctx = cv.getContext("2d")
@@ -837,61 +1002,30 @@ def glow_texture(inner: str, outer: str = "rgba(0,0,0,0)") -> object:
     return tex
 
 
-NEBULA_TEX = glow_texture("rgba(255,255,255,0.9)")
-nebulae = []                                        # 星雲：奥に置いた大きな光の丸（足し算で重ねる）。カメラに付いて回る
-for i, (x, y, z, size, color) in enumerate(((-30, 20, 120, 90, 0x5a2a9a), (40, -10, 130, 110, 0x1e3c8a), (5, 35, 140, 80, 0x8a2a5a), (-45, -25, 125, 70, 0x1a6a7a))):
-    mat = THREE.SpriteMaterial.new(js(map=NEBULA_TEX, color=color, transparent=True, opacity=0.55, blending=THREE.AdditiveBlending, depthWrite=False, fog=False))
-    s = THREE.Sprite.new(mat)
-    s.position.set(x, y, z)
-    s.scale.set(size, size, 1)
-    scene.add(s)
-    nebulae.append(s)
-
-
-# 空間の色はステージで変わる（表 1 行）。星雲 4 つの色・背景と霧・遠い星・惑星
-THEMES = (
-    dict(name="青い星雲", nebula=(0x5a2a9a, 0x1e3c8a, 0x8a2a5a, 0x1a6a7a), space=(6, 8, 14), stars=0xdde4ff, planet=(0x3a6fc0, 0x8fc0ff, -38, 14)),
-    dict(name="赤い星雲", nebula=(0x9a2a2a, 0x8a3c1e, 0x5a1a4a, 0x7a3a1a), space=(14, 6, 8), stars=0xffe0d0, planet=(0xc05a3a, 0xffb080, 40, 10)),
-    dict(name="緑のガス", nebula=(0x1a7a3a, 0x2a6a5a, 0x4a7a1a, 0x1a5a4a), space=(5, 12, 9), stars=0xd0ffe0, planet=(0x4aa070, 0xa0ffc0, -30, -8)),
-    dict(name="暗黒帯", nebula=(0x2a2a3a, 0x1a1a2a, 0x3a2a3a, 0x202030), space=(3, 3, 6), stars=0xb0b0c0, planet=(0x303040, 0x5060a0, 34, -12)),
-    dict(name="金の星雲", nebula=(0x9a7a1a, 0x8a5a1e, 0x7a4a2a, 0x6a6a1a), space=(12, 10, 4), stars=0xfff0c0, planet=(0xd0a040, 0xfff0b0, -42, 6)),
-)
-theme_shown = {"stage": 0}
-planet = THREE.Mesh.new(THREE.SphereGeometry.new(14, 32, 24), THREE.MeshStandardMaterial.new(js(color=0x3a6fc0, roughness=0.9, fog=False)))
-planet.position.set(-38, 14, 110)
-scene.add(planet)
-planet_glow = THREE.Sprite.new(THREE.SpriteMaterial.new(js(map=NEBULA_TEX, color=0x8fc0ff, transparent=True, opacity=0.7, blending=THREE.AdditiveBlending, depthWrite=False, fog=False)))
+planet_glow = THREE.Sprite.new(THREE.SpriteMaterial.new(js(map=glow_texture("rgba(255,255,255,0.9)"), color=0x8fc0ff, transparent=True, opacity=0.7, blending=THREE.AdditiveBlending, depthWrite=False, fog=False)))
 planet_glow.scale.set(40, 40, 1)
 planet_glow.position.copy(planet.position)
 scene.add(planet_glow)
 
 
 def apply_theme(stage: int) -> None:
-    theme = THEMES[(stage - 1) % len(THEMES)]
-    for s, color in zip(nebulae, theme["nebula"]):
-        s.material.color.setHex(color)
-    scene.background.setHex(rgb(theme["space"]))
+    index = (stage - 1) % len(THEMES)
+    theme = THEMES[index]
+    sky, env = sky_for(index)
+    scene.background = sky                          # 宇宙そのものが背景に
+    scene.environment = env                         # 自機の金属や輪に宇宙が映る
+    scene.environmentIntensity = 0.3
     scene.fog.color.setHex(rgb(theme["space"]))
-    far_stars.material.color.setHex(theme["stars"])
     body, glow, px, py = theme["planet"]
     planet.material.color.setHex(body)
     planet_glow.material.color.setHex(glow)
     planet.position.set(px, py, 110)
     planet_glow.position.set(px, py, 108)
+    sx, sy, sz = theme["sun"]
+    sun.position.set(sx * 30, sy * 30, sz * 30)
+    sun.color.setHex(theme["sun_color"])
+    rim.position.set(px * 0.3, py * 0.3, 80)         # 惑星の側からの逆光
 
-
-def make_points(count: int, spread: tuple[float, float, float], size: float, color: int, opacity: float = 0.9) -> object:
-    luck = random.Random(count)
-    flat = []
-    for _ in range(count):
-        flat += [luck.uniform(-spread[0], spread[0]), luck.uniform(-spread[1], spread[1]), luck.uniform(20, spread[2])]
-    geo = THREE.BufferGeometry.new()
-    geo.setAttribute("position", THREE.Float32BufferAttribute.new(to_js(flat), 3))
-    return THREE.Points.new(geo, THREE.PointsMaterial.new(js(color=color, size=size, sizeAttenuation=True, transparent=True, opacity=opacity, fog=False)))
-
-
-far_stars = make_points(1800, (120, 80, 200), 0.35, 0xdde4ff, 0.8)   # 遠くの星：動かない（カメラの回転だけ効く）
-scene.add(far_stars)
 
 STREAKS = len(World().stars)                        # 近くの星：CLI 版と同じ 90 個を、流線として線で描く
 streak_geo = THREE.BufferGeometry.new()
@@ -901,13 +1035,46 @@ streaks = THREE.LineSegments.new(streak_geo, THREE.LineBasicMaterial.new(js(vert
 scene.add(streaks)
 
 RING_GEO = THREE.TorusGeometry.new(RING_R, 0.09, 8, 48)
-RING_MAT = THREE.MeshStandardMaterial.new(js(color=rgb(RING), emissive=rgb(RING), emissiveIntensity=1.6, roughness=0.4))
+RING_MAT = THREE.MeshStandardMaterial.new(js(color=rgb(RING), emissive=rgb(RING), emissiveIntensity=1.6, roughness=0.25, metalness=0.6))
 rings = []                                          # トンネルの輪（使い回し 10 本）
 for _ in range(10):
     m = THREE.Mesh.new(RING_GEO, RING_MAT)
     m.visible = False
     scene.add(m)
     rings.append(m)
+
+# ワープのトンネル：自分で書いたシェーダ。光の帯が時間に沿って奥から手前へ流れ、ゲートを通ると（uWarp）伸びて強く光る
+TUNNEL_VERT = """
+varying vec2 vUv;
+void main() {
+  vUv = uv;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}
+"""
+TUNNEL_FRAG = """
+uniform float uTime;
+uniform float uSpeed;
+uniform float uWarp;
+uniform vec3 uColorA;
+uniform vec3 uColorB;
+varying vec2 vUv;
+void main() {
+  float flow = vUv.y * (18.0 - 10.0 * uWarp) - uTime * (1.5 + 4.0 * uSpeed + 6.0 * uWarp);   // 帯の位相：速いほど速く流れる
+  float band = smoothstep(0.82 - 0.4 * uWarp, 1.0, fract(flow));                             // 細い帯（ワープ中は太く）
+  float lane = 0.5 + 0.5 * sin(vUv.x * 6.2831 * 6.0 + uTime * 0.7);                           // 周りで 6 本の筋
+  float fade = smoothstep(0.0, 0.25, vUv.y) * (1.0 - smoothstep(0.7, 1.0, vUv.y));         // 手前と奥は薄く
+  float a = band * (0.35 + 0.65 * lane) * fade * (0.08 + 0.16 * uSpeed + 0.45 * uWarp);
+  vec3 color = mix(uColorA, uColorB, vUv.x);
+  gl_FragColor = vec4(color * (1.0 + 2.0 * uWarp), a);
+}
+"""
+tunnel_mat = THREE.ShaderMaterial.new(js(
+    vertexShader=TUNNEL_VERT, fragmentShader=TUNNEL_FRAG, transparent=True, depthWrite=False, side=THREE.BackSide, blending=THREE.AdditiveBlending,
+    uniforms=js(uTime=js(value=0.0), uSpeed=js(value=0.0), uWarp=js(value=0.0), uColorA=js(value=THREE.Color.new(0x40a0ff)), uColorB=js(value=THREE.Color.new(0xb060ff)))))
+tunnel = THREE.Mesh.new(THREE.CylinderGeometry.new(RING_R + 0.4, RING_R + 0.4, FAR, 48, 1, True), tunnel_mat)
+tunnel.rotation.x = math.pi / 2
+tunnel.position.set(0, RING_Y, FAR / 2)
+scene.add(tunnel)
 
 gate_mesh = THREE.Mesh.new(THREE.TorusGeometry.new(GATE_R, 0.14, 10, 48),
                            THREE.MeshStandardMaterial.new(js(color=rgb(GATE), emissive=rgb(GATE), emissiveIntensity=2.2, roughness=0.3)))
@@ -947,11 +1114,13 @@ def rock_geometry(seed: int, detail: int = 2) -> object:
 
 
 ROCK_GEOS = [rock_geometry(n) for n in range(6)]
-ROCK_MAT = THREE.MeshStandardMaterial.new(js(color=rgb(ROCK), roughness=0.95, metalness=0.05, flatShading=True, vertexColors=True, emissive=0x000000))
-DANGER_MAT = THREE.MeshStandardMaterial.new(js(color=rgb(ROCK_DANGER), roughness=0.9, metalness=0.05, flatShading=True, vertexColors=True,
+ROCK_MAT = THREE.MeshStandardMaterial.new(js(color=rgb(ROCK), roughness=0.95, metalness=0.05, vertexColors=True, emissive=0x000000,
+                                            map=ROCK_MAP, normalMap=ROCK_NORMAL, normalScale=THREE.Vector2.new(1.2, 1.2)))
+DANGER_MAT = THREE.MeshStandardMaterial.new(js(color=rgb(ROCK_DANGER), roughness=0.9, metalness=0.05, vertexColors=True,
+                                              map=ROCK_MAP, normalMap=ROCK_NORMAL, normalScale=THREE.Vector2.new(1.2, 1.2),
                                               emissive=rgb(ROCK_DANGER), emissiveIntensity=0.5))
-GLINT_MAT = THREE.MeshStandardMaterial.new(js(color=rgb(ROCK), roughness=0.5, metalness=0.2, flatShading=True, vertexColors=True,
-                                             emissive=rgb(GLOW), emissiveIntensity=1.2))
+GLINT_MAT = THREE.MeshStandardMaterial.new(js(color=rgb(ROCK), roughness=0.5, metalness=0.2, vertexColors=True,
+                                             map=ROCK_MAP, normalMap=ROCK_NORMAL, emissive=rgb(GLOW), emissiveIntensity=1.2))
 rock_meshes: dict[int, object] = {}                 # id(rock) → Mesh
 glint_until: dict[int, float] = {}                  # スレスレで表面が光る岩 → 消える時刻
 back_rocks = []                                     # 奥の層：大きな岩がゆっくり流れる
@@ -969,6 +1138,7 @@ debris_pool = []
 for _ in range(16):
     m = THREE.Mesh.new(DEBRIS_GEO, ROCK_MAT)
     m.visible = False
+    m.castShadow = True
     scene.add(m)
     debris_pool.append(m)
 
@@ -990,14 +1160,16 @@ def shatter(x: float, y: float, z: float, radius: float) -> None:
 
 
 def make_ship() -> object:
-    """自機：CLI 版の SHIP_POINTS と同じ「先のとがった機体」。円錐の胴＋薄い翼＋噴射の玉。"""
+    """自機：CLI 版の SHIP_POINTS と同じ「先のとがった機体」。円錐の胴＋薄い翼＋噴射の玉。外板はテクスチャ。"""
     group = THREE.Group.new()
-    body_mat = THREE.MeshStandardMaterial.new(js(color=rgb(SHIP), roughness=0.3, metalness=0.7))
+    body_mat = THREE.MeshStandardMaterial.new(js(color=0xffffff, map=SHIP_MAP, roughness=0.35, metalness=0.75))
     body = THREE.Mesh.new(THREE.ConeGeometry.new(0.28, 1.7, 12), body_mat)
     body.rotation.x = math.pi / 2
+    body.castShadow = True
     group.add(body)
-    wing = THREE.Mesh.new(THREE.BoxGeometry.new(1.9, 0.06, 0.7), THREE.MeshStandardMaterial.new(js(color=0x6a9ec0, roughness=0.4, metalness=0.6)))
+    wing = THREE.Mesh.new(THREE.BoxGeometry.new(1.9, 0.06, 0.7), THREE.MeshStandardMaterial.new(js(color=0xaacce0, map=SHIP_MAP, roughness=0.4, metalness=0.7)))
     wing.position.set(0, -0.05, -0.45)
+    wing.castShadow = True
     group.add(wing)
     fin = THREE.Mesh.new(THREE.BoxGeometry.new(0.06, 0.45, 0.5), body_mat)
     fin.position.set(0, 0.25, -0.6)
@@ -1011,56 +1183,99 @@ def make_ship() -> object:
 
 ship_mesh = make_ship()
 scene.add(ship_mesh)
-SPARKS = 320
-spark_geo = THREE.BufferGeometry.new()
-spark_geo.setAttribute("position", THREE.Float32BufferAttribute.new(to_js([0.0, -99.0, 0.0] * SPARKS), 3))
-spark_geo.setAttribute("color", THREE.Float32BufferAttribute.new(to_js([1.0, 1.0, 1.0] * SPARKS), 3))
-sparks_points = THREE.Points.new(spark_geo, THREE.PointsMaterial.new(js(size=0.16, vertexColors=True, transparent=True, opacity=0.95, map=glow_texture("rgba(255,255,255,1)"), blending=THREE.AdditiveBlending, depthWrite=False)))
-scene.add(sparks_points)
-sparks: list[list[float]] = []                      # [x, y, z, vx, vy, vz, life, r, g, b]
+
+# ── GPU で動く粒：位置は頂点シェーダが「生まれた時刻・速さ・いまの時刻」から計算する。Python は生まれるときだけ書く ──
+PARTICLES = 4000
+PART_VERT = """
+attribute vec3 aVel;
+attribute float aBirth;
+attribute float aLife;
+attribute vec3 aColor;
+attribute float aSize;
+uniform float uTime;
+uniform float uDrift;
+varying vec3 vColor;
+varying float vFade;
+void main() {
+  float age = uTime - aBirth;
+  float t = age / aLife;
+  vColor = aColor;
+  vFade = (age < 0.0 || t > 1.0) ? 0.0 : (1.0 - t) * (1.0 - t);
+  vec3 p = position + aVel * age + vec3(0.0, -0.4 * age * age, -uDrift * age);   // 少し落ちながら、世界と一緒に手前へ
+  vec4 mv = modelViewMatrix * vec4(p, 1.0);
+  gl_PointSize = (vFade > 0.0) ? aSize * (1.0 - 0.5 * t) * 180.0 / max(1.0, -mv.z) : 0.0;
+  gl_Position = projectionMatrix * mv;
+}
+"""
+PART_FRAG = """
+varying vec3 vColor;
+varying float vFade;
+void main() {
+  vec2 d = gl_PointCoord - vec2(0.5);
+  float r = length(d) * 2.0;
+  float a = smoothstep(1.0, 0.2, r) * vFade;
+  gl_FragColor = vec4(vColor * (1.0 + 0.6 * (1.0 - r)), a);
+}
+"""
+part_geo = THREE.BufferGeometry.new()
+part_geo.setAttribute("position", THREE.Float32BufferAttribute.new(to_js([0.0, -99.0, 0.0] * PARTICLES), 3))
+part_geo.setAttribute("aVel", THREE.Float32BufferAttribute.new(to_js([0.0] * (PARTICLES * 3)), 3))
+part_geo.setAttribute("aBirth", THREE.Float32BufferAttribute.new(to_js([-99.0] * PARTICLES), 1))
+part_geo.setAttribute("aLife", THREE.Float32BufferAttribute.new(to_js([1.0] * PARTICLES), 1))
+part_geo.setAttribute("aColor", THREE.Float32BufferAttribute.new(to_js([1.0] * (PARTICLES * 3)), 3))
+part_geo.setAttribute("aSize", THREE.Float32BufferAttribute.new(to_js([1.0] * PARTICLES), 1))
+part_mat = THREE.ShaderMaterial.new(js(vertexShader=PART_VERT, fragmentShader=PART_FRAG, transparent=True, depthWrite=False, blending=THREE.AdditiveBlending,
+                                       uniforms=js(uTime=js(value=0.0), uDrift=js(value=0.0))))
+particles = THREE.Points.new(part_geo, part_mat)
+particles.frustumCulled = False
+scene.add(particles)
+part_next = {"i": 0}
 fx_luck = random.Random(4)
+
+
+def emit(x: float, y: float, z: float, count: int, color: tuple[int, int, int], speed: float = 3.0, life: float = 0.7, size: float = 1.0, now: float = 0.0, up: float = 0.0) -> None:
+    """粒を count 個生む。属性の列に書くだけで、あとは GPU が動かす。"""
+    r, g, b = [c / 255 for c in color]
+    pos, vel, birth, lives, cols, sizes = [], [], [], [], [], []
+    for _ in range(count):
+        a = fx_luck.uniform(0, math.tau)
+        u = fx_luck.uniform(-1, 1)
+        s = fx_luck.uniform(0.3, 1.0) * speed
+        pos += [x, y, z]
+        vel += [math.cos(a) * s, u * s + up, fx_luck.uniform(-0.3, 0.3) * s]
+        birth.append(now + fx_luck.uniform(0.0, 0.05))
+        lives.append(life * fx_luck.uniform(0.6, 1.3))
+        cols += [r, g, b]
+        sizes.append(size * fx_luck.uniform(0.6, 1.4))
+    i = part_next["i"]
+    end = i + count
+    if end > PARTICLES:                              # 輪の終わりに来たら先頭へ
+        i, end = 0, count
+    part_geo.attributes.position.array.set(to_js(pos), i * 3)
+    part_geo.attributes.aVel.array.set(to_js(vel), i * 3)
+    part_geo.attributes.aBirth.array.set(to_js(birth), i)
+    part_geo.attributes.aLife.array.set(to_js(lives), i)
+    part_geo.attributes.aColor.array.set(to_js(cols), i * 3)
+    part_geo.attributes.aSize.array.set(to_js(sizes), i)
+    for name in ("position", "aVel", "aBirth", "aLife", "aColor", "aSize"):
+        getattr(part_geo.attributes, name).needsUpdate = True
+    part_next["i"] = end
+
+
 vignette = THREE.Sprite.new(THREE.SpriteMaterial.new(js(map=glow_texture("rgba(0,0,0,0)", "rgba(255,255,255,1)"), color=rgb(GLOW), transparent=True, opacity=0.0, depthTest=False)))
 vignette.scale.set(6.4, 4.0, 1)
 vignette.position.set(0, 0, -2.4)                   # カメラの子：画面の縁が光る（スレスレは黄、ぶつかったら赤）
 camera.add(vignette)
 scene.add(camera)
-
-
-cam_fx = {"x": 0.0, "pull": 0.0, "ring": 0.0, "min_ring": 99.0, "orbit": 0.0, "stage": 1}
-seen_gate = {"passed": None}
-
-
-def burst(x: float, y: float, z: float, count: int, color: tuple[int, int, int], speed: float = 3.0) -> None:
-    r, g, b = [c / 255 for c in color]
-    for _ in range(count):
-        a = fx_luck.uniform(0, math.tau)
-        u = fx_luck.uniform(-1, 1)
-        s = fx_luck.uniform(0.3, 1.0) * speed
-        sparks.append([x, y, z, math.cos(a) * s, u * s, fx_luck.uniform(-0.3, 0.3) * s, fx_luck.uniform(0.3, 0.8), r, g, b])
-
-
-def age_sparks(dt: float, speed: float) -> None:
-    flat, colors = [], []
-    for s in sparks:
-        s[0] += s[3] * dt
-        s[1] += s[4] * dt
-        s[2] += (s[5] - speed) * dt                 # 粒も世界と一緒に手前へ流れる
-        s[6] -= dt
-    sparks[:] = [s for s in sparks if s[6] > 0][-SPARKS:]
-    for s in sparks:
-        flat += [s[0], s[1], s[2]]
-        colors += [s[7], s[8], s[9]]
-    flat += [0.0, -99.0, 0.0] * (SPARKS - len(sparks))
-    colors += [1.0, 1.0, 1.0] * (SPARKS - len(sparks))
-    spark_geo.attributes.position.array.set(to_js(flat))
-    spark_geo.attributes.position.needsUpdate = True
-    spark_geo.attributes.color.array.set(to_js(colors))
-    spark_geo.attributes.color.needsUpdate = True
-
+cam_fx = {"x": 0.0, "pull": 0.0, "ring": 0.0, "min_ring": 99.0, "orbit": 0.0, "stage": 1, "warp": 0.0}
 
 # CLI 版の透視投影は「x が大きいほど画面の右」。Three.js のカメラは +z を向くと +x が左に映るので、
 # 写すときに x の符号を反転する（M）。回転の y・z 軸と傾きも一緒に反転する
 M = -1.0
+
+
+def burst(x: float, y: float, z: float, count: int, color: tuple[int, int, int], speed: float = 3.0) -> None:
+    emit(x, y, z, count, color, speed, 0.7, 1.0, world.time)
 
 
 def sync(world: World, dt: float) -> None:
@@ -1075,12 +1290,14 @@ def sync(world: World, dt: float) -> None:
     cam_fx["x"] += (cam.x - cam_fx["x"]) * 0.22    # カメラは少し遅れて追う（曲がりに演技が付く）
     cam_fx["pull"] = max(0.0, cam_fx["pull"] - dt * 1.6)
     cam_fx["ring"] = max(0.0, cam_fx["ring"] - dt * 7.0)
+    cam_fx["warp"] = max(0.0, cam_fx["warp"] - dt * 0.9)
     ring_now = min(world.rings) if world.rings else 99.0
     if ring_now < SHIP_Z <= cam_fx["min_ring"] or (cam_fx["min_ring"] < SHIP_Z and ring_now > cam_fx["min_ring"] + 3):
         if world.started and not world.paused and cam_fx["min_ring"] < 99:
             cam_fx["ring"] = 1.0                    # 輪を抜けた：一瞬白く光る
     cam_fx["min_ring"] = ring_now
-    fov = 2 * math.degrees(math.atan(CY / focus))
+    warp = cam_fx["warp"]
+    fov = 2 * math.degrees(math.atan(CY / focus)) * (1 + 0.25 * warp)   # ワープ中は画角がぐっと広がる
     if slow:
         fov *= 0.82                                 # スロー中は自機に寄る
     camera.fov = fov
@@ -1102,10 +1319,17 @@ def sync(world: World, dt: float) -> None:
         camera.up.set(M * -math.sin(cam.roll), math.cos(cam.roll), 0)   # 曲がると傾く（view() の -roll と同じ向き）
         camera.position.set(cx, cy, cz)
         camera.lookAt(cx, EYE + cam.jolt_y, 100.0)
-    far_stars.position.set(M * cam.x, EYE, 0)
-    shift.uniforms.amount.value = 0.0004 + 0.0028 * frac + (0.004 if slow else 0.0)
-    vignette_pass.uniforms.darkness.value = 0.35 + 0.6 * frac
-    vignette_pass.uniforms.offset.value = 1.0 - 0.25 * frac
+    sun.target.position.set(cx, cy, 20)
+    shift.uniforms.amount.value = 0.0004 + 0.0028 * frac + (0.004 if slow else 0.0) + 0.006 * warp
+    vignette_pass.uniforms.darkness.value = 1.0 + 0.5 * frac
+    vignette_pass.uniforms.offset.value = 1.15 - 0.35 * frac
+    afterimage.uniforms.damp.value = 0.3 + 0.35 * frac + 0.2 * warp   # 残像：速いほど尾が長い
+    bokeh.uniforms.focus.value = SHIP_Z + 1.0
+    bokeh.uniforms.aperture.value = 0.00008 + 0.0002 * (1 if slow else 0)   # スロー中はピントが浅くなる
+    tunnel_mat.uniforms.uTime.value = world.time
+    tunnel_mat.uniforms.uSpeed.value = frac if world.started and not world.paused else 0.0
+    tunnel_mat.uniforms.uWarp.value = warp
+    tunnel.position.z = FAR / 2 + (world.rings[0] % RING_GAP if world.rings else 0) * 0.0
     for m in back_rocks:                            # 奥の層はゆっくり流れ、手前に来たら奥へ戻す
         m.position.z -= world.speed * 0.12 * dt if world.started and not world.paused else 0.0
         m.rotation.y += 0.05 * dt
@@ -1113,8 +1337,9 @@ def sync(world: World, dt: float) -> None:
             m.position.z = 95
             m.position.x = back_luck.uniform(-45, 45)
     flat, colors = [], []
+    stretch = 1.0 + 4.0 * warp                      # ワープ中は星が長い線になる
     for star in world.stars:                        # 流線：CLI 版と同じ「前のコマの位置から線」
-        back = star.z + world.speed * STEP * STREAK
+        back = star.z + world.speed * STEP * STREAK * stretch
         near = 1 - star.z / FAR
         flat += [M * star.x, star.y, star.z, M * star.x, star.y, back]
         c = [linear(int(f + (n - f) * near)) for f, n in zip(STAR_FAR, STAR_NEAR)]
@@ -1138,6 +1363,8 @@ def sync(world: World, dt: float) -> None:
         if mesh is None:
             mesh = THREE.Mesh.new(ROCK_GEOS[rock.seed % len(ROCK_GEOS)], ROCK_MAT)
             mesh.scale.set(rock.radius, rock.radius, rock.radius)
+            mesh.castShadow = True
+            mesh.receiveShadow = True
             scene.add(mesh)
             rock_meshes[key] = mesh
         mesh.position.set(M * rock.pos.x, rock.pos.y, rock.pos.z)
@@ -1164,17 +1391,19 @@ def sync(world: World, dt: float) -> None:
             m.visible = False
     debris[:] = [d for d in debris if d[4] > 0]
     DANGER_MAT.emissiveIntensity = 0.5 + 0.4 * math.sin(world.time * 9)
-    gate = world.gate
     if gate is not None and not gate.passed:
         gate_mesh.visible = gate_core.visible = True
         gate_mesh.position.set(M * gate.pos.x, gate.pos.y, gate.pos.z)
         gate_core.position.set(M * gate.pos.x, gate.pos.y, gate.pos.z)
+        gate_light.position.set(M * gate.pos.x, gate.pos.y, gate.pos.z)
+        gate_light.intensity = 40.0
         gate_mesh.rotation.z = world.time * 0.8
         if fx_luck.random() < 0.5:                  # ゲートの縁からきらめき
             a = fx_luck.uniform(0, math.tau)
-            burst(M * gate.pos.x + GATE_R * math.cos(a), gate.pos.y + GATE_R * math.sin(a), gate.pos.z, 1, GATE, 0.4)
+            emit(M * gate.pos.x + GATE_R * math.cos(a), gate.pos.y + GATE_R * math.sin(a), gate.pos.z, 2, GATE, 0.4, 0.6, 0.8, world.time)
     else:
         gate_mesh.visible = gate_core.visible = False
+        gate_light.intensity = 0.0
     ship = world.ship
     tilt = -world.aim.x * 0.5
     ship_mesh.position.set(M * ship.x, ship.y, ship.z)
@@ -1184,9 +1413,13 @@ def sync(world: World, dt: float) -> None:
     k = 0.6 + 0.3 * frac + 0.15 * math.sin(world.time * 40)
     flame.scale.set(k, k * (1.4 + 2.2 * frac), 1)   # 速いほど噴射が長く伸び、青白くなる
     flame.material.color.setRGB(1.0, 0.63 + 0.3 * frac, 0.24 + 0.7 * frac)
-    if world.started and not world.paused and fx_luck.random() < 0.6:   # 噴射の粒
-        burst(M * ship.x - 0.15 * math.sin(M * tilt), ship.y - 0.05, ship.z - 1.0, 1, FLAME, 0.6)
-    age_sparks(dt, world.speed if world.started and not world.paused else 0.0)
+    if world.started and not world.paused and not world.over:   # 噴射：炎と火花と煙（GPU の粒）
+        emit(M * ship.x - 0.15 * math.sin(M * tilt), ship.y - 0.05, ship.z - 1.0, 5, (255, 170 + int(60 * frac), 60 + int(150 * frac)), 0.5, 0.35, 0.9, world.time)
+        if fx_luck.random() < 0.5:
+            emit(M * ship.x, ship.y - 0.1, ship.z - 1.2, 2, (255, 240, 200), 1.5, 0.5, 0.4, world.time)
+        emit(M * ship.x, ship.y, ship.z - 1.3, 1, (90, 90, 110), 0.3, 1.4, 1.6, world.time)
+    part_mat.uniforms.uTime.value = world.time
+    part_mat.uniforms.uDrift.value = world.speed if world.started and not world.paused and not world.over else 0.0
     if world.flash > 0:
         vignette.material.color.setHex(rgb(world.flash_color))
         vignette.material.opacity = min(0.85, world.flash * 3.0)
@@ -1195,7 +1428,7 @@ def sync(world: World, dt: float) -> None:
         vignette.material.opacity = 0.12 * cam_fx["ring"]      # 輪を抜けた瞬間だけ薄く（0.35 では速いとき画面が白く濁った）
     else:
         vignette.material.opacity = 0.0
-    bloom.strength = 0.55 + 0.35 * frac + (0.4 if world.flash > 0 else 0.0) + 0.25 * cam_fx["ring"]
+    bloom.strength = 0.45 + 0.25 * frac + (0.3 if world.flash > 0 else 0.0) + 0.2 * cam_fx["ring"] + 0.4 * warp
     engine_tone(frac if world.started and not world.paused and not world.over else -1.0)
 
 
@@ -1337,6 +1570,7 @@ def effect(event: str | None) -> None:
             shatter(M * nearest.pos.x, nearest.pos.y, nearest.pos.z, nearest.radius)   # 岩が砕けて破片が散る
     elif event == "gate":
         cam_fx["pull"] = 1.0
+        cam_fx["warp"] = 1.0                        # ワープ：トンネルの帯が伸び、星が線になり、画角が広がる
         g = world.gate
         if g is not None:
             for _ in range(48):
@@ -1477,7 +1711,7 @@ def again(event):
     world = World(seed=int(window.performance.now()), started=True)
     for key in list(rock_meshes):
         scene.remove(rock_meshes.pop(key))
-    sparks.clear()
+    cam_fx["warp"] = 0.0
     for d in debris:
         d[0].visible = False
     debris.clear()
