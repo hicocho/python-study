@@ -69,8 +69,15 @@ FORK_AT = 4                                         # 本道の何番目で分�
 REJOIN_AT = 15                                      # 本道の何番目に戻るか
 
 # マスの並び（文字 1 つ = 1 マス）。S スタート G ゴール + お金が増える - 減る ? カード ! 休み $ 宝（最初の 1 人だけ）. 何もない
-MAIN_LAYOUT = "S+.?-+.?.+-!?+.-?+.$-.?+.-+?.-!+?.-+.G"
-SIDE_LAYOUT = "-?-$-+"
+# B 船（対岸へ）W ワープ（3〜7 マス先へ）H 店（500 でもう 1 回振る）J じゃんけん（隣の人と 400 を賭ける）V 火山（周り 4 マスの人が −300）
+MAIN_LAYOUT = "S+.?-+.?B+-!?+.-?+.$-W?+H-+?J-!+?J-+.G"
+SIDE_LAYOUT = "-?V$-+"
+SHIP_TO = 18                                        # 船が着く先
+WARP_RANGE = (3, 7)
+SHOP_PRICE = 500
+JANKEN_BET = 400
+VOLCANO_RANGE = 4                                   # 火山のマスから道の番号でこの距離まで
+VOLCANO_DAMAGE = 300
 assert len(MAIN_LAYOUT) == MAIN_COUNT and len(SIDE_LAYOUT) == SIDE_COUNT
 
 KINDS = {
@@ -81,6 +88,11 @@ KINDS = {
     "?": dict(name="カード", color=(90, 150, 240)),
     "!": dict(name="1 回休み", color=(160, 160, 170)),
     "$": dict(name="宝", color=(255, 170, 60)),
+    "B": dict(name="船", color=(80, 200, 220)),
+    "W": dict(name="ワープ", color=(170, 110, 240)),
+    "H": dict(name="店", color=(230, 200, 100)),
+    "J": dict(name="じゃんけん", color=(240, 120, 200)),
+    "V": dict(name="火山", color=(150, 50, 40)),
     ".": dict(name="", color=(200, 190, 160)),
 }
 PLUS = (300, 400, 500, 600, 800)                    # + のマスの額（順に回す）
@@ -100,6 +112,8 @@ CARDS = (
     dict(name="迷子", text="迷子… 2 マス戻る", kind="move", amount=-2),
     dict(name="昼寝", text="昼寝で 1 回休み", kind="rest", amount=0),
     dict(name="全員に配る", text="太っ腹！ 全員に 100 ずつ配る", kind="give", amount=100),
+    dict(name="押し戻し", text="先頭の人を 3 マス戻す", kind="push", amount=3),
+    dict(name="横取り", text="宝を持っている人から 500 もらう", kind="rob", amount=500),
 )
 
 PLAYERS = (
@@ -108,11 +122,11 @@ PLAYERS = (
     dict(name="ミカ", cpu="gambler", color=(240, 110, 160)),
     dict(name="ゴロウ", cpu="mean", color=(240, 170, 60)),
 )
-# 性格：分かれ道で近道を選ぶ確率（順位で変わる）
+# 性格：分かれ道で近道を選ぶ確率（順位で変わる）、店で買う条件（この額より多く持っていれば買う）
 PERSONALITY = {
-    "steady": dict(word="堅実", side=0.15, side_behind=0.35),
-    "gambler": dict(word="賭け", side=0.8, side_behind=0.95),
-    "mean": dict(word="いじわる", side=0.4, side_behind=0.7),
+    "steady": dict(word="堅実", side=0.15, side_behind=0.35, shop_if=1800),
+    "gambler": dict(word="賭け", side=0.8, side_behind=0.95, shop_if=SHOP_PRICE),
+    "mean": dict(word="いじわる", side=0.4, side_behind=0.7, shop_if=1000),
 }
 HOP_TIME = 0.28                                     # 1 マス跳ぶ時間
 EVENT_TIME = 1.7                                    # 出来事を見せる時間
@@ -167,6 +181,16 @@ def sound_bytes(kind: str) -> bytes:
         samples = tone(784, 0.08) + tone(988, 0.08) + tone(1175, 0.08) + tone(1568, 0.3)
     elif kind == "rest":
         samples = tone(330, 0.15, VOLUME * 0.6) + tone(262, 0.25, VOLUME * 0.6)
+    elif kind == "warp":                            # ワープ（上がる）
+        samples = sum((tone(400 * (1.15 ** i), 0.04, VOLUME * 0.7) for i in range(8)), array("h"))
+    elif kind == "ship":                            # 船（汽笛）
+        samples = tone(220, 0.25, VOLUME * 0.9) + tone(220, 0.15, VOLUME * 0.9)
+    elif kind == "janken":                          # じゃんけん（ポン）
+        samples = tone(880, 0.05) + noise(0.06, VOLUME, 50.0, 2)
+    elif kind == "volcano":                         # 火山（ドーン）
+        samples = noise(0.5, VOLUME * 1.8, 6.0, 7) + tone(70, 0.4, VOLUME)
+    elif kind == "shop":                            # 店（チャリン）
+        samples = tone(1568, 0.04) + tone(2093, 0.1)
     elif kind == "goal":
         samples = tone(523, 0.1) + tone(659, 0.1) + tone(784, 0.1) + tone(1047, 0.35)
     elif kind == "best":
@@ -182,7 +206,7 @@ def sound_bytes(kind: str) -> bytes:
     return buffer.getvalue()
 
 
-EVENTS = ("end", "goal", "treasure", "card", "plus", "minus", "rest", "dice", "hop")   # 目立つ順
+EVENTS = ("end", "goal", "volcano", "treasure", "warp", "ship", "janken", "shop", "card", "plus", "minus", "rest", "dice", "hop")   # 目立つ順
 SOUNDS = EVENTS + ("best",)
 
 # ── 板 ──────────────────────────────────────────────────────────────────
@@ -321,6 +345,8 @@ def build_squares() -> list[Square]:
             sq.amount, minus_i = MINUS[minus_i % len(MINUS)], minus_i + 1
         elif kind == "$":
             sq.amount = TREASURE
+        elif kind == "B":
+            sq.amount = SHIP_TO
         sq.name = KINDS[kind]["name"]
         if i + 1 < MAIN_COUNT:
             sq.next = [i + 1]
@@ -360,12 +386,14 @@ class Player:
     done: bool = False                              # ゴールした
     goal_order: int = -1
     hop_from: int = 0                               # 跳んでいる途中の前のマス（見た目）
+    treasures: int = 0                              # 見つけた宝の数
 
 
 class Phase(Enum):
     ROLL = "roll"                                   # 振るのを待つ（人）／CPU の間
     MOVING = "moving"
     FORK = "fork"                                   # 道を選ぶ
+    SHOP = "shop"                                   # 店：もう 1 回振るを買うか
     EVENT = "event"                                 # 出来事を見せる
     OVER = "over"
 
@@ -418,6 +446,10 @@ class World:
     goals: int = 0
     last_card: dict | None = None
     throw_wanted: bool = False                      # 人の番で、振るのを待っている（ブラウザがサイコロを出す合図）
+    janken: tuple[str, str, str] | None = None      # 最後のじゃんけん（自分の手, 相手の手, 結果）
+    money_delta: list[tuple[int, int]] = field(default_factory=list)   # 直近の出来事でのお金の増減 (誰, いくら)。見せる用
+    delta_count: int = 0
+    cards_drawn: int = 0
 
     def __post_init__(self):
         self.luck = random.Random(self.seed)
@@ -432,6 +464,34 @@ class World:
         self.note, self.note_until = text, self.time + seconds
         self.log.append(text)
         del self.log[:-8]
+
+    def pay(self, player: Player, amount: int) -> None:
+        """お金の増減。見せる用に記録もする（delta_count は通し番号）。"""
+        player.money += amount
+        self.delta_count += 1
+        self.money_delta.append((player.index, amount))
+        del self.money_delta[:-8]
+
+    def cpu_shop(self) -> bool:
+        p = self.player
+        return p.money >= SHOP_PRICE and p.money > PERSONALITY[p.cpu]["shop_if"]
+
+    def shop(self, buy: bool) -> str | None:
+        """店：500 でもう 1 回振る。"""
+        if self.phase != Phase.SHOP:
+            return None
+        p = self.player
+        if buy and p.money >= SHOP_PRICE:
+            self.pay(p, -SHOP_PRICE)
+            self.phase = Phase.ROLL
+            self.throw_wanted = p.cpu is None
+            self.wait_left = CPU_WAIT if p.cpu else 0.0
+            self.tell(f"{p.name}：{SHOP_PRICE} 払ってもう 1 回！", 1.2)
+            return "shop"
+        self.phase = Phase.EVENT
+        self.wait_left = 0.6
+        self.tell(f"{p.name}：店を素通り", 0.8)
+        return None
 
     def begin_turn(self) -> None:
         """次の人へ。ゴール済みは飛ばす。休みなら消費して次へ。"""
@@ -536,6 +596,12 @@ class World:
                 if self.wait_left <= 0:
                     return self.choose(self.cpu_choice())
             return None
+        if self.phase == Phase.SHOP:
+            if p.cpu:
+                self.wait_left -= dt
+                if self.wait_left <= 0:
+                    return self.shop(self.cpu_shop())
+            return None
         if self.phase == Phase.EVENT:
             self.wait_left -= dt
             if self.wait_left <= 0:
@@ -575,15 +641,15 @@ class World:
             p.goal_order = self.goals
             bonus = GOAL_BONUS[min(self.goals, len(GOAL_BONUS) - 1)]
             self.goals += 1
-            p.money += bonus
+            self.pay(p, bonus)
             self.tell(f"{p.name} がゴール！ {self.goals} 着 +{bonus}", 2.2)
             return "goal"
         if sq.kind == "+":
-            p.money += sq.amount
+            self.pay(p, sq.amount)
             self.tell(f"{p.name}：{sq.name} +{sq.amount}")
             return "plus"
         if sq.kind == "-":
-            p.money -= sq.amount
+            self.pay(p, -sq.amount)
             self.tell(f"{p.name}：{sq.name} −{sq.amount}")
             return "minus"
         if sq.kind == "$":
@@ -591,9 +657,61 @@ class World:
                 self.tell(f"{p.name}：宝はもう無かった…")
                 return None
             sq.taken = True
-            p.money += sq.amount
+            p.treasures += 1
+            self.pay(p, sq.amount)
             self.tell(f"{p.name}：宝を見つけた！ +{sq.amount}", 2.2)
             return "treasure"
+        if sq.kind == "B":                          # 船：対岸へ（着いた先の出来事は起きない）
+            p.hop_from = p.at
+            p.at = sq.amount
+            self.tell(f"{p.name}：船に乗って対岸へ（{sq.amount} へ）", 2.0)
+            self.wait_left = 2.0
+            return "ship"
+        if sq.kind == "W":                          # ワープ：3〜7 マス先へ跳ぶ（跳んだ先の出来事は起きる）
+            self.steps_left = self.luck.randint(*WARP_RANGE)
+            self.phase = Phase.MOVING
+            self.hop_left = HOP_TIME * 0.6
+            self.tell(f"{p.name}：ワープ！ {self.steps_left} マス先へ", 1.5)
+            return "warp"
+        if sq.kind == "H":                          # 店：もう 1 回振るを買うか
+            if p.money < SHOP_PRICE:
+                self.tell(f"{p.name}：店に来たがお金が足りない", 1.0)
+                self.wait_left = 1.0
+                return None
+            self.phase = Phase.SHOP
+            self.wait_left = FORK_WAIT
+            self.tell(f"{p.name}：店。{SHOP_PRICE} でもう 1 回振れる", 9)
+            return "shop"
+        if sq.kind == "J":                          # じゃんけん：一番近い人と 400 を賭ける
+            others = [q for q in self.players if q is not p and not q.done]
+            if not others:
+                self.tell(f"{p.name}：相手がいない", 1.0)
+                return None
+            other = min(others, key=lambda q: abs(q.at - p.at))
+            hands = ("グー", "チョキ", "パー")
+            mine, theirs = self.luck.randrange(3), self.luck.randrange(3)
+            if mine == theirs:
+                self.janken = (hands[mine], hands[theirs], "あいこ")
+                self.tell(f"{p.name} vs {other.name}：{hands[mine]} と {hands[theirs]} であいこ", 2.0)
+            elif (mine - theirs) % 3 == 2:          # グー→チョキ、チョキ→パー、パー→グー に勝つ
+                self.janken = (hands[mine], hands[theirs], "勝ち")
+                self.pay(p, JANKEN_BET)
+                self.pay(other, -JANKEN_BET)
+                self.tell(f"{p.name} vs {other.name}：{hands[mine]} で勝ち！ +{JANKEN_BET}", 2.2)
+            else:
+                self.janken = (hands[mine], hands[theirs], "負け")
+                self.pay(p, -JANKEN_BET)
+                self.pay(other, JANKEN_BET)
+                self.tell(f"{p.name} vs {other.name}：{hands[mine]} で負け… −{JANKEN_BET}", 2.2)
+            self.wait_left = 2.2
+            return "janken"
+        if sq.kind == "V":                          # 火山：道の番号で近い人みんなが −300
+            hit = [q for q in self.players if not q.done and abs(q.at - p.at) <= VOLCANO_RANGE or q is p]
+            for q in hit:
+                self.pay(q, -VOLCANO_DAMAGE)
+            self.tell(f"{p.name}：火山が噴火！ " + "・".join(q.name for q in hit) + f" が −{VOLCANO_DAMAGE}", 2.4)
+            self.wait_left = 2.4
+            return "volcano"
         if sq.kind == "!":
             p.skip = True
             self.tell(f"{p.name}：1 回休み")
@@ -608,23 +726,42 @@ class World:
         p = self.player
         card = self.luck.choice(CARDS)
         self.last_card = card
+        self.cards_drawn += 1
         kind, amount = card["kind"], card["amount"]
         self.tell(f"{p.name}：カード「{card['name']}」 {card['text']}", 2.4)
         self.wait_left = 2.4
         if kind == "money":
-            p.money += amount
+            self.pay(p, amount)
         elif kind == "tax":
             for q in self.players:
-                q.money -= amount
+                self.pay(q, -amount)
         elif kind == "steal":
             richest = max((q for q in self.players if q is not p), key=lambda q: q.money)
-            richest.money -= amount
-            p.money += amount
+            self.pay(richest, -amount)
+            self.pay(p, amount)
         elif kind == "give":
             for q in self.players:
                 if q is not p:
-                    q.money += amount
-                    p.money -= amount
+                    self.pay(q, amount)
+                    self.pay(p, -amount)
+        elif kind == "push":                        # 先頭の人（自分以外）を戻す
+            ahead = [q for q in self.players if q is not p and not q.done]
+            if ahead:
+                lead = max(ahead, key=lambda q: q.at if q.at < MAIN_COUNT else REJOIN_AT)
+                for _ in range(amount):
+                    back = [sq.index for sq in self.squares if lead.at in sq.next]
+                    if back:
+                        lead.at = back[0]
+                self.tell(f"{p.name}：カード「押し戻し」 {lead.name} を {amount} マス戻した", 2.4)
+        elif kind == "rob":
+            rich = [q for q in self.players if q is not p and q.treasures > 0]
+            if rich:
+                victim = max(rich, key=lambda q: q.treasures)
+                self.pay(victim, -amount)
+                self.pay(p, amount)
+                self.tell(f"{p.name}：カード「横取り」 {victim.name} から {amount} もらった", 2.4)
+            else:
+                self.tell(f"{p.name}：カード「横取り」 宝を持っている人がいない…", 2.0)
         elif kind == "rest":
             p.skip = True
         elif kind == "move":
@@ -748,6 +885,8 @@ def obey(world: World, key: str) -> str | None:
             return world.roll_random()
         return None
     if key.startswith("fork") and world.player.cpu is None:
+        if world.phase == Phase.SHOP:
+            return world.shop(key == "fork1")
         return world.choose(int(key[4]) - 1)
     return None
 
@@ -809,6 +948,8 @@ def status(world: World, best: Best, improved: bool = False) -> str:
         note, tail = "あなたの番：スペースで振る", ""
     elif world.phase == Phase.FORK and world.player.cpu is None:
         note, tail = "分かれ道：1 本道 ／ 2 近道（山越え、危険だが宝あり）", ""
+    elif world.phase == Phase.SHOP and world.player.cpu is None:
+        note, tail = f"店：1 {SHOP_PRICE} 払ってもう 1 回振る ／ 2 素通り", ""
     else:
         tail = f"{world.player.name}の番"
     head = f" {world.rolls:3d} 手 "
@@ -876,6 +1017,8 @@ def autopilot(world: World) -> str | None:
         return world.roll_random()
     if world.phase == Phase.FORK:
         return world.choose(1 if world.ranking().index(world.player) >= 2 else 0)
+    if world.phase == Phase.SHOP:
+        return world.shop(world.player.money >= 1500)
     return None
 
 
@@ -911,6 +1054,8 @@ def check() -> None:
     gaps = [math.hypot(a.x - b.x, a.z - b.z) for a, b in zip(sq[:GOAL], sq[1:GOAL + 1])]
     assert max(gaps) / min(gaps) < 1.5, "本道のマスはだいたい等間隔"
     assert sum(1 for s in sq if s.kind == "$") == 2 and sum(1 for s in sq if s.kind == "?") >= 8
+    assert sq[8].kind == "B" and sq[8].amount == SHIP_TO and sq[21].kind == "W" and sq[24].kind == "H" and {sq[28].kind, sq[33].kind} == {"J"}
+    assert sq[MAIN_COUNT + 2].kind == "V"
     print(f"  本道 {MAIN_COUNT} マス（分岐 {FORK_AT} → 合流 {REJOIN_AT}）、近道 {SIDE_COUNT} マス。間隔 {min(gaps):.2f}〜{max(gaps):.2f}。"
           f"＋{sum(1 for s in sq if s.kind == '+')} −{sum(1 for s in sq if s.kind == '-')} ？{sum(1 for s in sq if s.kind == '?')} 宝 2 休み {sum(1 for s in sq if s.kind == '!')}")
 
@@ -1001,6 +1146,52 @@ def check() -> None:
         world.update(STEP)
     assert p.done and p.at == GOAL and p.goal_order == 0 and p.money == START_MONEY + GOAL_BONUS[0], "ゴールを超えてもゴールで止まる"
     print(f"  ＋／−／宝（1 人だけ）／休み／カード {len(CARDS)} 種全部／ゴールは超えても止まり 1 着 +{GOAL_BONUS[0]}")
+
+    print("● 新しいマス")
+    world = World(seed=1)
+    world.started = True
+    p = world.players[0]
+
+    def land_on(index: int) -> str | None:
+        p.at = index
+        world.phase = Phase.MOVING
+        world.steps_left = 0
+        world.turn = 0
+        return world.hop()
+
+    assert land_on(8) == "ship" and p.at == SHIP_TO, "船は対岸へ"
+    got = land_on(21)
+    assert got == "warp" and world.phase == Phase.MOVING and WARP_RANGE[0] <= world.steps_left <= WARP_RANGE[1]
+    while world.phase == Phase.MOVING:
+        world.update(STEP)
+    assert 21 + WARP_RANGE[0] <= p.at <= 21 + WARP_RANGE[1], p.at
+    p.money = 2000
+    assert land_on(24) == "shop" and world.phase == Phase.SHOP
+    assert world.shop(True) == "shop" and p.money == 1500 and world.phase == Phase.ROLL and world.throw_wanted, "買うともう 1 回"
+    land_on(24)
+    assert world.shop(False) is None and p.money == 1500 and world.phase == Phase.EVENT, "素通り"
+    p.money = 100
+    assert land_on(24) is None and world.phase == Phase.EVENT, "お金が無ければ店は開かない"
+    p.money = 1000
+    money_before = [q.money for q in world.players]
+    results = set()
+    for _ in range(30):
+        land_on(28)
+        results.add(world.janken[2])
+    assert results == {"勝ち", "負け", "あいこ"}, results
+    assert sum(q.money for q in world.players) == sum(money_before), "じゃんけんはお金が移るだけ"
+    world.players[1].at = MAIN_COUNT + 1
+    world.players[2].at = 30
+    money_before = [q.money for q in world.players]
+    assert land_on(MAIN_COUNT + 2) == "volcano"
+    assert world.players[0].money == money_before[0] - VOLCANO_DAMAGE and world.players[1].money == money_before[1] - VOLCANO_DAMAGE
+    assert world.players[2].money == money_before[2], "遠い人は無事"
+    for cpu, expect in (("steady", False), ("gambler", True), ("mean", True)):
+        w = World(seed=2)
+        w.turn = [q.cpu for q in w.players].index(cpu)
+        w.player.money = 1500
+        assert w.cpu_shop() == expect, cpu
+    print(f"  船（{SHIP_TO} へ）／ワープ（{WARP_RANGE[0]}〜{WARP_RANGE[1]}）／店（{SHOP_PRICE}。堅実は 1800 超なら、賭けはいつでも）／じゃんけん（±{JANKEN_BET}、勝ち負けあいこ）／火山（道で {VOLCANO_RANGE} 以内が −{VOLCANO_DAMAGE}）")
 
     print("● 1 ゲーム（自動）")
     results = []

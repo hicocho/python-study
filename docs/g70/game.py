@@ -74,10 +74,28 @@ FORK_AT = 4                                         # 本道の何番目で分�
 REJOIN_AT = 15                                      # 本道の何番目に戻るか
 
 
-MAIN_LAYOUT = "S+.?-+.?.+-!?+.-?+.$-.?+.-+?.-!+?.-+.G"
+MAIN_LAYOUT = "S+.?-+.?B+-!?+.-?+.$-W?+H-+?J-!+?J-+.G"
 
 
-SIDE_LAYOUT = "-?-$-+"
+SIDE_LAYOUT = "-?V$-+"
+
+
+SHIP_TO = 18                                        # 船が着く先
+
+
+WARP_RANGE = (3, 7)
+
+
+SHOP_PRICE = 500
+
+
+JANKEN_BET = 400
+
+
+VOLCANO_RANGE = 4                                   # 火山のマスから道の番号でこの距離まで
+
+
+VOLCANO_DAMAGE = 300
 
 
 KINDS = {
@@ -88,6 +106,11 @@ KINDS = {
     "?": dict(name="カード", color=(90, 150, 240)),
     "!": dict(name="1 回休み", color=(160, 160, 170)),
     "$": dict(name="宝", color=(255, 170, 60)),
+    "B": dict(name="船", color=(80, 200, 220)),
+    "W": dict(name="ワープ", color=(170, 110, 240)),
+    "H": dict(name="店", color=(230, 200, 100)),
+    "J": dict(name="じゃんけん", color=(240, 120, 200)),
+    "V": dict(name="火山", color=(150, 50, 40)),
     ".": dict(name="", color=(200, 190, 160)),
 }
 
@@ -117,6 +140,8 @@ CARDS = (
     dict(name="迷子", text="迷子… 2 マス戻る", kind="move", amount=-2),
     dict(name="昼寝", text="昼寝で 1 回休み", kind="rest", amount=0),
     dict(name="全員に配る", text="太っ腹！ 全員に 100 ずつ配る", kind="give", amount=100),
+    dict(name="押し戻し", text="先頭の人を 3 マス戻す", kind="push", amount=3),
+    dict(name="横取り", text="宝を持っている人から 500 もらう", kind="rob", amount=500),
 )
 
 
@@ -129,9 +154,9 @@ PLAYERS = (
 
 
 PERSONALITY = {
-    "steady": dict(word="堅実", side=0.15, side_behind=0.35),
-    "gambler": dict(word="賭け", side=0.8, side_behind=0.95),
-    "mean": dict(word="いじわる", side=0.4, side_behind=0.7),
+    "steady": dict(word="堅実", side=0.15, side_behind=0.35, shop_if=1800),
+    "gambler": dict(word="賭け", side=0.8, side_behind=0.95, shop_if=SHOP_PRICE),
+    "mean": dict(word="いじわる", side=0.4, side_behind=0.7, shop_if=1000),
 }
 
 
@@ -191,6 +216,16 @@ def sound_bytes(kind: str) -> bytes:
         samples = tone(784, 0.08) + tone(988, 0.08) + tone(1175, 0.08) + tone(1568, 0.3)
     elif kind == "rest":
         samples = tone(330, 0.15, VOLUME * 0.6) + tone(262, 0.25, VOLUME * 0.6)
+    elif kind == "warp":                            # ワープ（上がる）
+        samples = sum((tone(400 * (1.15 ** i), 0.04, VOLUME * 0.7) for i in range(8)), array("h"))
+    elif kind == "ship":                            # 船（汽笛）
+        samples = tone(220, 0.25, VOLUME * 0.9) + tone(220, 0.15, VOLUME * 0.9)
+    elif kind == "janken":                          # じゃんけん（ポン）
+        samples = tone(880, 0.05) + noise(0.06, VOLUME, 50.0, 2)
+    elif kind == "volcano":                         # 火山（ドーン）
+        samples = noise(0.5, VOLUME * 1.8, 6.0, 7) + tone(70, 0.4, VOLUME)
+    elif kind == "shop":                            # 店（チャリン）
+        samples = tone(1568, 0.04) + tone(2093, 0.1)
     elif kind == "goal":
         samples = tone(523, 0.1) + tone(659, 0.1) + tone(784, 0.1) + tone(1047, 0.35)
     elif kind == "best":
@@ -206,7 +241,7 @@ def sound_bytes(kind: str) -> bytes:
     return buffer.getvalue()
 
 
-EVENTS = ("end", "goal", "treasure", "card", "plus", "minus", "rest", "dice", "hop")   # 目立つ順
+EVENTS = ("end", "goal", "volcano", "treasure", "warp", "ship", "janken", "shop", "card", "plus", "minus", "rest", "dice", "hop")   # 目立つ順
 
 
 SOUNDS = EVENTS + ("best",)
@@ -281,6 +316,8 @@ def build_squares() -> list[Square]:
             sq.amount, minus_i = MINUS[minus_i % len(MINUS)], minus_i + 1
         elif kind == "$":
             sq.amount = TREASURE
+        elif kind == "B":
+            sq.amount = SHIP_TO
         sq.name = KINDS[kind]["name"]
         if i + 1 < MAIN_COUNT:
             sq.next = [i + 1]
@@ -321,12 +358,14 @@ class Player:
     done: bool = False                              # ゴールした
     goal_order: int = -1
     hop_from: int = 0                               # 跳んでいる途中の前のマス（見た目）
+    treasures: int = 0                              # 見つけた宝の数
 
 
 class Phase(Enum):
     ROLL = "roll"                                   # 振るのを待つ（人）／CPU の間
     MOVING = "moving"
     FORK = "fork"                                   # 道を選ぶ
+    SHOP = "shop"                                   # 店：もう 1 回振るを買うか
     EVENT = "event"                                 # 出来事を見せる
     OVER = "over"
 
@@ -379,6 +418,10 @@ class World:
     goals: int = 0
     last_card: dict | None = None
     throw_wanted: bool = False                      # 人の番で、振るのを待っている（ブラウザがサイコロを出す合図）
+    janken: tuple[str, str, str] | None = None      # 最後のじゃんけん（自分の手, 相手の手, 結果）
+    money_delta: list[tuple[int, int]] = field(default_factory=list)   # 直近の出来事でのお金の増減 (誰, いくら)。見せる用
+    delta_count: int = 0
+    cards_drawn: int = 0
 
     def __post_init__(self):
         self.luck = random.Random(self.seed)
@@ -393,6 +436,34 @@ class World:
         self.note, self.note_until = text, self.time + seconds
         self.log.append(text)
         del self.log[:-8]
+
+    def pay(self, player: Player, amount: int) -> None:
+        """お金の増減。見せる用に記録もする（delta_count は通し番号）。"""
+        player.money += amount
+        self.delta_count += 1
+        self.money_delta.append((player.index, amount))
+        del self.money_delta[:-8]
+
+    def cpu_shop(self) -> bool:
+        p = self.player
+        return p.money >= SHOP_PRICE and p.money > PERSONALITY[p.cpu]["shop_if"]
+
+    def shop(self, buy: bool) -> str | None:
+        """店：500 でもう 1 回振る。"""
+        if self.phase != Phase.SHOP:
+            return None
+        p = self.player
+        if buy and p.money >= SHOP_PRICE:
+            self.pay(p, -SHOP_PRICE)
+            self.phase = Phase.ROLL
+            self.throw_wanted = p.cpu is None
+            self.wait_left = CPU_WAIT if p.cpu else 0.0
+            self.tell(f"{p.name}：{SHOP_PRICE} 払ってもう 1 回！", 1.2)
+            return "shop"
+        self.phase = Phase.EVENT
+        self.wait_left = 0.6
+        self.tell(f"{p.name}：店を素通り", 0.8)
+        return None
 
     def begin_turn(self) -> None:
         """次の人へ。ゴール済みは飛ばす。休みなら消費して次へ。"""
@@ -497,6 +568,12 @@ class World:
                 if self.wait_left <= 0:
                     return self.choose(self.cpu_choice())
             return None
+        if self.phase == Phase.SHOP:
+            if p.cpu:
+                self.wait_left -= dt
+                if self.wait_left <= 0:
+                    return self.shop(self.cpu_shop())
+            return None
         if self.phase == Phase.EVENT:
             self.wait_left -= dt
             if self.wait_left <= 0:
@@ -536,15 +613,15 @@ class World:
             p.goal_order = self.goals
             bonus = GOAL_BONUS[min(self.goals, len(GOAL_BONUS) - 1)]
             self.goals += 1
-            p.money += bonus
+            self.pay(p, bonus)
             self.tell(f"{p.name} がゴール！ {self.goals} 着 +{bonus}", 2.2)
             return "goal"
         if sq.kind == "+":
-            p.money += sq.amount
+            self.pay(p, sq.amount)
             self.tell(f"{p.name}：{sq.name} +{sq.amount}")
             return "plus"
         if sq.kind == "-":
-            p.money -= sq.amount
+            self.pay(p, -sq.amount)
             self.tell(f"{p.name}：{sq.name} −{sq.amount}")
             return "minus"
         if sq.kind == "$":
@@ -552,9 +629,61 @@ class World:
                 self.tell(f"{p.name}：宝はもう無かった…")
                 return None
             sq.taken = True
-            p.money += sq.amount
+            p.treasures += 1
+            self.pay(p, sq.amount)
             self.tell(f"{p.name}：宝を見つけた！ +{sq.amount}", 2.2)
             return "treasure"
+        if sq.kind == "B":                          # 船：対岸へ（着いた先の出来事は起きない）
+            p.hop_from = p.at
+            p.at = sq.amount
+            self.tell(f"{p.name}：船に乗って対岸へ（{sq.amount} へ）", 2.0)
+            self.wait_left = 2.0
+            return "ship"
+        if sq.kind == "W":                          # ワープ：3〜7 マス先へ跳ぶ（跳んだ先の出来事は起きる）
+            self.steps_left = self.luck.randint(*WARP_RANGE)
+            self.phase = Phase.MOVING
+            self.hop_left = HOP_TIME * 0.6
+            self.tell(f"{p.name}：ワープ！ {self.steps_left} マス先へ", 1.5)
+            return "warp"
+        if sq.kind == "H":                          # 店：もう 1 回振るを買うか
+            if p.money < SHOP_PRICE:
+                self.tell(f"{p.name}：店に来たがお金が足りない", 1.0)
+                self.wait_left = 1.0
+                return None
+            self.phase = Phase.SHOP
+            self.wait_left = FORK_WAIT
+            self.tell(f"{p.name}：店。{SHOP_PRICE} でもう 1 回振れる", 9)
+            return "shop"
+        if sq.kind == "J":                          # じゃんけん：一番近い人と 400 を賭ける
+            others = [q for q in self.players if q is not p and not q.done]
+            if not others:
+                self.tell(f"{p.name}：相手がいない", 1.0)
+                return None
+            other = min(others, key=lambda q: abs(q.at - p.at))
+            hands = ("グー", "チョキ", "パー")
+            mine, theirs = self.luck.randrange(3), self.luck.randrange(3)
+            if mine == theirs:
+                self.janken = (hands[mine], hands[theirs], "あいこ")
+                self.tell(f"{p.name} vs {other.name}：{hands[mine]} と {hands[theirs]} であいこ", 2.0)
+            elif (mine - theirs) % 3 == 2:          # グー→チョキ、チョキ→パー、パー→グー に勝つ
+                self.janken = (hands[mine], hands[theirs], "勝ち")
+                self.pay(p, JANKEN_BET)
+                self.pay(other, -JANKEN_BET)
+                self.tell(f"{p.name} vs {other.name}：{hands[mine]} で勝ち！ +{JANKEN_BET}", 2.2)
+            else:
+                self.janken = (hands[mine], hands[theirs], "負け")
+                self.pay(p, -JANKEN_BET)
+                self.pay(other, JANKEN_BET)
+                self.tell(f"{p.name} vs {other.name}：{hands[mine]} で負け… −{JANKEN_BET}", 2.2)
+            self.wait_left = 2.2
+            return "janken"
+        if sq.kind == "V":                          # 火山：道の番号で近い人みんなが −300
+            hit = [q for q in self.players if not q.done and abs(q.at - p.at) <= VOLCANO_RANGE or q is p]
+            for q in hit:
+                self.pay(q, -VOLCANO_DAMAGE)
+            self.tell(f"{p.name}：火山が噴火！ " + "・".join(q.name for q in hit) + f" が −{VOLCANO_DAMAGE}", 2.4)
+            self.wait_left = 2.4
+            return "volcano"
         if sq.kind == "!":
             p.skip = True
             self.tell(f"{p.name}：1 回休み")
@@ -569,23 +698,42 @@ class World:
         p = self.player
         card = self.luck.choice(CARDS)
         self.last_card = card
+        self.cards_drawn += 1
         kind, amount = card["kind"], card["amount"]
         self.tell(f"{p.name}：カード「{card['name']}」 {card['text']}", 2.4)
         self.wait_left = 2.4
         if kind == "money":
-            p.money += amount
+            self.pay(p, amount)
         elif kind == "tax":
             for q in self.players:
-                q.money -= amount
+                self.pay(q, -amount)
         elif kind == "steal":
             richest = max((q for q in self.players if q is not p), key=lambda q: q.money)
-            richest.money -= amount
-            p.money += amount
+            self.pay(richest, -amount)
+            self.pay(p, amount)
         elif kind == "give":
             for q in self.players:
                 if q is not p:
-                    q.money += amount
-                    p.money -= amount
+                    self.pay(q, amount)
+                    self.pay(p, -amount)
+        elif kind == "push":                        # 先頭の人（自分以外）を戻す
+            ahead = [q for q in self.players if q is not p and not q.done]
+            if ahead:
+                lead = max(ahead, key=lambda q: q.at if q.at < MAIN_COUNT else REJOIN_AT)
+                for _ in range(amount):
+                    back = [sq.index for sq in self.squares if lead.at in sq.next]
+                    if back:
+                        lead.at = back[0]
+                self.tell(f"{p.name}：カード「押し戻し」 {lead.name} を {amount} マス戻した", 2.4)
+        elif kind == "rob":
+            rich = [q for q in self.players if q is not p and q.treasures > 0]
+            if rich:
+                victim = max(rich, key=lambda q: q.treasures)
+                self.pay(victim, -amount)
+                self.pay(p, amount)
+                self.tell(f"{p.name}：カード「横取り」 {victim.name} から {amount} もらった", 2.4)
+            else:
+                self.tell(f"{p.name}：カード「横取り」 宝を持っている人がいない…", 2.0)
         elif kind == "rest":
             p.skip = True
         elif kind == "move":
@@ -612,6 +760,8 @@ class World:
 THREE = window.THREE
 CANNON = window.CANNON
 ADDONS = window.ADDONS
+GSAP = getattr(window, "gsap", None)                # 動きの補間（ばね・ぽん）。無ければ動きは省く
+TONE = getattr(window, "Tone", None)                # 音（BGM・サイコロの衝突・ファンファーレ）。無ければ wav だけ
 VIEW_W, VIEW_H = 640, 480
 
 
@@ -640,6 +790,8 @@ go_button = document.querySelector("#go")
 again_button = document.querySelector("#again")
 fork_a = document.querySelector("#fork-a")
 fork_b = document.querySelector("#fork-b")
+shop_yes = document.querySelector("#shop-yes")
+shop_no = document.querySelector("#shop-no")
 SAVED = "g70-best"
 
 # ── Three.js の舞台 ──────────────────────────────────────────────────────
@@ -703,11 +855,29 @@ def build_terrain(n: int = 72) -> object:
 
 
 scene.add(build_terrain())
-water = THREE.Mesh.new(THREE.PlaneGeometry.new(200, 200),
+WAVE_N = 26                                         # 海：頂点を毎コマ揺らす（近くは細かく、遠くは板のまま）
+water = THREE.Mesh.new(THREE.PlaneGeometry.new(90, 90, WAVE_N, WAVE_N),
                        THREE.MeshPhysicalMaterial.new(js(color=0x2f6fc0, roughness=0.15, metalness=0.1, transparent=True, opacity=0.86)))
 water.rotation.x = -math.pi / 2
 water.position.y = SEA
 scene.add(water)
+far_water = THREE.Mesh.new(THREE.PlaneGeometry.new(400, 400), THREE.MeshStandardMaterial.new(js(color=0x2a62b0, roughness=0.3)))
+far_water.rotation.x = -math.pi / 2
+far_water.position.y = SEA - 0.05
+scene.add(far_water)
+WAVE_BASE = []
+_arr = water.geometry.attributes.position.array
+for i in range(0, water.geometry.attributes.position.count * 3, 3):
+    WAVE_BASE.append((_arr[i], _arr[i + 1]))
+
+
+def ripple_water(now: float) -> None:
+    flat = []
+    for x, y in WAVE_BASE:
+        flat += [x, y, 0.12 * math.sin(x * 0.8 + now * 1.6) + 0.08 * math.cos(y * 1.1 - now * 1.3)]
+    water.geometry.attributes.position.array.set(to_js(flat))
+    water.geometry.attributes.position.needsUpdate = True
+    water.geometry.computeVertexNormals()
 
 SQUARE_GEO = THREE.CylinderGeometry.new(0.55, 0.6, 0.16, 24)
 square_mats = {k: THREE.MeshStandardMaterial.new(js(color=rgb(v["color"]), roughness=0.6)) for k, v in KINDS.items()}
@@ -753,6 +923,133 @@ while placed < 70:
     scene.add(trunk)
     scene.add(leaf)
     placed += 1
+
+LAMP_MAT = THREE.MeshStandardMaterial.new(js(color=0xfff0c0, emissive=0xffc060, emissiveIntensity=0.0))
+lamps = []                                          # 街灯：夕方から点く（emissive を上げる）
+for sq in SQUARES[::3]:
+    pole = THREE.Mesh.new(THREE.CylinderGeometry.new(0.04, 0.05, 1.1, 6), TRUNK)
+    pole.position.set(sq.x + 0.7, sq.y + 0.55, sq.z + 0.4)
+    scene.add(pole)
+    bulb = THREE.Mesh.new(THREE.SphereGeometry.new(0.13, 10, 8), LAMP_MAT)
+    bulb.position.set(sq.x + 0.7, sq.y + 1.15, sq.z + 0.4)
+    scene.add(bulb)
+    lamps.append(bulb)
+
+SPARKS = 260                                        # 粒（宝のきらめき・ゴールの花火・お金）
+spark_geo = THREE.BufferGeometry.new()
+spark_geo.setAttribute("position", THREE.Float32BufferAttribute.new(to_js([0.0, -99.0, 0.0] * SPARKS), 3))
+spark_geo.setAttribute("color", THREE.Float32BufferAttribute.new(to_js([1.0, 1.0, 1.0] * SPARKS), 3))
+sparks_points = THREE.Points.new(spark_geo, THREE.PointsMaterial.new(js(size=0.28, vertexColors=True, transparent=True, opacity=0.95)))
+scene.add(sparks_points)
+sparks: list[list[float]] = []                      # [x, y, z, vx, vy, vz, life, r, g, b]
+fx_luck = random.Random(9)
+
+
+def burst(x: float, y: float, z: float, count: int, color: tuple[int, int, int], speed: float = 4.0, up: float = 5.0) -> None:
+    r, g, b = [c / 255 for c in color]
+    for _ in range(count):
+        a = fx_luck.uniform(0, math.tau)
+        s = fx_luck.uniform(0.3, 1.0) * speed
+        sparks.append([x, y, z, math.cos(a) * s, fx_luck.uniform(0.5, 1.0) * up, math.sin(a) * s, fx_luck.uniform(0.6, 1.4), r, g, b])
+
+
+def age_sparks(dt: float) -> None:
+    flat, colors = [], []
+    for s in sparks:
+        s[0] += s[3] * dt
+        s[1] += s[4] * dt
+        s[2] += s[5] * dt
+        s[4] -= 9.0 * dt
+        s[6] -= dt
+    sparks[:] = [s for s in sparks if s[6] > 0][-SPARKS:]
+    for s in sparks:
+        flat += [s[0], s[1], s[2]]
+        colors += [s[7], s[8], s[9]]
+    flat += [0.0, -99.0, 0.0] * (SPARKS - len(sparks))
+    colors += [1.0, 1.0, 1.0] * (SPARKS - len(sparks))
+    spark_geo.attributes.position.array.set(to_js(flat))
+    spark_geo.attributes.position.needsUpdate = True
+    spark_geo.attributes.color.array.set(to_js(colors))
+    spark_geo.attributes.color.needsUpdate = True
+
+
+CLOUD_MAT = THREE.MeshStandardMaterial.new(js(color=0xffffff, roughness=1.0, transparent=True, opacity=0.9))
+clouds = []                                         # 雲：影を落としながら流れる
+for i in range(6):
+    group = THREE.Group.new()
+    for k in range(4):
+        puff = THREE.Mesh.new(THREE.SphereGeometry.new(fx_luck.uniform(0.9, 1.6), 10, 8), CLOUD_MAT)
+        puff.position.set(k * 1.3 - 2.0, fx_luck.uniform(-0.2, 0.3), fx_luck.uniform(-0.6, 0.6))
+        puff.castShadow = True
+        group.add(puff)
+    group.position.set(fx_luck.uniform(-20, 20), fx_luck.uniform(9.0, 11.5), fx_luck.uniform(-14, 14))
+    scene.add(group)
+    clouds.append(group)
+
+BIRD_MAT = THREE.MeshStandardMaterial.new(js(color=0x333340))
+birds = []                                          # 鳥：2 枚の羽をぱたぱた。山の周りを回る
+for i in range(8):
+    group = THREE.Group.new()
+    for side in (-1, 1):
+        wing = THREE.Mesh.new(THREE.BoxGeometry.new(0.5, 0.03, 0.14), BIRD_MAT)
+        wing.position.x = side * 0.25
+        group.add(wing)
+    scene.add(group)
+    birds.append(group)
+
+PEAK = (3.0, height(3.0, -3.5), -3.5)
+SMOKE = 90
+smoke_geo = THREE.BufferGeometry.new()
+smoke_geo.setAttribute("position", THREE.Float32BufferAttribute.new(to_js([0.0, -99.0, 0.0] * SMOKE), 3))
+smoke_points = THREE.Points.new(smoke_geo, THREE.PointsMaterial.new(js(color=0x8a8a90, size=0.9, transparent=True, opacity=0.35, sizeAttenuation=True)))
+scene.add(smoke_points)
+SMOKE_SEED = [(fx_luck.uniform(0, 1), fx_luck.uniform(0, math.tau)) for _ in range(SMOKE)]
+smoke_boost = {"until": -9.0}
+
+
+def scenery(now: float, progress: float) -> None:
+    """雲・鳥・噴煙・海・昼から夜へ。progress は先頭の進み具合 0〜1。"""
+    for i, c in enumerate(clouds):
+        c.position.x += (0.35 + 0.05 * i) * STEP
+        if c.position.x > 24:
+            c.position.x = -24
+    for i, b in enumerate(birds):
+        a = now * (0.25 + 0.03 * i) + i * 0.8
+        r = 7.0 + i * 0.6
+        b.position.set(PEAK[0] + math.cos(a) * r, PEAK[1] + 4.0 + math.sin(now * 0.7 + i), PEAK[2] + math.sin(a) * r)
+        b.rotation.y = -a
+        flap = math.sin(now * 9 + i) * 0.7
+        b.children[0].rotation.z = flap
+        b.children[1].rotation.z = -flap
+    flat = []
+    big = now < smoke_boost["until"]
+    for t0, a in SMOKE_SEED:
+        t = (t0 + now * 0.12) % 1.0
+        spread = (0.3 + t * 1.6) * (2.0 if big else 1.0)
+        flat += [PEAK[0] + math.cos(a + now * 0.3) * spread * t, PEAK[1] + 0.6 + t * (7.0 if big else 4.5), PEAK[2] + math.sin(a + now * 0.3) * spread * t]
+    smoke_geo.attributes.position.array.set(to_js(flat))
+    smoke_geo.attributes.position.needsUpdate = True
+    smoke_points.material.opacity = 0.7 if big else 0.35
+    if int(now * 30) % 3 == 0:                      # 海は 3 コマに 1 回（毎コマだと重い）
+        ripple_water(now)
+    # 昼 → 夕 → 夜。太陽は下がり、空は橙から紺へ、街灯が点く
+    t = max(0.0, min(1.0, progress))
+    angle = math.radians(65 - 70 * t)
+    sun.position.set(18 * math.cos(angle) + 4, 30 * math.sin(angle) + 3, 14)
+    sun.intensity = 2.2 * max(0.15, math.sin(angle) + 0.2)
+    sun.color.setRGB(1.0, 0.95 - 0.35 * t, 0.86 - 0.6 * t)
+    sky = [(150, 200, 240), (250, 170, 110), (28, 30, 70)]
+    seg = min(1, int(t * 2))
+    k = t * 2 - seg
+    a_, b_ = sky[seg], sky[seg + 1]
+    color = tuple(int(a_[i] + (b_[i] - a_[i]) * k) for i in range(3))
+    scene.background.setHex(rgb(color))
+    scene.fog.color.setHex(rgb(color))
+    LAMP_MAT.emissiveIntensity = 0.0 if t < 0.55 else min(2.5, (t - 0.55) * 8)
+    for sq in SQUARES:                              # 宝のきらめき
+        if sq.kind == "$" and not sq.taken and fx_luck.random() < 0.12:
+            burst(sq.x, sq.y + 0.5, sq.z, 1, (255, 230, 120), 0.6, 1.5)
+
 
 piece_meshes: list[object] = []                     # コマ：円錐の体に球の頭
 for p in PLAYERS:
@@ -833,6 +1130,7 @@ dice_body.position.set(TRAY[0], TRAY[1] + DICE_SIZE / 2, TRAY[2])
 dice_body.angularDamping = 0.15
 dice_body.linearDamping = 0.05
 phys.addBody(dice_body)
+dice_body.addEventListener("collide", create_proxy(lambda event: on_collide(event)))
 dice = {"flying": False, "since": 0.0, "still": 0.0, "value": 0, "pending_cpu": False, "cpu_at": 0.0}
 DICE_TIMEOUT = 4.5
 DICE_STILL = 0.35
@@ -886,6 +1184,150 @@ def dice_step(dt: float) -> int | None:
     return None
 
 
+# ── 浮かぶ文字・カード・吹き出し（GSAP で動かす） ────────────────────────
+
+def text_sprite(text: str, color: str, size: int = 72, width: int = 512, stroke: str = "rgba(20,10,40,0.85)") -> object:
+    cv = document.createElement("canvas")
+    cv.width, cv.height = width, 160
+    ctx = cv.getContext("2d")
+    ctx.font = f"bold {size}px sans-serif"
+    ctx.textAlign = "center"
+    ctx.textBaseline = "middle"
+    ctx.lineWidth = 12
+    ctx.strokeStyle = stroke
+    ctx.strokeText(text, width / 2, 80)
+    ctx.fillStyle = color
+    ctx.fillText(text, width / 2, 80)
+    tex = THREE.CanvasTexture.new(cv)
+    tex.colorSpace = THREE.SRGBColorSpace
+    sprite = THREE.Sprite.new(THREE.SpriteMaterial.new(js(map=tex, transparent=True, depthTest=False)))
+    sprite.scale.set(width / 160 * 1.6, 1.6, 1)
+    return sprite
+
+
+def float_text(text: str, color: str, x: float, y: float, z: float, size: int = 72, seconds: float = 1.4) -> None:
+    """文字がぽんと出て、上がりながら消える。"""
+    sprite = text_sprite(text, color, size)
+    sprite.position.set(x, y, z)
+    scene.add(sprite)
+    if GSAP is None:
+        return
+    sprite.scale.multiplyScalar(0.2)
+    GSAP.to(sprite.scale, js(x=sprite.scale.x * 5, y=sprite.scale.y * 5, duration=0.35, ease="back.out(2)"))
+    GSAP.to(sprite.position, js(y=y + 2.2, duration=seconds, ease="power1.out"))
+    GSAP.to(sprite.material, js(opacity=0.0, duration=0.5, delay=seconds - 0.5, onComplete=create_proxy(lambda: scene.remove(sprite))))
+
+
+def card_show(card: dict, x: float, y: float, z: float) -> None:
+    """カードの板が裏返って名前と説明を見せる。"""
+    cv = document.createElement("canvas")
+    cv.width, cv.height = 256, 352
+    ctx = cv.getContext("2d")
+    ctx.fillStyle = "#fff8e6"
+    ctx.fillRect(0, 0, 256, 352)
+    ctx.strokeStyle = "#3b6f9c"
+    ctx.lineWidth = 12
+    ctx.strokeRect(10, 10, 236, 332)
+    ctx.fillStyle = "#1f2328"
+    ctx.textAlign = "center"
+    ctx.font = "bold 40px sans-serif"
+    ctx.fillText(card["name"], 128, 120)
+    ctx.font = "26px sans-serif"
+    words = card["text"]
+    for i in range(0, len(words), 9):
+        ctx.fillText(words[i:i + 9], 128, 200 + (i // 9) * 34)
+    tex = THREE.CanvasTexture.new(cv)
+    tex.colorSpace = THREE.SRGBColorSpace
+    back = THREE.MeshStandardMaterial.new(js(color=0x3b6f9c, roughness=0.5))
+    front = THREE.MeshStandardMaterial.new(js(map=tex, roughness=0.5))
+    plane = THREE.Mesh.new(THREE.BoxGeometry.new(1.8, 2.5, 0.05), to_js([back, back, back, back, front, back]))
+    plane.position.set(x, y + 1.0, z + 0.5)
+    plane.rotation.y = math.pi
+    scene.add(plane)
+    if GSAP is None:
+        window.setTimeout(create_proxy(lambda: scene.remove(plane)), 2200)
+        return
+    GSAP.to(plane.rotation, js(y=0.0, duration=0.6, ease="back.out(1.4)"))
+    GSAP.to(plane.position, js(y=y + 2.6, duration=0.6, ease="power2.out"))
+    GSAP.to(plane.position, js(y=y + 4.5, duration=0.6, delay=1.7, ease="power2.in", onComplete=create_proxy(lambda: scene.remove(plane))))
+
+
+bubble = text_sprite("うーん…", "#ffffff", 64, 320, "rgba(40,40,60,0.9)")
+bubble.visible = False
+scene.add(bubble)
+
+
+# ── 音（Tone.js）：BGM・サイコロの衝突・ファンファーレ ─────────────────────
+
+music = {"on": False, "synth": None, "drum": None, "loop": None, "last_hit": 0.0, "step": 0}
+CHORDS = (("C4", "E4", "G4"), ("A3", "C4", "E4"), ("F3", "A3", "C4"), ("G3", "B3", "D4"))
+
+
+def music_start() -> None:
+    """人が触った処理の中で呼ぶ（Safari の決まり）。BGM は 8 分音符の輪。"""
+    if TONE is None or music["on"]:
+        return
+    try:
+        TONE.start()
+        synth = TONE.PolySynth.new(TONE.Synth).toDestination()
+        synth.volume.value = -16
+        drum = TONE.MembraneSynth.new().toDestination()
+        drum.volume.value = -8
+        music.update(synth=synth, drum=drum, on=True)
+        transport = TONE.getTransport()
+
+        def tick(time):
+            step = music["step"]
+            chord = CHORDS[(step // 8) % len(CHORDS)]
+            note = chord[step % 3] if step % 8 != 7 else chord[0].replace("3", "4").replace("4", "5")
+            try:
+                synth.triggerAttackRelease(note, "16n", time)
+            except Exception:
+                pass
+            music["step"] = step + 1
+
+        music["loop"] = TONE.Loop.new(create_proxy(tick), "8n").start(0)
+        transport.bpm.value = 92
+        transport.start()
+    except Exception:
+        music["on"] = False
+
+
+def music_tempo(rolls: int) -> None:
+    if TONE is None or not music["on"]:
+        return
+    try:
+        TONE.getTransport().bpm.value = min(150, 92 + rolls * 1.5)
+    except Exception:
+        pass
+
+
+def fanfare(notes: tuple[str, ...]) -> None:
+    if not music["on"]:
+        return
+    try:
+        now = TONE.now()
+        for i, n in enumerate(notes):
+            music["synth"].triggerAttackRelease(n, "8n", now + i * 0.12)
+    except Exception:
+        pass
+
+
+def on_collide(event):
+    """サイコロが台や壁に当たった強さで音を鳴らす（連続は 0.06 秒に 1 回）。"""
+    if not music["on"]:
+        return
+    try:
+        impact = abs(event.contact.getImpactVelocityAlongNormal())
+        now = TONE.now()
+        if impact < 1.2 or now - music["last_hit"] < 0.06:
+            return
+        music["last_hit"] = now
+        music["drum"].triggerAttackRelease("C2" if impact > 5 else "E2", "32n", now, min(1.0, impact / 10))
+    except Exception:
+        pass
+
+
 # ── 世界とカメラ ──────────────────────────────────────────────────────────
 
 class Speaker:
@@ -908,9 +1350,11 @@ world = World(seed=int(window.performance.now()))
 best = Best.parse(window.localStorage.getItem(SAVED) or "")
 improved = False
 frames = []
-cam = {"x": 0.0, "y": 26.0, "z": 30.0, "lx": 0.0, "ly": 0.0, "lz": 0.0}
+cam = {"x": 0.0, "y": 26.0, "z": 30.0, "lx": 0.0, "ly": 0.0, "lz": 0.0, "focus_until": -9.0}
 CAM_EASE = 0.06
 OVERVIEW = ((0.0, 26.0, 30.0), (0.0, 0.0, 1.0))
+seen = {"delta": 0, "cards": 0, "at": [0] * len(PLAYERS), "dice": 0, "rolls": 0, "goals": 0}
+shown_money = [float(START_MONEY)] * len(PLAYERS)
 
 
 def piece_pos(p: Player) -> tuple[float, float, float]:
@@ -925,8 +1369,41 @@ def piece_pos(p: Player) -> tuple[float, float, float]:
     return x, y, z
 
 
+def effects(now: float) -> None:
+    """世界の変化を見つけて演出を出す：お金の増減の文字、カードの板、着地のぷるん、出目、ゴールの花火。"""
+    if world.delta_count != seen["delta"]:
+        fresh = world.money_delta[-(world.delta_count - seen["delta"]):]
+        seen["delta"] = world.delta_count
+        for who, amount in fresh:
+            x, y, z = piece_pos(world.players[who])
+            float_text(f"+{amount}" if amount > 0 else f"−{-amount}", "#7ee29a" if amount > 0 else "#ff7b7b", x, y + 1.8, z, 80, 1.5)
+            burst(x, y + 1.0, z, 8, (120, 230, 150) if amount > 0 else (255, 120, 120), 1.5, 2.5)
+    if world.cards_drawn != seen["cards"] and world.last_card is not None:
+        seen["cards"] = world.cards_drawn
+        x, y, z = piece_pos(world.player)
+        card_show(world.last_card, x, y, z)
+    for i, p in enumerate(world.players):           # 着地のぷるん（マスが変わった瞬間）
+        if p.at != seen["at"][i]:
+            seen["at"][i] = p.at
+            mesh = piece_meshes[i]
+            if GSAP is not None:
+                GSAP.fromTo(mesh.scale, js(x=1.35, y=0.65, z=1.35), js(x=1.0, y=1.0, z=1.0, duration=0.45, ease="elastic.out(1, 0.4)"))
+    if world.rolls != seen["rolls"]:                # 出目：サイコロに寄って数字を出す
+        seen["rolls"] = world.rolls
+        cam["focus_until"] = now + 0.9
+        float_text(f"{world.dice}!", "#ffe27a", dice_body.position.x, dice_body.position.y + 1.6, dice_body.position.z, 110, 1.1)
+        music_tempo(world.rolls)
+    if world.goals != seen["goals"]:                # ゴール：花火とファンファーレ
+        seen["goals"] = world.goals
+        g = world.squares[GOAL]
+        for _ in range(3):
+            burst(g.x + fx_luck.uniform(-1, 1), g.y + 2.5, g.z + fx_luck.uniform(-1, 1), 40, (255, fx_luck.randrange(120, 255), fx_luck.randrange(80, 255)), 5.0, 7.0)
+        fanfare(("C5", "E5", "G5", "C6"))
+
+
 def sync(dt: float) -> None:
     now = world.time
+    effects(now)
     stacked: dict[int, int] = {}
     for i, p in enumerate(world.players):
         x, y, z = piece_pos(p)
@@ -946,18 +1423,34 @@ def sync(dt: float) -> None:
             square_meshes[sq.index].material = square_mats["."] if sq.taken else square_mats["$"]
     dice_mesh.position.copy(dice_body.position)
     dice_mesh.quaternion.copy(dice_body.quaternion)
+    lead = max((p.at if p.at < MAIN_COUNT else REJOIN_AT) for p in world.players)
+    scenery(now, lead / GOAL)
+    age_sparks(dt)
+    if world.phase == Phase.ROLL and world.player.cpu and dice["pending_cpu"] and not dice["flying"]:   # CPU が考えている
+        x, y, z = piece_pos(world.player)
+        bubble.position.set(x, y + 2.4, z)
+        bubble.visible = True
+    else:
+        bubble.visible = False
+    for i, p in enumerate(world.players):           # 所持金の表示は数えるように追いつく
+        shown_money[i] += (p.money - shown_money[i]) * 0.12
+        if abs(p.money - shown_money[i]) < 1:
+            shown_money[i] = float(p.money)
     if not world.started or world.over:
         want, look = OVERVIEW
+    elif now < cam["focus_until"]:                  # 止まったサイコロにぐっと寄る
+        d = dice_body.position
+        want, look = (d.x + 2.2, d.y + 3.2, d.z + 3.0), (d.x, d.y, d.z)
     elif world.phase == Phase.ROLL or dice["flying"]:
         want, look = (TRAY[0], TRAY[1] + 8.0, TRAY[2] + 8.5), (TRAY[0], TRAY[1] + 0.5, TRAY[2] - 0.5)
     else:
         x, y, z = piece_pos(world.player)
         want, look = (x + 6.0, y + 9.0, z + 9.0), (x, y, z)
+    ease = CAM_EASE * (2.5 if now < cam["focus_until"] else 1.0)
     for key, value in (("x", want[0]), ("y", want[1]), ("z", want[2]), ("lx", look[0]), ("ly", look[1]), ("lz", look[2])):
-        cam[key] += (value - cam[key]) * CAM_EASE
+        cam[key] += (value - cam[key]) * ease
     camera.position.set(cam["x"], cam["y"], cam["z"])
     camera.lookAt(cam["lx"], cam["ly"], cam["lz"])
-    water.position.y = SEA + 0.03 * math.sin(now * 1.3)
 
 
 def refresh(dt: float = STEP) -> None:
@@ -966,7 +1459,7 @@ def refresh(dt: float = STEP) -> None:
     rows = []
     for p in world.ranking():
         mark = "👑" if p.done else ""
-        rows.append(f'<span class="who" style="--c:#{rgb(p.color):06x}"></span>{p.name} <b>{p.money}</b>{mark}'
+        rows.append(f'<span class="who" style="--c:#{rgb(p.color):06x}"></span>{p.name} <b>{int(round(shown_money[p.index]))}</b>{mark}'
                     + (" ◀" if p is world.player and not world.over else ""))
     board_label.innerHTML = " ・ ".join(rows)
     dice_label.textContent = str(world.dice) if world.dice else "–"
@@ -984,9 +1477,12 @@ def refresh(dt: float = STEP) -> None:
         message.textContent = "あなたの番：画面の上で指をはらってサイコロを投げる"
     elif world.phase == Phase.FORK and human:
         message.textContent = "分かれ道：本道か、山を越える近道（危険だが宝あり）か"
+    elif world.phase == Phase.SHOP and human:
+        message.textContent = f"店：{SHOP_PRICE} 払ってもう 1 回振る？"
     else:
         message.textContent = f"{world.player.name}の番" if not dice["flying"] else "サイコロが転がっている…"
     fork_a.hidden = fork_b.hidden = not (world.phase == Phase.FORK and human)
+    shop_yes.hidden = shop_no.hidden = not (world.phase == Phase.SHOP and human)
     again_button.hidden = not world.over
     go_button.hidden = world.started
 
@@ -1020,6 +1516,9 @@ async def loop():
                 improved = best.take(world)
                 window.localStorage.setItem(SAVED, best.dump())
                 event = "best" if improved else "end"
+            if event == "volcano":
+                smoke_boost["until"] = world.time + 3.0
+                burst(PEAK[0], PEAK[1] + 1.0, PEAK[2], 60, (255, 90, 40), 4.0, 8.0)
             speaker.say(event)
             lag -= STEP
         refresh(frame_dt)
@@ -1052,6 +1551,7 @@ touch = {"x": 0.0, "y": 0.0, "t": 0.0, "down": False}
 def press(event):
     event.preventDefault()
     wake_sound()
+    music_start()
     if not world.started:
         begin()
         refresh()
@@ -1109,9 +1609,22 @@ def pick_b(event):
     refresh()
 
 
+@when("click", "#shop-yes")
+def buy(event):
+    speaker.say(world.shop(True))
+    refresh()
+
+
+@when("click", "#shop-no")
+def skip(event):
+    speaker.say(world.shop(False))
+    refresh()
+
+
 @when("click", "#go")
 def go(event):
     wake_sound()
+    music_start()
     begin()
     go_button.blur()
     refresh()
@@ -1124,6 +1637,9 @@ def again(event):
     world.started = True
     improved = False
     dice.update(flying=False, pending_cpu=False)
+    seen.update(delta=0, cards=0, at=[0] * len(PLAYERS), rolls=0, goals=0)
+    for i in range(len(PLAYERS)):
+        shown_money[i] = float(START_MONEY)
     refresh()
 
 

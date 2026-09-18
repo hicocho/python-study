@@ -10,7 +10,9 @@
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/",
-               "cannon-es": "https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js" } }
+               "cannon-es": "https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.js",
+               "gsap": "https://cdn.jsdelivr.net/npm/gsap@3.15.0/+esm",
+               "tone": "https://cdn.jsdelivr.net/npm/tone@15.5.42/+esm" } }
 </script>
 <script type="module">
   // Three.js を読み込んで window に置く。Python（PyScript）は window.THREE を通して舞台を作る
@@ -18,9 +20,13 @@
   import * as THREE from "three";
   import * as CANNON from "cannon-es";
   import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
+  import { gsap } from "gsap";
+  import * as Tone from "tone";
   window.THREE = THREE;
   window.CANNON = CANNON;
   window.ADDONS = { RoomEnvironment };
+  window.gsap = gsap;      // 動きの補間（ぷるん・ぽん）
+  window.Tone = Tone;      // 音（BGM・サイコロの衝突・ファンファーレ）
 </script>
 <script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
 <style>
@@ -131,6 +137,8 @@
       <button type="button" id="go" class="go">▶ スタート</button>
       <button type="button" id="fork-a" hidden>本道を行く</button>
       <button type="button" id="fork-b" hidden>近道（山越え）を行く</button>
+      <button type="button" id="shop-yes" hidden>500 払ってもう 1 回振る</button>
+      <button type="button" id="shop-no" hidden>素通りする</button>
       <button type="button" id="again" hidden>もう一度</button>
     </div>
     <pre id="log"></pre>
@@ -138,10 +146,12 @@
     <div class="howto">
       <b>やること</b>：あなたの番になったら、画面の上で<b>指をはらう</b>とサイコロが飛ぶ（強さと向きが反映。パソコンはスペースでも）。止まった目の数だけ進む。分かれ道では<b>ボタン</b>で道を選ぶ（キーは 1 と 2）。
       <ol>
-        <li>マス：<b>緑</b> お金が増える（300〜800）、<b>赤</b> 減る（200〜500）、<b>青</b> カード（給料日・宝くじ・税金・追い風・迷子・昼寝…9 種）、<b>灰</b> 1 回休み、<b>橙</b> 宝（最初に着いた 1 人だけ +1500）。</li>
+        <li>マス：<b>緑</b> お金が増える（300〜800）、<b>赤</b> 減る（200〜500）、<b>青</b> カード（給料日・宝くじ・税金・追い風・迷子・昼寝・押し戻し・横取り…11 種）、<b>灰</b> 1 回休み、<b>橙</b> 宝（最初に着いた 1 人だけ +1500）。</li>
+        <li>さらに：<b>水色</b> 船（対岸へ）、<b>紫</b> ワープ（3〜7 マス先へ）、<b>黄</b> 店（500 でもう 1 回振る）、<b>桃</b> じゃんけん（一番近い人と 400 を賭ける）、<b>暗い赤</b> 火山（近道にある。噴火で近くの人みんな −300）。</li>
         <li>分かれ道：本道か、山を越える<b>近道</b>（6 マス短いが減るマスが多い。宝あり）。CPU は性格で選ぶ：タケシは堅実、ミカは賭け、ゴロウはいじわる（負けていると近道）。</li>
         <li>ゴールは超えても止まる。着いた順に +3000 / +2000 / +1000 / +500。全員がゴールしたら所持金で順位。</li>
-        <li>サイコロは <b>Cannon-es</b> という物理エンジンが本当に転がし、止まったときに上を向いた面を読んでゲームに渡している。CPU の番も同じサイコロが転がる。</li>
+        <li>サイコロは <b>Cannon-es</b> という物理エンジンが本当に転がし、止まったときに上を向いた面を読んでゲームに渡している。CPU の番も同じサイコロが転がる。転がる音は当たった強さで鳴る（Tone.js）。</li>
+        <li>島は先頭の進み具合で昼 → 夕 → 夜になり、街灯が点く。雲の影が流れ、鳥が山を回り、火山は煙を上げる。</li>
       </ol>
       <div class="cues">
         <span><b>マスは表と道の網</b>：1 マス 1 行、next で次を指す。分かれ道は next が 2 つ</span>
@@ -167,6 +177,6 @@
   </footer>
 </main>
 
-<script type="py" src="./game.py?v=cc98cfa0"></script>
+<script type="py" src="./game.py?v=98dce8fc"></script>
 </body>
 </html>
