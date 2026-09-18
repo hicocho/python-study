@@ -1,4 +1,4 @@
-"""小惑星をよける（3D）ブラウザ版
+"""ワープ・トンネルブラウザ版
 
 CLI 版（g78-space-3d/main.py）と中身はまったく同じ。3D の点（V）も、回転（rotate）も、
 透視投影（project）も、面を塗る Screen.fill も、隠面消去と陰影（draw_solid）も、
