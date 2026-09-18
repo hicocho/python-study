@@ -7,6 +7,20 @@
 <meta name="description" content="宇宙船の後ろから見た視点で、迫ってくる小惑星をよける。3D は透視投影・回転・隠面消去・陰影を自分で書いた。">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#127776;</text></svg>">
 <link rel="stylesheet" href="https://pyscript.net/releases/2025.8.1/core.css">
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+               "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }
+</script>
+<script type="module">
+  // Three.js（絵）と後処理（ブルーム）を読み込んで window に置く。Python は window.THREE を通して舞台を作る
+  import * as THREE from "three";
+  import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+  import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+  import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+  import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+  window.THREE = THREE;
+  window.ADDONS = { EffectComposer, RenderPass, UnrealBloomPass, OutputPass };
+</script>
 <script type="module" src="https://pyscript.net/releases/2025.8.1/core.js"></script>
 <style>
   :root {
@@ -52,18 +66,17 @@
   .status b { color: var(--ink); font-weight: 700; }
   .status span { white-space: nowrap; }
 
-  /* ドット絵の画面。126×80 の canvas を CSS で 4 倍に */
+  /* Three.js の画面。640×400 の canvas を横幅いっぱいに */
   .stage { display: flex; justify-content: center; }
   #screen {
-    width: min(100%, 504px);
-    aspect-ratio: 128 / 80;
-    image-rendering: pixelated;
-    image-rendering: crisp-edges;
-    background: #000;
+    width: min(100%, 640px);
+    aspect-ratio: 8 / 5;
+    background: #06080e;
     border: 2px solid var(--line);
     border-radius: .35rem;
     touch-action: none;
     cursor: pointer;
+    user-select: none; -webkit-user-select: none;
   }
   .pad { display: grid; gap: .4rem; margin-top: .75rem;
     grid-template-columns: 1fr 1.4fr 1fr; }
@@ -157,7 +170,7 @@
 <main>
   <p class="back"><a href="../">← 課題一覧</a></p>
   <h1>小惑星をよける（3D）</h1>
-  <p class="sub">宇宙船の後ろから見た視点で、迫ってくる小惑星をよけます。<strong>3D はライブラリを使わず自分で書きました</strong>——3D の点を回し、透視投影で画面に落とし、奥の面から塗って、光の向きで陰影を付ける。全部 Python です。<strong>音を出してお使いください。</strong></p>
+  <p class="sub">宇宙船の後ろから見た視点で、迫ってくる小惑星をよけます。<strong>3D の仕組み（回転・透視投影・当たり判定・カメラの追従と揺れ）は Python で自分で書き</strong>、このページでは同じ世界を <strong>Three.js</strong> に写して GPU が描いています（星雲・光のにじみ・粒・でこぼこの岩）。端末版は同じ式を ▀ で描きます。<strong>音を出してお使いください。</strong></p>
 
   <div class="card">
     <div class="status">
@@ -166,7 +179,7 @@
       <span>残り <b id="lives">♥♥♥</b> ・ 速さ <b id="speed">10.0</b> ・ <b id="fps">–</b> コマ/秒</span>
     </div>
 
-    <div class="stage"><canvas id="screen" width="256" height="160"></canvas></div>
+    <div class="stage"><canvas id="screen" width="640" height="400"></canvas></div>
     <p id="note" class="note-line">&nbsp;</p>
     <pre id="message"></pre>
 
@@ -182,7 +195,7 @@
     </div>
 
     <div class="howto">
-      <b>やること</b>：「スタート」（スペースでも）で始め、矢印キー（または w a s d、画面のボタン）で宇宙船を動かし、小惑星をよける。p か画面タップで一時停止。
+      <b>やること</b>：「スタート」（スペースでも）で始め、矢印キー（または w a s d、画面のボタン、<b>画面をなぞる</b>）で宇宙船を動かし、小惑星をよける。p か画面タップで一時停止。
       <ol>
         <li>小惑星は奥から迫ってきます。<b>近づくほど大きく</b>、回りながら来ます。<b>いまの位置のままだとぶつかるものは赤み</b>がかります。</li>
         <li>ぶつかると ♥ が 1 つ減り、しばらく点滅します。3 回で終わり。</li>
@@ -205,7 +218,7 @@
   <p class="note">
     このページは <strong>Python のコードがブラウザの中でそのまま動いています</strong>（PyScript）。
     3D の点・回転・透視投影・面を塗る処理・隠面消去・陰影・世界の動きは
-    CLI 版と 1 文字も違いません。端末は 128 × 80 ドットを ▀ の並びで、ここでは<strong>同じ式を 2 倍の板（256 × 160）</strong>で回して canvas に出しています。
+    CLI 版と 1 文字も違いません。端末は 128 × 80 ドットを ▀ の並びに自分で塗り、ここでは<strong>同じ世界（位置・向き・カメラ・画角）を Three.js の物に写して GPU に描かせています</strong>（2026-09-18 に Three.js 化。星雲・ブルーム・粒・岩の質感は Three.js）。
   </p>
 
   <footer>
@@ -215,6 +228,6 @@
   </footer>
 </main>
 
-<script type="py" src="./game.py?v=e280aca1"></script>
+<script type="py" src="./game.py?v=2d24c2a1"></script>
 </body>
 </html>

@@ -5,8 +5,9 @@ CLI 版（g78-space-3d/main.py）と中身はまったく同じ。3D の点（V�
 世界（World）も、キーを受ける obey も 1 文字も変えていない。
 
 違うのは入口と出口だけ。
-  入口: 端末はキーの並び、ブラウザは keydown / keyup とボタン
-  出口: 端末は ▀ の並び、ブラウザは canvas。音は端末が afplay、ブラウザは Audio
+  入口: 端末はキーの並び、ブラウザは keydown / keyup とボタン、画面をなぞる
+  出口: 端末は ▀ の並び（自分で書いた 3D）、ブラウザは同じ世界を Three.js の Mesh に写して GPU に描かせる（2026-09-18 に Three.js 化）
+        カメラの位置・傾き・揺れ・画角は CLI 版の cam_now / focus をそのまま使う。星雲・ブルーム・粒は Three.js
   時計: 端末は time.perf_counter()、ブラウザは performance.now()。刻み幅は同じ STEP
 """
 
@@ -21,6 +22,7 @@ from array import array
 from dataclasses import dataclass, field
 from typing import NamedTuple
 
+from pyodide.ffi import create_proxy, to_js
 from pyscript import document, when, window
 WIDTH = 128                                         # 画面の横（ドット）。端末では 1 ドット = 1 桁
 
@@ -745,15 +747,30 @@ def obey(world: World, key: str, down: bool = True) -> None:
             world.started = True
         elif not world.over:
             world.paused = not world.paused
-
-
 # --- ここから下はブラウザ版だけ。CLI 版の run() / Screen.render() / Speaker にあたる ---
+#   2026-09-18 に Three.js 化。世界（World）・回転・透視投影・当たり判定は 1 文字も変えず、
+#   端末が ▀ に描くところを、ここでは同じ世界の物を Three.js の Mesh に写して GPU に描かせる。
+#   カメラの位置・傾き・揺れ・画角（speed で広角になる）も CLI 版の cam_now / focus から。
 
-SCALE = 2                                           # ブラウザは 2 倍の板（256 × 160）に描く
+THREE = window.THREE
+ADDONS = window.ADDONS
+VIEW_W, VIEW_H = 640, 400
+
+
+def js(**kw):
+    return to_js(kw, dict_converter=window.Object.fromEntries)
+
+
+def rgb(color: tuple[int, int, int]) -> int:
+    r, g, b = color
+    return (r << 16) | (g << 8) | b
+
+
+def linear(c: int) -> float:
+    return (c / 255) ** 2.2
+
+
 canvas = document.querySelector("#screen")
-ctx = canvas.getContext("2d")
-ctx.imageSmoothingEnabled = False
-image = ctx.createImageData(WIDTH * SCALE, HEIGHT * SCALE)
 score_label = document.querySelector("#score")
 passed_label = document.querySelector("#passed")
 combo_label = document.querySelector("#combo")
@@ -769,27 +786,268 @@ message = document.querySelector("#message")
 again_button = document.querySelector("#again")
 go_button = document.querySelector("#go")
 
+# ── Three.js の舞台 ──────────────────────────────────────────────────────
 
-class CanvasScreen(Screen):
-    """CLI 版の Screen をそのまま使い、描き終えた画素をまとめて canvas へ送る。
+renderer = THREE.WebGLRenderer.new(js(canvas=canvas, antialias=True))
+PIXEL_RATIO = min(2.0, window.devicePixelRatio)
+renderer.setPixelRatio(PIXEL_RATIO)
+renderer.setSize(VIEW_W, VIEW_H, False)
+renderer.toneMapping = THREE.ACESFilmicToneMapping
+scene = THREE.Scene.new()
+scene.background = THREE.Color.new(rgb(SPACE))
+scene.fog = THREE.FogExp2.new(rgb(SPACE), 0.028)   # CLI 版の fog（FOG_FROM より奥は背景に溶ける）にあたる
+camera = THREE.PerspectiveCamera.new(2 * math.degrees(math.atan(CY / FOCUS)), VIEW_W / VIEW_H, 0.3, 300)
+composer = ADDONS.EffectComposer.new(renderer)
+composer.setPixelRatio(PIXEL_RATIO)
+composer.setSize(VIEW_W, VIEW_H)
+composer.addPass(ADDONS.RenderPass.new(scene, camera))
+bloom = ADDONS.UnrealBloomPass.new(THREE.Vector2.new(VIEW_W, VIEW_H), 0.55, 0.6, 0.7)   # 光る物（輪・ゲート・噴射）がにじむ
+composer.addPass(bloom)
+composer.addPass(ADDONS.OutputPass.new())
 
-    行の RGB を RGBA に組み替えるのもスライス代入（3 つおき → 4 つおき）。1 ドットずつ触らない。
-    """
+sun = THREE.DirectionalLight.new(0xfff4e6, 2.4)     # CLI 版の LIGHT_DIR（左上・手前から）と同じ向き
+sun.position.set(LIGHT_DIR[0] * 30, LIGHT_DIR[1] * 30, LIGHT_DIR[2] * 30)
+scene.add(sun)
+scene.add(THREE.AmbientLight.new(0x30365a, 0.9))
+rim = THREE.DirectionalLight.new(0x5a78ff, 0.9)     # 星雲の照り返し（奥から）
+rim.position.set(10, -5, 80)
+scene.add(rim)
 
-    def flush(self) -> None:
-        rgb = b"".join(self.rows)
-        count = len(rgb) // 3
-        rgba = bytearray(count * 4)
-        rgba[0::4] = rgb[0::3]
-        rgba[1::4] = rgb[1::3]
-        rgba[2::4] = rgb[2::3]
-        rgba[3::4] = b"\xff" * count
-        image.data.assign(bytes(rgba))
-        ctx.putImageData(image, 0, 0)
+
+def glow_texture(inner: str, outer: str = "rgba(0,0,0,0)") -> object:
+    """真ん中が明るく縁が透ける丸（canvas）。星雲・噴射・粒に使う。"""
+    cv = document.createElement("canvas")
+    cv.width = cv.height = 128
+    ctx = cv.getContext("2d")
+    grad = ctx.createRadialGradient(64, 64, 0, 64, 64, 64)
+    grad.addColorStop(0.0, inner)
+    grad.addColorStop(1.0, outer)
+    ctx.fillStyle = grad
+    ctx.fillRect(0, 0, 128, 128)
+    tex = THREE.CanvasTexture.new(cv)
+    tex.colorSpace = THREE.SRGBColorSpace
+    return tex
+
+
+NEBULA_TEX = glow_texture("rgba(255,255,255,0.9)")
+nebulae = []                                        # 星雲：奥に置いた大きな光の丸（足し算で重ねる）。カメラに付いて回る
+for i, (x, y, z, size, color) in enumerate(((-30, 20, 120, 90, 0x5a2a9a), (40, -10, 130, 110, 0x1e3c8a), (5, 35, 140, 80, 0x8a2a5a), (-45, -25, 125, 70, 0x1a6a7a))):
+    mat = THREE.SpriteMaterial.new(js(map=NEBULA_TEX, color=color, transparent=True, opacity=0.55, blending=THREE.AdditiveBlending, depthWrite=False, fog=False))
+    s = THREE.Sprite.new(mat)
+    s.position.set(x, y, z)
+    s.scale.set(size, size, 1)
+    scene.add(s)
+    nebulae.append(s)
+
+
+def make_points(count: int, spread: tuple[float, float, float], size: float, color: int, opacity: float = 0.9) -> object:
+    luck = random.Random(count)
+    flat = []
+    for _ in range(count):
+        flat += [luck.uniform(-spread[0], spread[0]), luck.uniform(-spread[1], spread[1]), luck.uniform(20, spread[2])]
+    geo = THREE.BufferGeometry.new()
+    geo.setAttribute("position", THREE.Float32BufferAttribute.new(to_js(flat), 3))
+    return THREE.Points.new(geo, THREE.PointsMaterial.new(js(color=color, size=size, sizeAttenuation=True, transparent=True, opacity=opacity, fog=False)))
+
+
+far_stars = make_points(1800, (120, 80, 200), 0.35, 0xdde4ff, 0.8)   # 遠くの星：動かない（カメラの回転だけ効く）
+scene.add(far_stars)
+
+STREAKS = len(World().stars)                        # 近くの星：CLI 版と同じ 90 個を、流線として線で描く
+streak_geo = THREE.BufferGeometry.new()
+streak_geo.setAttribute("position", THREE.Float32BufferAttribute.new(to_js([0.0] * (STREAKS * 6)), 3))
+streak_geo.setAttribute("color", THREE.Float32BufferAttribute.new(to_js([1.0] * (STREAKS * 6)), 3))
+streaks = THREE.LineSegments.new(streak_geo, THREE.LineBasicMaterial.new(js(vertexColors=True, transparent=True, opacity=0.9)))
+scene.add(streaks)
+
+RING_GEO = THREE.TorusGeometry.new(RING_R, 0.09, 8, 48)
+RING_MAT = THREE.MeshStandardMaterial.new(js(color=rgb(RING), emissive=rgb(RING), emissiveIntensity=1.6, roughness=0.4))
+rings = []                                          # トンネルの輪（使い回し 10 本）
+for _ in range(10):
+    m = THREE.Mesh.new(RING_GEO, RING_MAT)
+    m.visible = False
+    scene.add(m)
+    rings.append(m)
+
+gate_mesh = THREE.Mesh.new(THREE.TorusGeometry.new(GATE_R, 0.14, 10, 48),
+                           THREE.MeshStandardMaterial.new(js(color=rgb(GATE), emissive=rgb(GATE), emissiveIntensity=2.2, roughness=0.3)))
+gate_mesh.visible = False
+scene.add(gate_mesh)
+gate_core = THREE.Mesh.new(THREE.CircleGeometry.new(GATE_R - 0.15, 32),
+                           THREE.MeshBasicMaterial.new(js(color=rgb(GATE), transparent=True, opacity=0.18, side=THREE.DoubleSide, depthWrite=False)))
+gate_core.visible = False
+scene.add(gate_core)
+
+
+def rock_geometry(seed: int) -> object:
+    """でこぼこの岩。正二十面体の頂点を種で決めた量だけずらす（CLI 版の rock_shape と同じ考え）。"""
+    geo = THREE.IcosahedronGeometry.new(1.0, 1)
+    attr = geo.attributes.position
+    arr = attr.array
+    flat = []
+    for i in range(0, attr.count * 3, 3):
+        x, y, z = arr[i], arr[i + 1], arr[i + 2]
+        key = (round(x, 3), round(y, 3), round(z, 3))
+        k = 0.72 + 0.5 * random.Random(hash(key) ^ seed).random()
+        flat += [x * k, y * k, z * k]
+    arr.set(to_js(flat))
+    attr.needsUpdate = True
+    geo.computeVertexNormals()
+    return geo
+
+
+ROCK_GEOS = [rock_geometry(n) for n in range(6)]
+ROCK_MAT = THREE.MeshStandardMaterial.new(js(color=rgb(ROCK), roughness=0.95, metalness=0.05, flatShading=True, emissive=0x000000))
+DANGER_MAT = THREE.MeshStandardMaterial.new(js(color=rgb(ROCK_DANGER), roughness=0.9, metalness=0.05, flatShading=True,
+                                              emissive=rgb(ROCK_DANGER), emissiveIntensity=0.5))
+rock_meshes: dict[int, object] = {}                 # id(rock) → Mesh
+
+
+def make_ship() -> object:
+    """自機：CLI 版の SHIP_POINTS と同じ「先のとがった機体」。円錐の胴＋薄い翼＋噴射の玉。"""
+    group = THREE.Group.new()
+    body_mat = THREE.MeshStandardMaterial.new(js(color=rgb(SHIP), roughness=0.3, metalness=0.7))
+    body = THREE.Mesh.new(THREE.ConeGeometry.new(0.28, 1.7, 12), body_mat)
+    body.rotation.x = math.pi / 2
+    group.add(body)
+    wing = THREE.Mesh.new(THREE.BoxGeometry.new(1.9, 0.06, 0.7), THREE.MeshStandardMaterial.new(js(color=0x6a9ec0, roughness=0.4, metalness=0.6)))
+    wing.position.set(0, -0.05, -0.45)
+    group.add(wing)
+    fin = THREE.Mesh.new(THREE.BoxGeometry.new(0.06, 0.45, 0.5), body_mat)
+    fin.position.set(0, 0.25, -0.6)
+    group.add(fin)
+    flame = THREE.Sprite.new(THREE.SpriteMaterial.new(js(map=glow_texture("rgba(255,200,90,1)"), color=rgb(FLAME), transparent=True, blending=THREE.AdditiveBlending, depthWrite=False)))
+    flame.position.set(0, 0, -1.0)
+    flame.scale.set(0.7, 0.7, 1)
+    group.add(flame)
+    return group
+
+
+ship_mesh = make_ship()
+scene.add(ship_mesh)
+SPARKS = 320
+spark_geo = THREE.BufferGeometry.new()
+spark_geo.setAttribute("position", THREE.Float32BufferAttribute.new(to_js([0.0, -99.0, 0.0] * SPARKS), 3))
+spark_geo.setAttribute("color", THREE.Float32BufferAttribute.new(to_js([1.0, 1.0, 1.0] * SPARKS), 3))
+sparks_points = THREE.Points.new(spark_geo, THREE.PointsMaterial.new(js(size=0.16, vertexColors=True, transparent=True, opacity=0.95, map=glow_texture("rgba(255,255,255,1)"), blending=THREE.AdditiveBlending, depthWrite=False)))
+scene.add(sparks_points)
+sparks: list[list[float]] = []                      # [x, y, z, vx, vy, vz, life, r, g, b]
+fx_luck = random.Random(4)
+vignette = THREE.Sprite.new(THREE.SpriteMaterial.new(js(map=glow_texture("rgba(0,0,0,0)", "rgba(255,255,255,1)"), color=rgb(GLOW), transparent=True, opacity=0.0, depthTest=False)))
+vignette.scale.set(6.4, 4.0, 1)
+vignette.position.set(0, 0, -2.4)                   # カメラの子：画面の縁が光る（スレスレは黄、ぶつかったら赤）
+camera.add(vignette)
+scene.add(camera)
+
+
+def burst(x: float, y: float, z: float, count: int, color: tuple[int, int, int], speed: float = 3.0) -> None:
+    r, g, b = [c / 255 for c in color]
+    for _ in range(count):
+        a = fx_luck.uniform(0, math.tau)
+        u = fx_luck.uniform(-1, 1)
+        s = fx_luck.uniform(0.3, 1.0) * speed
+        sparks.append([x, y, z, math.cos(a) * s, u * s, fx_luck.uniform(-0.3, 0.3) * s, fx_luck.uniform(0.3, 0.8), r, g, b])
+
+
+def age_sparks(dt: float, speed: float) -> None:
+    flat, colors = [], []
+    for s in sparks:
+        s[0] += s[3] * dt
+        s[1] += s[4] * dt
+        s[2] += (s[5] - speed) * dt                 # 粒も世界と一緒に手前へ流れる
+        s[6] -= dt
+    sparks[:] = [s for s in sparks if s[6] > 0][-SPARKS:]
+    for s in sparks:
+        flat += [s[0], s[1], s[2]]
+        colors += [s[7], s[8], s[9]]
+    flat += [0.0, -99.0, 0.0] * (SPARKS - len(sparks))
+    colors += [1.0, 1.0, 1.0] * (SPARKS - len(sparks))
+    spark_geo.attributes.position.array.set(to_js(flat))
+    spark_geo.attributes.position.needsUpdate = True
+    spark_geo.attributes.color.array.set(to_js(colors))
+    spark_geo.attributes.color.needsUpdate = True
+
+
+def sync(world: World, dt: float) -> None:
+    """世界を Three.js の物に写す。カメラは cam_now（揺れ込み）と focus（速いほど広角）から。"""
+    cam = world.cam_now
+    focus = world.focus
+    camera.fov = 2 * math.degrees(math.atan(CY / focus))
+    camera.updateProjectionMatrix()
+    camera.up.set(-math.sin(cam.roll), math.cos(cam.roll), 0)   # 曲がると傾く（view() の -roll と同じ向き）
+    camera.position.set(cam.x + cam.jolt_x, EYE + cam.jolt_y, 0.0)
+    camera.lookAt(cam.x + cam.jolt_x, EYE + cam.jolt_y, 100.0)
+    for s in nebulae:                               # 星雲と遠い星はカメラに付いてくる（回転だけ効く）
+        pass
+    far_stars.position.set(cam.x, EYE, 0)
+    flat, colors = [], []
+    for star in world.stars:                        # 流線：CLI 版と同じ「前のコマの位置から線」
+        back = star.z + world.speed * STEP * STREAK
+        near = 1 - star.z / FAR
+        flat += [star.x, star.y, star.z, star.x, star.y, back]
+        c = [linear(int(f + (n - f) * near)) for f, n in zip(STAR_FAR, STAR_NEAR)]
+        colors += c + [v * 0.25 for v in c]
+    streak_geo.attributes.position.array.set(to_js(flat))
+    streak_geo.attributes.position.needsUpdate = True
+    streak_geo.attributes.color.array.set(to_js(colors))
+    streak_geo.attributes.color.needsUpdate = True
+    for i, m in enumerate(rings):
+        if i < len(world.rings):
+            m.visible = True
+            m.position.set(0, RING_Y, world.rings[i])
+            m.rotation.z = world.time * 0.15 + i
+        else:
+            m.visible = False
+    alive = set()
+    for rock in world.rocks:
+        key = id(rock)
+        alive.add(key)
+        mesh = rock_meshes.get(key)
+        if mesh is None:
+            mesh = THREE.Mesh.new(ROCK_GEOS[rock.seed % len(ROCK_GEOS)], ROCK_MAT)
+            mesh.scale.set(rock.radius, rock.radius, rock.radius)
+            scene.add(mesh)
+            rock_meshes[key] = mesh
+        mesh.position.set(rock.pos.x, rock.pos.y, rock.pos.z)
+        mesh.rotation.set(rock.angle.x, rock.angle.y, rock.angle.z)
+        danger = world.dangerous(rock)
+        mesh.material = DANGER_MAT if danger else ROCK_MAT
+    for key in list(rock_meshes):
+        if key not in alive:
+            scene.remove(rock_meshes.pop(key))
+    DANGER_MAT.emissiveIntensity = 0.5 + 0.4 * math.sin(world.time * 9)
+    gate = world.gate
+    if gate is not None and not gate.passed:
+        gate_mesh.visible = gate_core.visible = True
+        gate_mesh.position.set(gate.pos.x, gate.pos.y, gate.pos.z)
+        gate_core.position.set(gate.pos.x, gate.pos.y, gate.pos.z)
+        gate_mesh.rotation.z = world.time * 0.8
+        if fx_luck.random() < 0.5:                  # ゲートの縁からきらめき
+            a = fx_luck.uniform(0, math.tau)
+            burst(gate.pos.x + GATE_R * math.cos(a), gate.pos.y + GATE_R * math.sin(a), gate.pos.z, 1, GATE, 0.4)
+    else:
+        gate_mesh.visible = gate_core.visible = False
+    ship = world.ship
+    tilt = -world.aim.x * 0.5
+    ship_mesh.position.set(ship.x, ship.y, ship.z)
+    ship_mesh.rotation.set(0.1 - world.aim.y * 0.25, 0, tilt)
+    ship_mesh.visible = world.over or int(world.hurt * 12) % 2 == 0
+    flame = ship_mesh.children[3]
+    k = 0.6 + 0.3 * (world.speed - SPEED0) / (SPEED_MAX - SPEED0) + 0.15 * math.sin(world.time * 40)
+    flame.scale.set(k, k * 1.4, 1)
+    if world.started and not world.paused and fx_luck.random() < 0.6:   # 噴射の粒
+        burst(ship.x - 0.15 * math.sin(tilt), ship.y - 0.05, ship.z - 1.0, 1, FLAME, 0.6)
+    age_sparks(dt, world.speed if world.started and not world.paused else 0.0)
+    if world.flash > 0:
+        vignette.material.color.setHex(rgb(world.flash_color))
+        vignette.material.opacity = min(0.85, world.flash * 3.0)
+    else:
+        vignette.material.opacity = 0.0
+    bloom.strength = 0.55 + 0.35 * (world.speed - SPEED0) / (SPEED_MAX - SPEED0) + (0.4 if world.flash > 0 else 0.0)
 
 
 class Speaker:
-    """ブラウザで音を出す係。3 つの wav を data URI にして Audio に持たせておく。"""
+    """ブラウザで音を出す係。wav を data URI にして Audio に持たせておく。"""
 
     def __init__(self):
         self.made = {}
@@ -805,7 +1063,6 @@ class Speaker:
         sound.play()
 
 
-screen = CanvasScreen(WIDTH * SCALE, HEIGHT * SCALE)
 speaker = Speaker()
 world = World(seed=int(window.performance.now()))
 best = Best.parse(window.localStorage.getItem(SAVED) or "")
@@ -813,13 +1070,13 @@ improved = False
 frames = []
 
 
-def refresh() -> None:
-    draw(screen, world)
-    screen.flush()
+def refresh(dt: float = STEP) -> None:
+    sync(world, dt)
+    composer.render()
     score_label.textContent = str(world.score)
     passed_label.textContent = str(world.passed)
     combo_label.textContent = f"×{min(world.combo, COMBO_MAX)}" if world.combo > 1 else "―"
-    note_label.textContent = world.note if world.time < world.note_until else " "
+    note_label.textContent = world.note if world.time < world.note_until else " "
     note_label.style.color = ("#c0392b" if world.note.startswith("ぶつかった")
                               else "#2e8b57" if world.note.startswith("ゲート") else "#b8860b")
     lives_label.textContent = "♥" * world.lives + "♡" * (3 - world.lives)
@@ -831,7 +1088,7 @@ def refresh() -> None:
         message.textContent = (f"おしまい。点 {world.score}" + ("  ベスト更新！" if improved else f"（ベスト {best.score}）")
                                + "  「もう一度」で最初から")
     elif not world.started:
-        message.textContent = "「スタート」で始まります（矢印で動けます）"
+        message.textContent = "「スタート」で始まります（矢印・w a s d・画面のボタン。画面を左右になぞっても動けます）"
     elif world.paused:
         message.textContent = "一時停止中"
     else:
@@ -841,6 +1098,27 @@ def refresh() -> None:
     go_button.textContent = "▶ スタート" if not world.started else "▶ つづける" if world.paused else "❚❚ 一時停止"
 
 
+def effect(event: str | None) -> None:
+    """出来事の演出：スレスレは黄の粒、ぶつかると赤い破片、ゲートは緑の輪、終わりは爆発。"""
+    if event is None:
+        return
+    s = world.ship
+    if event in ("graze", "near"):
+        burst(s.x, s.y, s.z + 0.5, 14 if event == "graze" else 6, GLOW, 2.5)
+    elif event == "hit":
+        burst(s.x, s.y, s.z + 0.3, 40, BLOOD, 4.0)
+        burst(s.x, s.y, s.z + 0.3, 20, ROCK, 3.0)
+    elif event == "gate":
+        g = world.gate
+        if g is not None:
+            for _ in range(48):
+                a = fx_luck.uniform(0, math.tau)
+                burst(g.pos.x + GATE_R * math.cos(a), g.pos.y + GATE_R * math.sin(a), g.pos.z, 1, GATE, 1.5)
+    elif event in ("over", "best"):
+        burst(s.x, s.y, s.z, 120, FLAME, 6.0)
+        burst(s.x, s.y, s.z, 60, SHIP, 5.0)
+
+
 async def loop():
     """刻み幅は CLI 版と同じ STEP に固定する（g64 で入れた）。"""
     global improved
@@ -848,6 +1126,7 @@ async def loop():
     last = window.performance.now() / 1000
     while True:
         now = window.performance.now() / 1000
+        frame_dt = min(0.1, now - last)
         lag = min(lag + now - last, 0.25)           # ためすぎない（重い端末で追いつけなくなる）
         last = now
         while lag >= STEP:
@@ -856,9 +1135,10 @@ async def loop():
                 improved = best.take(world)
                 window.localStorage.setItem(SAVED, best.dump())
                 event = "best" if improved else event
+            effect(event)
             speaker.say(event)
             lag -= STEP
-        refresh()
+        refresh(frame_dt)
         frames.append(window.performance.now() / 1000)
         del frames[:-30]
         if len(frames) >= 2:
@@ -894,11 +1174,52 @@ def go(event):
     refresh()
 
 
-@when("click", "#screen")
-def tap_screen(event):
-    """画面をタップしても 始める／止める（スマホ用）。"""
-    obey(world, "go")
+# 画面をなぞって動く（スマホ）。指の位置と自機の位置の差で向きを決める。タップだけなら 始める／止める
+touch = {"down": False, "x": 0.0, "y": 0.0, "moved": False, "t": 0.0}
+
+
+def steer(event) -> None:
+    rect = canvas.getBoundingClientRect()
+    fx = (event.clientX - rect.left) / rect.width * 2 - 1
+    fy = -((event.clientY - rect.top) / rect.height * 2 - 1)
+    want_x = fx * REACH_X
+    want_y = REACH_Y[0] + (fy + 1) / 2 * (REACH_Y[1] - REACH_Y[0])
+    dx, dy = want_x - world.ship.x, want_y - world.ship.y
+    world.aim = V(0.0 if abs(dx) < 0.25 else (1.0 if dx > 0 else -1.0), 0.0 if abs(dy) < 0.25 else (1.0 if dy > 0 else -1.0), 0)
+
+
+@when("pointerdown", "#screen")
+def press(event):
+    event.preventDefault()
+    touch.update(down=True, x=event.clientX, y=event.clientY, moved=False, t=window.performance.now())
+
+
+@when("pointermove", "#screen")
+def slide(event):
+    if not touch["down"]:
+        return
+    if abs(event.clientX - touch["x"]) > 8 or abs(event.clientY - touch["y"]) > 8:
+        touch["moved"] = True
+    if touch["moved"] and world.started and not world.paused:
+        steer(event)
+
+
+@when("pointerup", "#screen")
+def release(event):
+    if not touch["down"]:
+        return
+    touch["down"] = False
+    if touch["moved"]:
+        obey(world, "stop")
+    else:
+        obey(world, "go")
     refresh()
+
+
+@when("pointercancel", "#screen")
+def cancel(event):
+    touch["down"] = False
+    obey(world, "stop")
 
 
 @when("pointerdown", ".pad button[data-key]")
@@ -921,6 +1242,9 @@ def pad_leave(event):
 def again(event):
     global world, improved
     world = World(seed=int(window.performance.now()), started=True)
+    for key in list(rock_meshes):
+        scene.remove(rock_meshes.pop(key))
+    sparks.clear()
     improved = False
     refresh()
 
