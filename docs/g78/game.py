@@ -981,7 +981,8 @@ def sky_for(index: int) -> tuple[object, object]:
     return SKIES[index], ENVS[index]
 
 
-planet = THREE.Mesh.new(THREE.SphereGeometry.new(14, 32, 24), THREE.MeshStandardMaterial.new(js(color=0x3a6fc0, roughness=0.9, fog=False)))
+planet = THREE.Mesh.new(THREE.SphereGeometry.new(9.8, 32, 24),   # 大きさは 70%（14 → 9.8）
+                        THREE.MeshStandardMaterial.new(js(color=0x3a6fc0, roughness=0.8, fog=False, emissive=0x3a6fc0, emissiveIntensity=0.8)))   # 影の側も見えるよう自分で光る
 planet.position.set(-38, 14, 110)
 scene.add(planet)
 GLOW_TEX = None
@@ -1003,7 +1004,7 @@ def glow_texture(inner: str, outer: str = "rgba(0,0,0,0)") -> object:
 
 
 planet_glow = THREE.Sprite.new(THREE.SpriteMaterial.new(js(map=glow_texture("rgba(255,255,255,0.9)"), color=0x8fc0ff, transparent=True, opacity=0.7, blending=THREE.AdditiveBlending, depthWrite=False, fog=False)))
-planet_glow.scale.set(40, 40, 1)
+planet_glow.scale.set(28, 28, 1)
 planet_glow.position.copy(planet.position)
 scene.add(planet_glow)
 
@@ -1018,6 +1019,7 @@ def apply_theme(stage: int) -> None:
     scene.fog.color.setHex(rgb(theme["space"]))
     body, glow, px, py = theme["planet"]
     planet.material.color.setHex(body)
+    planet.material.emissive.setHex(body)
     planet_glow.material.color.setHex(glow)
     planet.position.set(px, py, 110)
     planet_glow.position.set(px, py, 108)
