@@ -1332,12 +1332,12 @@ def sync(world: World, dt: float) -> None:
     tunnel_mat.uniforms.uSpeed.value = frac if world.started and not world.paused else 0.0
     tunnel_mat.uniforms.uWarp.value = warp
     tunnel.position.z = FAR / 2 + (world.rings[0] % RING_GAP if world.rings else 0) * 0.0
-    for m in back_rocks:                            # 奥の層はゆっくり流れ、手前に来たら奥へ戻す
-        m.position.z -= world.speed * 0.12 * dt if world.started and not world.paused else 0.0
-        m.rotation.y += 0.05 * dt
-        if m.position.z < 30:
-            m.position.z = 95
-            m.position.x = back_luck.uniform(-45, 45)
+    for m in back_rocks:                            # 奥の層はごくゆっくり流れ（速さの 3%）、近づく前に奥へ戻す
+        m.position.z -= world.speed * 0.03 * dt if world.started and not world.paused else 0.0
+        m.rotation.y += 0.03 * dt
+        if m.position.z < 50:
+            m.position.z = 110
+            m.position.x = back_luck.uniform(-50, 50)
     flat, colors = [], []
     stretch = 1.0 + 4.0 * warp                      # ワープ中は星が長い線になる
     for star in world.stars:                        # 流線：CLI 版と同じ「前のコマの位置から線」
