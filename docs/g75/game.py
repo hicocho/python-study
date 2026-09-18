@@ -413,7 +413,7 @@ space_mesh.castShadow = True
 kb_scene.add(space_mesh)
 kb_keys["space"] = dict(mesh=space_mesh, x=KB_LEFT + 6.2, z=4 * KEY_STEP, finger=Finger.THUMB, base_y=0.0, top=space_top)
 
-# 手：指先の球 10 個と、手のひらの板。ホームポジションに置き、次に押す指だけキーの上へ
+# 手：指先の球 10 個。ホームポジションに置き、次に押す指だけキーの上へ（手のひらは 2026-09-19 に消した。キーを隠して邪魔だった）
 SKIN = THREE.MeshStandardMaterial.new(js(color=0xf1c9a5, roughness=0.75))
 SKIN_NEXT = THREE.MeshStandardMaterial.new(js(color=0xffe0b0, roughness=0.5, emissive=0xffb040, emissiveIntensity=0.6))
 kb_tips: dict[Finger, dict] = {}
@@ -432,15 +432,6 @@ for side, x in (("L", kb_keys["space"]["x"] - 1.2), ("R", kb_keys["space"]["x"] 
     tip.position.set(x, 0.55, kb_keys["space"]["z"] + 0.1)
     kb_scene.add(tip)
     kb_tips[("thumb", side)] = dict(mesh=tip, home=(x, 0.55, kb_keys["space"]["z"] + 0.1), want=[x, 0.55, kb_keys["space"]["z"] + 0.1])
-kb_palms = []
-for fingers in ((Finger.L_PINKY, Finger.L_RING, Finger.L_MIDDLE, Finger.L_INDEX), (Finger.R_INDEX, Finger.R_MIDDLE, Finger.R_RING, Finger.R_PINKY)):
-    xs = [kb_tips[f]["home"][0] for f in fingers]
-    palm = THREE.Mesh.new(THREE.SphereGeometry.new(1.0, 20, 14), SKIN)
-    palm.scale.set(1.9, 0.45, 1.3)
-    palm.position.set(sum(xs) / 4, 0.75, kb_keys["f"]["z"] + 2.2)
-    palm.castShadow = True
-    kb_scene.add(palm)
-    kb_palms.append(palm)
 kb_glow = THREE.Mesh.new(THREE.RingGeometry.new(0.6, 0.78, 32), THREE.MeshBasicMaterial.new(js(color=0xffe37a, transparent=True, opacity=0.9, side=THREE.DoubleSide)))
 kb_glow.rotation.x = -math.pi / 2
 kb_glow.visible = False
@@ -540,12 +531,6 @@ def kb_tick(dt: float) -> None:
         m.position.x += (wx - m.position.x) * 0.22
         m.position.y += (wy + (0.08 * math.sin(t * 7) if tip["mesh"].material is SKIN_NEXT else 0.0) - m.position.y) * 0.22
         m.position.z += (wz - m.position.z) * 0.22
-    for side, palm in zip(("L", "R"), kb_palms):    # 手のひらは指先の平均に付いていく
-        fingers = [f for f in kb_tips if not isinstance(f, tuple) and f.name.startswith(side)]
-        xs = [kb_tips[f]["mesh"].position.x for f in fingers]
-        zs = [kb_tips[f]["mesh"].position.z for f in fingers]
-        palm.position.x += (sum(xs) / len(xs) - palm.position.x) * 0.15
-        palm.position.z += (sum(zs) / len(zs) + 2.0 - palm.position.z) * 0.15
     nxt = kb_state["next"]
     if nxt is not None:
         kb_keys[nxt]["top"].emissiveIntensity = 0.55 + 0.4 * math.sin(t * 6)
