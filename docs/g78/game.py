@@ -1419,8 +1419,6 @@ def sync(world: World, dt: float) -> None:
         emit(M * ship.x - 0.15 * math.sin(M * tilt), ship.y - 0.05, ship.z - 1.0, 2, (255, 170 + int(60 * frac), 60 + int(150 * frac)), 0.3, 0.25, 0.4, world.time)
         if fx_luck.random() < 0.3:
             emit(M * ship.x, ship.y - 0.1, ship.z - 1.2, 1, (255, 240, 200), 1.2, 0.4, 0.25, world.time)
-        if fx_luck.random() < 0.25:                 # 煙は少なく・小さく・短く（多いと画面が見えない）
-            emit(M * ship.x, ship.y, ship.z - 1.3, 1, (90, 90, 110), 0.2, 0.7, 0.6, world.time)
     part_mat.uniforms.uTime.value = world.time
     part_mat.uniforms.uDrift.value = world.speed if world.started and not world.paused and not world.over else 0.0
     if world.flash > 0:
