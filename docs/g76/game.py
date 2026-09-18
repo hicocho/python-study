@@ -13,6 +13,7 @@ CLI 版（g76-type-kana/main.py）と中身はまったく同じ。ローマ字�
 持ってこなかったのは端末の描画（paint / show / run）と Speaker と検査だけ。
 """
 
+import asyncio
 import base64
 import io
 import math
@@ -26,6 +27,7 @@ from enum import Enum
 from itertools import product
 from statistics import fmean
 
+from pyodide.ffi import create_proxy, to_js
 from pyscript import document, when, window
 PASS = 0.95                                         # 次の段階へ行ける正確さ
 
@@ -448,6 +450,269 @@ def report(game: Game) -> list[str]:
         worst = sorted(game.miss_by.items(), key=lambda kv: -kv[1])
         lines.append("ミスの多い指: " + "  ".join(f"{name} {n}" for name, n in worst[:3]))
     return lines
+# --- 3D のキーボードと手（g75〜g77 で共有。2026-09-19）---------------------------------------
+#   keyboard_view() の表（文字・指・状態）を Three.js のキーに写す。判定は 1 文字も変えていない。
+#   キーは押すと沈み（GSAP のばね）、次に押すキーが光り、その指の「手」がキーの上へ動く。
+#   音は Tone.js：指ごとに音の高さが違う（左小指が低く、右小指が高い）。間違えると濁る。
+
+THREE = window.THREE
+GSAP = getattr(window, "gsap", None)
+TONE = getattr(window, "Tone", None)
+KB_W, KB_H = 640, 360
+
+
+def js(**kw):
+    return to_js(kw, dict_converter=window.Object.fromEntries)
+
+
+FINGER_COLOR = {                                    # CSS の指の色と同じ
+    Finger.L_PINKY: 0xf2a7b3, Finger.L_RING: 0xf6c98b, Finger.L_MIDDLE: 0xc7e08c, Finger.L_INDEX: 0x8fd0e8,
+    Finger.R_INDEX: 0xa9c4f5, Finger.R_MIDDLE: 0xb9e2a0, Finger.R_RING: 0xf8d59a, Finger.R_PINKY: 0xf5b2c4, Finger.THUMB: 0xcfcfcf,
+}
+FINGER_NOTE = {                                     # 指ごとの音（五音音階。左から右へ上がる）
+    Finger.L_PINKY: "C4", Finger.L_RING: "D4", Finger.L_MIDDLE: "E4", Finger.L_INDEX: "G4",
+    Finger.R_INDEX: "A4", Finger.R_MIDDLE: "C5", Finger.R_RING: "D5", Finger.R_PINKY: "E5", Finger.THUMB: "G3",
+}
+HOME_OF = {                                         # 指 → ホームポジションのキー
+    Finger.L_PINKY: "a", Finger.L_RING: "s", Finger.L_MIDDLE: "d", Finger.L_INDEX: "f",
+    Finger.R_INDEX: "j", Finger.R_MIDDLE: "k", Finger.R_RING: "l", Finger.R_PINKY: ";", Finger.THUMB: "space",
+}
+KEY_STEP = 1.0                                      # キーの間隔（世界の単位）
+KEY_SIZE = 0.86
+KEY_HEIGHT = 0.4
+
+kb_canvas = document.querySelector("#board3d")
+kb_renderer = THREE.WebGLRenderer.new(js(canvas=kb_canvas, antialias=True, alpha=True))
+kb_renderer.setPixelRatio(min(2.0, window.devicePixelRatio))
+kb_renderer.setSize(KB_W, KB_H, False)
+kb_renderer.shadowMap.enabled = True
+kb_renderer.shadowMap.type = THREE.PCFSoftShadowMap
+kb_scene = THREE.Scene.new()
+kb_camera = THREE.PerspectiveCamera.new(38, KB_W / KB_H, 0.5, 100)
+KB_CAM = (0.0, 9.5, 8.8)
+KB_LOOK = (0.0, 0.0, 1.4)
+kb_camera.position.set(*KB_CAM)
+kb_camera.lookAt(*KB_LOOK)
+kb_key = THREE.DirectionalLight.new(0xffffff, 2.2)
+kb_key.position.set(-4, 10, 6)
+kb_key.castShadow = True
+kb_key.shadow.mapSize.set(1024, 1024)
+for _name, _value in (("left", -9), ("right", 9), ("top", 6), ("bottom", -6), ("near", 1), ("far", 40)):
+    setattr(kb_key.shadow.camera, _name, _value)
+kb_scene.add(kb_key)
+kb_scene.add(THREE.HemisphereLight.new(0xe8f0ff, 0x8a7a6a, 0.9))
+
+
+def key_label(text: str, finger: Finger) -> object:
+    """キーの上面の絵：指の色の地に字。"""
+    cv = document.createElement("canvas")
+    cv.width = cv.height = 64
+    ctx = cv.getContext("2d")
+    c = FINGER_COLOR[finger]
+    ctx.fillStyle = f"rgb({(c >> 16) & 255},{(c >> 8) & 255},{c & 255})"
+    ctx.fillRect(0, 0, 64, 64)
+    ctx.fillStyle = "#1f2328"
+    ctx.textAlign = "center"
+    ctx.textBaseline = "middle"
+    ctx.font = "bold 30px sans-serif" if len(text) == 1 else "bold 20px sans-serif"
+    ctx.fillText(text, 32, 34)
+    tex = THREE.CanvasTexture.new(cv)
+    tex.colorSpace = THREE.SRGBColorSpace
+    return tex
+
+
+kb_keys: dict[str, dict] = {}                       # 文字 → {mesh, x, z, finger, base_y, top}。g77 は lift（苦手の高さ）を足す
+kb_side_mats: dict[Finger, object] = {finger: THREE.MeshStandardMaterial.new(js(color=color, roughness=0.6)) for finger, color in FINGER_COLOR.items()}
+plate = THREE.Mesh.new(THREE.BoxGeometry.new(15.0, 0.5, 6.4), THREE.MeshStandardMaterial.new(js(color=0x5c6270, roughness=0.7, metalness=0.2)))
+plate.position.set(0.3, -0.45, 1.5)
+plate.receiveShadow = True
+kb_scene.add(plate)
+KB_LEFT = -6.2
+for row, (chars, offset) in enumerate(ROWS):
+    for column, char in enumerate(chars):
+        finger = KEYS[char].finger
+        x = KB_LEFT + (column + offset) * KEY_STEP
+        z = row * KEY_STEP
+        top = THREE.MeshStandardMaterial.new(js(map=key_label(char, finger), roughness=0.55, emissive=0x000000))
+        side = kb_side_mats[finger]
+        mesh = THREE.Mesh.new(THREE.BoxGeometry.new(KEY_SIZE, KEY_HEIGHT, KEY_SIZE), to_js([side, side, top, side, side, side]))
+        mesh.position.set(x, 0.0, z)
+        mesh.castShadow = True
+        mesh.receiveShadow = True
+        kb_scene.add(mesh)
+        kb_keys[char] = dict(mesh=mesh, x=x, z=z, finger=finger, base_y=0.0, top=top)
+        if char in "fj":                            # 突起
+            bump = THREE.Mesh.new(THREE.BoxGeometry.new(0.3, 0.05, 0.06), THREE.MeshStandardMaterial.new(js(color=0x333333)))
+            bump.position.set(0, KEY_HEIGHT / 2 + 0.02, 0.3)
+            mesh.add(bump)
+space_top = THREE.MeshStandardMaterial.new(js(map=key_label("空白", Finger.THUMB), roughness=0.55, emissive=0x000000))
+space_mesh = THREE.Mesh.new(THREE.BoxGeometry.new(6.0, KEY_HEIGHT, KEY_SIZE), to_js([kb_side_mats[Finger.THUMB]] * 2 + [space_top] + [kb_side_mats[Finger.THUMB]] * 3))
+space_mesh.position.set(KB_LEFT + 6.2, 0.0, 4 * KEY_STEP)
+space_mesh.castShadow = True
+kb_scene.add(space_mesh)
+kb_keys["space"] = dict(mesh=space_mesh, x=KB_LEFT + 6.2, z=4 * KEY_STEP, finger=Finger.THUMB, base_y=0.0, top=space_top)
+
+# 手：指先の球 10 個と、手のひらの板。ホームポジションに置き、次に押す指だけキーの上へ
+SKIN = THREE.MeshStandardMaterial.new(js(color=0xf1c9a5, roughness=0.75))
+SKIN_NEXT = THREE.MeshStandardMaterial.new(js(color=0xffe0b0, roughness=0.5, emissive=0xffb040, emissiveIntensity=0.6))
+kb_tips: dict[Finger, dict] = {}
+for finger, home in HOME_OF.items():
+    if finger == Finger.THUMB:
+        continue
+    k = kb_keys[home]
+    tip = THREE.Mesh.new(THREE.SphereGeometry.new(0.3, 16, 12), SKIN)
+    tip.castShadow = True
+    tip.position.set(k["x"], 0.55, k["z"] + 0.15)
+    kb_scene.add(tip)
+    kb_tips[finger] = dict(mesh=tip, home=(k["x"], 0.55, k["z"] + 0.15), want=[k["x"], 0.55, k["z"] + 0.15])
+for side, x in (("L", kb_keys["space"]["x"] - 1.2), ("R", kb_keys["space"]["x"] + 1.2)):   # 親指は 2 本
+    tip = THREE.Mesh.new(THREE.SphereGeometry.new(0.3, 16, 12), SKIN)
+    tip.castShadow = True
+    tip.position.set(x, 0.55, kb_keys["space"]["z"] + 0.1)
+    kb_scene.add(tip)
+    kb_tips[("thumb", side)] = dict(mesh=tip, home=(x, 0.55, kb_keys["space"]["z"] + 0.1), want=[x, 0.55, kb_keys["space"]["z"] + 0.1])
+kb_palms = []
+for fingers in ((Finger.L_PINKY, Finger.L_RING, Finger.L_MIDDLE, Finger.L_INDEX), (Finger.R_INDEX, Finger.R_MIDDLE, Finger.R_RING, Finger.R_PINKY)):
+    xs = [kb_tips[f]["home"][0] for f in fingers]
+    palm = THREE.Mesh.new(THREE.SphereGeometry.new(1.0, 20, 14), SKIN)
+    palm.scale.set(1.9, 0.45, 1.3)
+    palm.position.set(sum(xs) / 4, 0.75, kb_keys["f"]["z"] + 2.2)
+    palm.castShadow = True
+    kb_scene.add(palm)
+    kb_palms.append(palm)
+kb_glow = THREE.Mesh.new(THREE.RingGeometry.new(0.6, 0.78, 32), THREE.MeshBasicMaterial.new(js(color=0xffe37a, transparent=True, opacity=0.9, side=THREE.DoubleSide)))
+kb_glow.rotation.x = -math.pi / 2
+kb_glow.visible = False
+kb_scene.add(kb_glow)
+
+kb_state = {"next": None, "miss": None, "time": 0.0, "shake": 0.0, "streak": 0, "zoom": 0.0}
+
+
+def kb_note_start() -> None:
+    """Tone.js の楽器。人が触った処理（keydown）の中で 1 回だけ作る。"""
+    if TONE is None or kb_state.get("synth") is not None:
+        return
+    try:
+        TONE.start()
+        synth = TONE.PolySynth.new(TONE.Synth, js(oscillator=js(type="triangle"), envelope=js(attack=0.005, decay=0.12, sustain=0.1, release=0.25))).toDestination()
+        synth.volume.value = -12
+        kb_state["synth"] = synth
+    except Exception:
+        kb_state["synth"] = False
+
+
+def kb_sound(char: str, ok: bool) -> bool:
+    """打鍵の音。合えばその指の音、違えば濁った低い 2 音。鳴らせたら True。"""
+    synth = kb_state.get("synth")
+    if not synth:
+        return False
+    try:
+        now = TONE.now()
+        if ok:
+            finger = kb_keys[char]["finger"] if char in kb_keys else Finger.THUMB
+            synth.triggerAttackRelease(FINGER_NOTE[finger], "16n", now)
+        else:
+            synth.triggerAttackRelease(to_js(["E2", "F2"]), "8n", now)
+        return True
+    except Exception:
+        return False
+
+
+def kb_pressed(char: str, ok: bool) -> None:
+    """キーが押された：沈んで戻る（ばね）。間違いは赤く光り、カメラが少し揺れる。"""
+    name = "space" if char == " " else char
+    k = kb_keys.get(name)
+    if k is None:
+        return
+    mesh = k["mesh"]
+    if GSAP is not None:
+        GSAP.fromTo(mesh.position, js(y=k["base_y"] - 0.18), js(y=k["base_y"], duration=0.32, ease="elastic.out(1, 0.35)"))
+    if ok:
+        kb_state["streak"] += 1
+    else:
+        kb_state["streak"] = 0
+        kb_state["shake"] = 0.25
+
+
+def kb_refresh(game) -> None:
+    """keyboard_view() の表を読んで、光るキー・赤いキー・手の位置を決める。"""
+    kb_state["next"] = kb_state["miss"] = None
+    for row in keyboard_view(game):
+        for char, finger, state in row:
+            k = kb_keys[char]
+            top = k["top"]
+            if state == "next":
+                kb_state["next"] = char
+                top.emissive.setHex(0xffe37a)
+                top.emissiveIntensity = 0.8
+            elif state == "miss":
+                kb_state["miss"] = char
+                top.emissive.setHex(0xd9463b)
+                top.emissiveIntensity = 0.9
+            else:
+                top.emissiveIntensity = 0.0
+    for finger, tip in kb_tips.items():             # 手：みんなホームへ。次に押す指だけキーの上へ
+        tip["want"] = list(tip["home"])
+        tip["mesh"].material = SKIN
+    nxt = kb_state["next"]
+    if nxt is not None:
+        k = kb_keys[nxt]
+        if k["finger"] == Finger.THUMB:
+            tip = kb_tips[("thumb", "R")]
+        else:
+            tip = kb_tips[k["finger"]]
+        tip["want"] = [k["x"], 0.85 + k.get("lift", 0.0), k["z"] + 0.1]
+        tip["mesh"].material = SKIN_NEXT
+        kb_glow.visible = True
+        kb_glow.position.set(k["x"], KEY_HEIGHT / 2 + 0.02 + k.get("lift", 0.0), k["z"])
+    else:
+        kb_glow.visible = False
+
+
+def kb_tick(dt: float) -> None:
+    """毎コマ：指を目標へ、光を脈打たせ、揺れを減らす。"""
+    kb_state["time"] += dt
+    t = kb_state["time"]
+    for tip in kb_tips.values():
+        m = tip["mesh"]
+        wx, wy, wz = tip["want"]
+        m.position.x += (wx - m.position.x) * 0.22
+        m.position.y += (wy + (0.08 * math.sin(t * 7) if tip["mesh"].material is SKIN_NEXT else 0.0) - m.position.y) * 0.22
+        m.position.z += (wz - m.position.z) * 0.22
+    for side, palm in zip(("L", "R"), kb_palms):    # 手のひらは指先の平均に付いていく
+        fingers = [f for f in kb_tips if not isinstance(f, tuple) and f.name.startswith(side)]
+        xs = [kb_tips[f]["mesh"].position.x for f in fingers]
+        zs = [kb_tips[f]["mesh"].position.z for f in fingers]
+        palm.position.x += (sum(xs) / len(xs) - palm.position.x) * 0.15
+        palm.position.z += (sum(zs) / len(zs) + 2.0 - palm.position.z) * 0.15
+    nxt = kb_state["next"]
+    if nxt is not None:
+        kb_keys[nxt]["top"].emissiveIntensity = 0.55 + 0.4 * math.sin(t * 6)
+        kb_glow.material.opacity = 0.55 + 0.4 * math.sin(t * 6)
+        kb_glow.rotation.z = t * 1.5
+    kb_state["shake"] = max(0.0, kb_state["shake"] - dt)
+    sx = 0.12 * math.sin(t * 80) * (kb_state["shake"] / 0.25) if kb_state["shake"] > 0 else 0.0
+    zoom = 0.0 if kb_state["streak"] > 0 or kb_state["miss"] is None else 1.0   # 間違えた直後は少し寄る
+    kb_state["zoom"] += (zoom - kb_state["zoom"]) * 0.08
+    z = kb_state["zoom"]
+    kb_camera.position.set(KB_CAM[0] + sx, KB_CAM[1] - 1.6 * z, KB_CAM[2] - 1.5 * z)
+    kb_camera.lookAt(KB_LOOK[0] + sx, KB_LOOK[1], KB_LOOK[2])
+
+
+kb_extra = []                                       # 各課題が足す毎コマの処理（g76 の言葉の板、g77 の苦手の高さ）
+
+
+async def kb_loop():
+    last = window.performance.now() / 1000
+    while True:
+        now = window.performance.now() / 1000
+        dt = min(0.1, now - last)
+        last = now
+        kb_tick(dt)
+        for fn in kb_extra:
+            fn(dt)
+        kb_renderer.render(kb_scene, kb_camera)
+        await asyncio.sleep(1 / 30)
 
 
 # --- ここから下はブラウザ版だけ。CLI 版の paint() / show() / run() にあたる ---
@@ -460,7 +725,6 @@ acc_label = document.querySelector("#acc")
 kana_box = document.querySelector("#kana")
 text_box = document.querySelector("#text")
 next_box = document.querySelector("#next")
-board = document.querySelector("#board")
 report_box = document.querySelector("#report")
 message = document.querySelector("#message")
 next_button = document.querySelector("#go")
@@ -491,29 +755,6 @@ game = Game()
 speaker = Speaker()
 
 
-def build_board() -> None:
-    """キーボードの <div> を、共有の ROWS から 1 回だけ組む。"""
-    for row, (chars, offset) in enumerate(ROWS):
-        line = document.createElement("div")
-        line.className = "row"
-        line.style.paddingLeft = f"{offset * 2.2}rem"
-        for char in chars:
-            cell = document.createElement("span")
-            cell.className = "key " + FINGER_CLASS[KEYS[char].finger]
-            cell.setAttribute("data-key", char)
-            cell.textContent = char
-            line.appendChild(cell)
-        board.appendChild(line)
-    line = document.createElement("div")
-    line.className = "row"
-    line.style.paddingLeft = "7rem"
-    cell = document.createElement("span")
-    cell.className = "key space " + FINGER_CLASS[Finger.THUMB]
-    cell.setAttribute("data-key", "space")
-    cell.textContent = "空白"
-    line.appendChild(cell)
-    board.appendChild(line)
-
 
 def refresh() -> None:
     """CLI 版の show() にあたる。keyboard_view() の表をクラス名に写す。"""
@@ -543,14 +784,143 @@ def refresh() -> None:
                               f"<span class='{FINGER_CLASS[key.finger]} tag'>{key.finger.value}</span>")
     else:
         next_box.textContent = ""
-    for row in keyboard_view(game):
-        for char, finger, state in row:
-            cell = board.querySelector(f'[data-key="{char}"]')
-            cell.className = f"key {FINGER_CLASS[finger]} {state}" + (" space" if char == "space" else "")
+    kb_refresh(game)                                # 3D のキーボードと手に写す
     report_box.textContent = "\n".join(report(game)) if game.done else ""
     message.textContent = game.message
     next_button.hidden = not game.done
     next_button.textContent = "つぎの段階へ →" if game.passed else "もう一度（別の文で）"
+
+
+# --- 言葉の板が奥から迫ってくる（g76 だけ。2026-09-19）--------------------------------------
+#   いま打つことばを 1 枚の板に描き、キーボードの奥から手前へ流す。打ち終わると板は上へ飛び去り、
+#   次のことばが奥から来る。板が手前まで来ても判定は変わらない（赤くなって揺れるだけ）。
+#   Python が持つのは「何番目のことばか」「いつ出たか」「どこまで打てたか」。絵は Three.js に任せる。
+
+WORD_FAR, WORD_NEAR = (0.3, 2.1, -3.0), (0.3, 1.25, -0.5)   # 板の (x, y, z)：出発点と到着点（キーの奥、上の帯）
+WORD_SECONDS_BASE, WORD_SECONDS_PER_KEY = 1.2, 0.55   # 到着までの時間 = 基本 + 字数 × これ
+
+word_canvas = document.createElement("canvas")
+word_canvas.width, word_canvas.height = 512, 128
+word_tex = THREE.CanvasTexture.new(word_canvas)
+word_tex.colorSpace = THREE.SRGBColorSpace
+word_mat = THREE.MeshBasicMaterial.new(js(map=word_tex, transparent=True, side=THREE.DoubleSide))
+word_board = THREE.Mesh.new(THREE.PlaneGeometry.new(6.4, 1.6), word_mat)
+word_board.position.set(*WORD_FAR)
+word_board.rotation.x = -0.45
+kb_scene.add(word_board)
+word_state = {"ident": None, "index": -1, "born": 0.0, "seconds": 1.0, "drawn": None, "flying": False, "flew": 0.0}
+
+
+def word_index(game) -> int:
+    """いま打っている「ことば」が文の何番目か（空白の単位で区切る）。"""
+    return sum(1 for unit in game.units[:game.done_units()] if unit == " ")
+
+
+def word_span(game, index: int) -> tuple[int, int]:
+    """index 番目のことばが単位のどこからどこまでか。"""
+    start = 0
+    for n in range(index):
+        start = game.units.index(" ", start) + 1
+    end = game.units.index(" ", start) if " " in game.units[start:] else len(game.units)
+    return start, end
+
+
+def word_keys_left(game, index: int) -> int:
+    """そのことばで、まだ打っていないローマ字の数（時間の目安に使う）。"""
+    start, end = word_span(game, index)
+    i, partial = game.best()
+    total = 0
+    for j in range(max(i, start), end):
+        total += len(spellings(game.units, j)[0])
+    return max(1, total - len(partial))
+
+
+def draw_word(game, index: int, arrived: bool) -> None:
+    """板の絵：かな（打った分は緑）と、その下にローマ字のおすすめの綴り。"""
+    start, end = word_span(game, index)
+    done = game.done_units()
+    i, partial = game.best()
+    ctx = word_canvas.getContext("2d")
+    ctx.clearRect(0, 0, 512, 128)
+    ctx.fillStyle = "rgba(217,70,59,0.92)" if arrived else "rgba(28,32,44,0.88)"
+    ctx.beginPath()
+    ctx.roundRect(4, 4, 504, 120, 18)
+    ctx.fill()
+    ctx.strokeStyle = "#ffe37a" if not arrived else "#ffffff"
+    ctx.lineWidth = 4
+    ctx.stroke()
+    ctx.textAlign = "center"
+    ctx.textBaseline = "middle"
+    kana = "".join(game.shown[start:end])
+    ctx.font = "bold 44px sans-serif"
+    width = ctx.measureText(kana).width
+    x = 256 - width / 2
+    for j in range(start, end):                     # 単位ごとに色を変えて描く
+        piece = game.shown[j]
+        w = ctx.measureText(piece).width
+        ctx.fillStyle = "#8fe39b" if j < done else "#ffffff"
+        ctx.textAlign = "left"
+        ctx.fillText(piece, x, 48)
+        x += w
+    romaji = "".join(spellings(game.units, j)[0] for j in range(start, end))
+    typed = "".join(spellings(game.units, j)[0] for j in range(start, min(i, end))) + (partial if start <= i < end else "")
+    ctx.font = "bold 32px monospace"
+    ctx.textAlign = "center"
+    ctx.fillStyle = "#c9d0dd"
+    ctx.fillText(romaji, 256, 98)
+    if typed:
+        full = ctx.measureText(romaji).width
+        ctx.textAlign = "left"
+        ctx.fillStyle = "#8fe39b"
+        ctx.fillText(typed, 256 - full / 2, 98)
+    word_tex.needsUpdate = True
+    word_state["drawn"] = (index, done, i, partial, arrived)
+
+
+def word_fly_away() -> None:
+    """打ち終えたことばの板は上へ飛び去る。"""
+    word_state["flying"] = True
+    word_state["flew"] = window.performance.now() / 1000
+    if GSAP is not None:
+        GSAP.to(word_board.position, js(y=word_board.position.y + 3.0, duration=0.35, ease="power2.in"))
+        GSAP.to(word_board.rotation, js(x=-1.4, duration=0.35))
+
+
+def word_tick(dt: float) -> None:
+    """毎コマ：出てからの時間で z を決める。着いたら赤く揺れる。ことばが変われば奥から出直す。"""
+    now = window.performance.now() / 1000
+    if word_state["flying"]:
+        if now - word_state["flew"] < 0.36:
+            return                                  # 飛び去る途中。前の絵のまま
+        word_state["flying"] = False
+    if game.done:
+        word_board.visible = False
+        word_state["ident"] = None
+        return
+    index = word_index(game)
+    ident = (game.stage, game.round, index)
+    if ident != word_state["ident"]:                # 新しいことば：奥から出直す
+        word_state.update(ident=ident, index=index, born=now, drawn=None)
+        word_state["seconds"] = WORD_SECONDS_BASE + WORD_SECONDS_PER_KEY * word_keys_left(game, index)
+        word_board.position.set(*WORD_FAR)
+        word_board.rotation.x = -0.45
+        word_board.visible = True
+    progress = min(1.0, (now - word_state["born"]) / word_state["seconds"])
+    arrived = progress >= 1.0
+    i, partial = game.best()
+    key = (index, game.done_units(), i, partial, arrived)
+    if word_state["drawn"] != key:
+        draw_word(game, index, arrived)
+    fx, fy, fz = WORD_FAR
+    nx, ny, nz = WORD_NEAR
+    word_board.position.z = fz + (nz - fz) * progress
+    word_board.position.y = fy + (ny - fy) * progress + 0.08 * math.sin(now * 3)
+    word_board.position.x = nx + (0.15 * math.sin(now * 40) if arrived else 0.0)
+    scale = 0.55 + 0.45 * progress                  # 近づくほど大きく
+    word_board.scale.set(scale, scale, 1)
+
+
+kb_extra.append(word_tick)
 
 
 @when("click", "#go")
@@ -568,10 +938,19 @@ def typed(event) -> None:
     key = {"Enter": "enter", "Escape": "escape"}.get(event.key, event.key)
     if key in KEYS or key in ("enter", "escape"):
         event.preventDefault()
-        speaker.say(obey(game, key, window.performance.now() / 1000))
+        kb_note_start()
+        beep = obey(game, key, window.performance.now() / 1000)
+        if key in KEYS:
+            kb_pressed(key, beep != "miss")
+            if not (sound_switch.checked and kb_sound(key, beep != "miss")):
+                speaker.say(beep)
+            if beep != "miss" and (game.done or word_index(game) != word_state["index"]):
+                word_fly_away()                     # ことばを打ち終えた：板が飛び去る
+        else:
+            speaker.say(beep)
         refresh()
 
 
-build_board()
 document.querySelector("#loading").hidden = True
 refresh()
+asyncio.ensure_future(kb_loop())
